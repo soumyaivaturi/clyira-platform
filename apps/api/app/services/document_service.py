@@ -66,6 +66,7 @@ class DocumentService:
             regulatory_category=metadata.get("regulatory_category"),
             department_owner=metadata.get("department_owner"),
             document_category=document_category,
+            regulatory_frameworks=metadata.get("regulatory_frameworks"),
             dtap_id=dtap_id,
             file_path=file_path,
             file_type=file_type,

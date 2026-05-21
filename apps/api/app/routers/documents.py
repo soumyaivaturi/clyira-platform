@@ -79,6 +79,7 @@ async def upload_document(
     title: Optional[str] = Form(None),
     department_owner: Optional[str] = Form(None),
     document_category: Optional[str] = Form(None),
+    regulatory_frameworks: Optional[str] = Form(None),  # JSON array string
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -98,6 +99,14 @@ async def upload_document(
         )
 
     safe_filename = f"{uuid.uuid4().hex}_{file.filename}"
+    import json as _json
+    frameworks_list = None
+    if regulatory_frameworks:
+        try:
+            frameworks_list = _json.loads(regulatory_frameworks)
+        except Exception:
+            pass
+
     svc = DocumentService(db)
     document = await svc.upload_document(
         file_content=content,
@@ -108,6 +117,7 @@ async def upload_document(
             "title": title or file.filename,
             "document_category": document_category or "",
             "department_owner": department_owner or "",
+            "regulatory_frameworks": frameworks_list,
         },
     )
     return DocumentOut.model_validate(document)

@@ -6,7 +6,7 @@ import Link from "next/link";
 import {
   ChevronRight, FileText, Play, Loader2, AlertTriangle,
   CheckCircle2, ChevronDown, ChevronUp, BookOpen, Zap,
-  Upload, Plus, X, FileUp,
+  Upload, Plus, X, FileUp, CheckSquare, Square, ShieldCheck,
 } from "lucide-react";
 import { documentsApi, assessmentsApi } from "@/lib/api";
 import { ScoreRing, ScoreBadge } from "@/components/shared/score-display";
@@ -40,6 +40,155 @@ interface Assessment {
 }
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
+
+// ── Regulatory Framework Data ──────────────────────────────────────────────────
+
+const FRAMEWORK_GROUPS = [
+  {
+    group: "FDA",
+    items: [
+      { code: "FDA_21CFR211", label: "21 CFR Part 211", description: "Current GMP — Finished Pharmaceuticals" },
+      { code: "FDA_21CFR820", label: "21 CFR Part 820", description: "Quality System Regulation — Medical Devices" },
+      { code: "FDA_21CFR11", label: "21 CFR Part 11", description: "Electronic Records and Signatures" },
+      { code: "FDA_21CFR4", label: "21 CFR Part 4", description: "Regulation of Combination Products" },
+      { code: "FDA_PV2011", label: "FDA Process Validation (2011)", description: "Guidance for Industry — Process Validation" },
+      { code: "FDA_ASEPTIC", label: "FDA Aseptic Processing (2004)", description: "Sterile Drug Products by Aseptic Processing" },
+      { code: "FDA_483", label: "FDA 483 Observations", description: "Inspectional observations database" },
+      { code: "FDA_WL", label: "FDA Warning Letters", description: "Published warning letter citations" },
+    ],
+  },
+  {
+    group: "ICH",
+    items: [
+      { code: "ICH_Q10", label: "ICH Q10", description: "Pharmaceutical Quality System" },
+      { code: "ICH_Q9", label: "ICH Q9", description: "Quality Risk Management" },
+      { code: "ICH_Q8", label: "ICH Q8(R2)", description: "Pharmaceutical Development" },
+      { code: "ICH_Q7", label: "ICH Q7", description: "GMP for Active Pharmaceutical Ingredients" },
+      { code: "ICH_Q6", label: "ICH Q6A / Q6B", description: "Specifications for Drug Substances and Products" },
+      { code: "ICH_E6R2", label: "ICH E6(R2)", description: "Good Clinical Practice" },
+    ],
+  },
+  {
+    group: "EMA / EU",
+    items: [
+      { code: "EU_GMP_PART1", label: "EU GMP Part I", description: "Basic Requirements for Medicinal Products" },
+      { code: "EU_GMP_PART2", label: "EU GMP Part II", description: "Basic Requirements for Active Substances" },
+      { code: "EU_ANNEX1", label: "EU GMP Annex 1", description: "Manufacture of Sterile Medicinal Products" },
+      { code: "EU_ANNEX11", label: "EU GMP Annex 11", description: "Computerised Systems" },
+    ],
+  },
+  {
+    group: "ISO",
+    items: [
+      { code: "ISO_13485", label: "ISO 13485:2016", description: "Medical Devices Quality Management Systems" },
+      { code: "ISO_14971", label: "ISO 14971:2019", description: "Risk Management for Medical Devices" },
+      { code: "ISO_9001", label: "ISO 9001:2015", description: "Quality Management Systems — Requirements" },
+    ],
+  },
+];
+
+const ALL_FRAMEWORK_CODES = FRAMEWORK_GROUPS.flatMap((g) => g.items.map((i) => i.code));
+
+// ── Framework Selector Panel ───────────────────────────────────────────────────
+
+function FrameworkSelectorPanel({
+  selected,
+  onChange,
+}: {
+  selected: string[];
+  onChange: (codes: string[]) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  const toggle = (code: string) =>
+    onChange(selected.includes(code) ? selected.filter((c) => c !== code) : [...selected, code]);
+
+  const toggleGroup = (codes: string[]) => {
+    const allSelected = codes.every((c) => selected.includes(c));
+    onChange(
+      allSelected
+        ? selected.filter((c) => !codes.includes(c))
+        : Array.from(new Set([...selected, ...codes]))
+    );
+  };
+
+  return (
+    <div className="border rounded-xl overflow-hidden bg-card">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/30 transition-colors text-left"
+      >
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm font-medium">Regulatory Frameworks</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+            {selected.length} / {ALL_FRAMEWORK_CODES.length} selected
+          </span>
+        </div>
+        <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
+      </button>
+
+      {expanded && (
+        <div className="border-t px-5 py-4 space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Select which regulatory frameworks Clyira should assess this document against. All are selected by default.
+          </p>
+          {FRAMEWORK_GROUPS.map((group) => {
+            const groupCodes = group.items.map((i) => i.code);
+            const allGroupSelected = groupCodes.every((c) => selected.includes(c));
+            const someGroupSelected = groupCodes.some((c) => selected.includes(c));
+            return (
+              <div key={group.group}>
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(groupCodes)}
+                  className="flex items-center gap-2 mb-2"
+                >
+                  {allGroupSelected ? (
+                    <CheckSquare className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                  ) : someGroupSelected ? (
+                    <div className="w-3.5 h-3.5 border-2 border-primary rounded-sm flex-shrink-0 bg-primary/20" />
+                  ) : (
+                    <Square className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                  )}
+                  <span className="text-xs font-semibold">{group.group}</span>
+                </button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 pl-5">
+                  {group.items.map((item) => (
+                    <label key={item.code} className="flex items-start gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(item.code)}
+                        onChange={() => toggle(item.code)}
+                        className="mt-0.5 accent-primary flex-shrink-0"
+                      />
+                      <span className="flex-1 min-w-0">
+                        <span className="text-xs font-medium">{item.label}</span>
+                        <span className="text-[10px] text-muted-foreground ml-1.5">{item.description}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          <div className="flex gap-2 pt-1 border-t">
+            <button type="button" onClick={() => onChange(ALL_FRAMEWORK_CODES)}
+              className="text-[10px] text-primary hover:underline font-medium">
+              Select all
+            </button>
+            <span className="text-[10px] text-muted-foreground">·</span>
+            <button type="button" onClick={() => onChange([])}
+              className="text-[10px] text-muted-foreground hover:underline">
+              Clear all
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Finding Card ───────────────────────────────────────────────────────────────
 
@@ -314,6 +463,7 @@ export default function DocumentDetailPage() {
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [showRefUpload, setShowRefUpload] = useState(false);
   const [error, setError] = useState("");
+  const [selectedFrameworks, setSelectedFrameworks] = useState<string[]>(ALL_FRAMEWORK_CODES);
 
   const loadDoc = async () => {
     setLoading(true);
@@ -343,7 +493,7 @@ export default function DocumentDetailPage() {
     if (!doc) return;
     setAssessing(true); setError("");
     try {
-      const res = await assessmentsApi.run(doc.id);
+      const res = await assessmentsApi.run(doc.id, true, selectedFrameworks);
       setAssessment(res.data);
       if (res.data.id) await loadAssessment(res.data.id);
     } catch (err: any) {
@@ -414,7 +564,8 @@ export default function DocumentDetailPage() {
           </div>
         </div>
         <button onClick={runAssessment} disabled={assessing}
-          className="flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 flex-shrink-0">
+          className="flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 flex-shrink-0"
+          title={`Assess against ${selectedFrameworks.length} frameworks`}>
           {assessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
           {assessing ? "Assessing…" : assessment ? "Re-assess" : "Run Assessment"}
         </button>
@@ -581,9 +732,12 @@ export default function DocumentDetailPage() {
         )}
       </div>
 
+      {/* Regulatory Framework Selector (always visible) */}
+      <FrameworkSelectorPanel selected={selectedFrameworks} onChange={setSelectedFrameworks} />
+
       {/* No assessment CTA */}
       {!assessment && !assessing && (
-        <div className="bg-muted/30 border border-dashed rounded-xl px-8 py-12 text-center">
+        <div className="bg-muted/30 border border-dashed rounded-xl px-8 py-10 text-center">
           <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
             <Play className="w-6 h-6 text-primary" />
           </div>
@@ -595,6 +749,9 @@ export default function DocumentDetailPage() {
             className="px-6 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
             Run Assessment Now
           </button>
+          <p className="text-xs text-muted-foreground mt-3">
+            Assessing against {selectedFrameworks.length} of {ALL_FRAMEWORK_CODES.length} frameworks
+          </p>
         </div>
       )}
     </div>

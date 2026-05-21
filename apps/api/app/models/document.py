@@ -27,6 +27,9 @@ class Document(Base, TimestampMixin):
     # Document Category (V1: SOP, CAPA, ATM)
     document_category = Column(String(50))  # SOP, CAPA, ATM, Deviation, etc.
 
+    # Regulatory frameworks selected at upload time (overrides company-level agencies)
+    regulatory_frameworks = Column(JSONB, nullable=True)  # e.g. ["FDA_21CFR211", "ICH_Q10"]
+
     # DTAP Assignment
     dtap_id = Column(String(50))  # e.g. "DTAP-001" for SOP
 

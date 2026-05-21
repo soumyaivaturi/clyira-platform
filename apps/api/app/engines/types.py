@@ -22,6 +22,7 @@ class AssessmentContext:
 
     company_agencies: list = field(default_factory=list)
     company_sub_sectors: list = field(default_factory=list)
+    regulatory_frameworks: list = field(default_factory=list)  # document-level framework selection
 
     user_references: list = field(default_factory=list)
     regulatory_context: list = field(default_factory=list)

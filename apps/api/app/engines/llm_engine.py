@@ -123,6 +123,11 @@ OUTPUT FORMAT: Respond with a JSON array of findings. Each finding must have:
         if context.company_agencies:
             prompt_parts.append(f"\n### Applicable Agencies: {', '.join(context.company_agencies)}")
 
+        if context.regulatory_frameworks:
+            prompt_parts.append(f"\n### Regulatory Frameworks Selected for Assessment:")
+            prompt_parts.append(f"Assess this document specifically against: {', '.join(context.regulatory_frameworks)}")
+            prompt_parts.append("Prioritize citations and gap analysis from these frameworks only.")
+
         prompt_parts.append("""
 ### Output Instructions:
 Return a JSON array of findings. If no issues found for a check, do not include it.

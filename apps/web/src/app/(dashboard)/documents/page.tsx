@@ -5,13 +5,61 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   FileText, Upload, Plus, Search, Filter, X, Loader2,
-  ChevronDown, FileUp, Sparkles, AlertCircle,
+  ChevronDown, FileUp, Sparkles, AlertCircle, ChevronRight, CheckSquare, Square,
 } from "lucide-react";
 import { documentsApi } from "@/lib/api";
 import { ScoreBadge } from "@/components/shared/score-display";
 import { DocStatusBadge } from "@/components/shared/badges";
 import { EmptyState, LoadingRows } from "@/components/shared/empty-state";
 import { formatDate, formatFileSize } from "@/lib/utils";
+
+// ── Regulatory Framework Data ──────────────────────────────────────────────────
+
+const FRAMEWORK_GROUPS = [
+  {
+    group: "FDA",
+    items: [
+      { code: "FDA_21CFR211", label: "21 CFR Part 211", description: "Current GMP — Finished Pharmaceuticals" },
+      { code: "FDA_21CFR820", label: "21 CFR Part 820", description: "Quality System Regulation — Medical Devices" },
+      { code: "FDA_21CFR11", label: "21 CFR Part 11", description: "Electronic Records and Signatures" },
+      { code: "FDA_21CFR4", label: "21 CFR Part 4", description: "Regulation of Combination Products" },
+      { code: "FDA_PV2011", label: "FDA Process Validation (2011)", description: "Guidance for Industry — Process Validation" },
+      { code: "FDA_ASEPTIC", label: "FDA Aseptic Processing (2004)", description: "Sterile Drug Products by Aseptic Processing" },
+      { code: "FDA_483", label: "FDA 483 Observations", description: "Inspectional observations database" },
+      { code: "FDA_WL", label: "FDA Warning Letters", description: "Published warning letter citations" },
+    ],
+  },
+  {
+    group: "ICH",
+    items: [
+      { code: "ICH_Q10", label: "ICH Q10", description: "Pharmaceutical Quality System" },
+      { code: "ICH_Q9", label: "ICH Q9", description: "Quality Risk Management" },
+      { code: "ICH_Q8", label: "ICH Q8(R2)", description: "Pharmaceutical Development" },
+      { code: "ICH_Q7", label: "ICH Q7", description: "GMP for Active Pharmaceutical Ingredients" },
+      { code: "ICH_Q6", label: "ICH Q6A / Q6B", description: "Specifications for Drug Substances and Products" },
+      { code: "ICH_E6R2", label: "ICH E6(R2)", description: "Good Clinical Practice" },
+    ],
+  },
+  {
+    group: "EMA / EU",
+    items: [
+      { code: "EU_GMP_PART1", label: "EU GMP Part I", description: "Basic Requirements for Medicinal Products" },
+      { code: "EU_GMP_PART2", label: "EU GMP Part II", description: "Basic Requirements for Active Substances" },
+      { code: "EU_ANNEX1", label: "EU GMP Annex 1", description: "Manufacture of Sterile Medicinal Products" },
+      { code: "EU_ANNEX11", label: "EU GMP Annex 11", description: "Computerised Systems" },
+    ],
+  },
+  {
+    group: "ISO",
+    items: [
+      { code: "ISO_13485", label: "ISO 13485:2016", description: "Medical Devices Quality Management Systems" },
+      { code: "ISO_14971", label: "ISO 14971:2019", description: "Risk Management for Medical Devices" },
+      { code: "ISO_9001", label: "ISO 9001:2015", description: "Quality Management Systems — Requirements" },
+    ],
+  },
+];
+
+const ALL_FRAMEWORK_CODES = FRAMEWORK_GROUPS.flatMap((g) => g.items.map((i) => i.code));
 
 const DOC_CATEGORIES = ["SOP", "CAPA", "ATM", "Deviation", "Validation", "Protocol", "Report", "Other"];
 const DEPARTMENTS = ["Quality Assurance", "Quality Control", "Manufacturing", "Validation", "Regulatory Affairs", "Research & Development", "Clinical & Safety"];
@@ -44,6 +92,22 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Regulatory framework selector — all selected by default
+  const [selectedFrameworks, setSelectedFrameworks] = useState<string[]>(ALL_FRAMEWORK_CODES);
+  const [frameworksExpanded, setFrameworksExpanded] = useState(false);
+
+  const toggleFramework = (code: string) =>
+    setSelectedFrameworks((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]
+    );
+
+  const toggleGroup = (codes: string[]) => {
+    const allSelected = codes.every((c) => selectedFrameworks.includes(c));
+    setSelectedFrameworks((prev) =>
+      allSelected ? prev.filter((c) => !codes.includes(c)) : Array.from(new Set([...prev, ...codes]))
+    );
+  };
+
   const handleFile = (f: File) => { setFile(f); setTitle(f.name.replace(/\.[^.]+$/, "")); };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -60,6 +124,7 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
     fd.append("title", title || file.name);
     if (category) fd.append("document_category", category);
     if (department) fd.append("department_owner", department);
+    fd.append("regulatory_frameworks", JSON.stringify(selectedFrameworks));
     try {
       const res = await documentsApi.upload(fd, setProgress);
       onSuccess(res.data.id);
@@ -72,8 +137,8 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-card border rounded-2xl shadow-xl w-full max-w-lg">
-        <div className="flex items-center justify-between px-6 py-4 border-b">
+      <div className="bg-card border rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0">
           <div>
             <h2 className="font-semibold">Upload Document</h2>
             <p className="text-xs text-muted-foreground mt-0.5">PDF, DOCX, or XLSX · Max 50 MB</p>
@@ -81,7 +146,7 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
           <button onClick={onClose} className="p-1.5 rounded-md hover:bg-accent"><X className="w-4 h-4" /></button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
           {/* Drop zone */}
           <div
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
@@ -134,6 +199,95 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
                   </select>
                 </div>
               </div>
+
+              {/* Regulatory Framework Selector */}
+              <div className="border rounded-lg overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setFrameworksExpanded((v) => !v)}
+                  className="w-full flex items-center justify-between px-4 py-3 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                      Regulatory Frameworks
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+                      {selectedFrameworks.length} / {ALL_FRAMEWORK_CODES.length} selected
+                    </span>
+                  </div>
+                  <ChevronRight className={`w-3.5 h-3.5 text-muted-foreground transition-transform ${frameworksExpanded ? "rotate-90" : ""}`} />
+                </button>
+
+                {frameworksExpanded && (
+                  <div className="p-4 space-y-4 max-h-72 overflow-y-auto border-t">
+                    <p className="text-xs text-muted-foreground">
+                      Clyira will assess this document against the selected frameworks. All are selected by default.
+                    </p>
+                    {FRAMEWORK_GROUPS.map((group) => {
+                      const groupCodes = group.items.map((i) => i.code);
+                      const allGroupSelected = groupCodes.every((c) => selectedFrameworks.includes(c));
+                      const someGroupSelected = groupCodes.some((c) => selectedFrameworks.includes(c));
+                      return (
+                        <div key={group.group}>
+                          <button
+                            type="button"
+                            onClick={() => toggleGroup(groupCodes)}
+                            className="flex items-center gap-2 mb-2 group"
+                          >
+                            {allGroupSelected ? (
+                              <CheckSquare className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                            ) : someGroupSelected ? (
+                              <div className="w-3.5 h-3.5 border-2 border-primary rounded-sm flex-shrink-0 bg-primary/20" />
+                            ) : (
+                              <Square className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                            )}
+                            <span className="text-xs font-semibold text-foreground">{group.group}</span>
+                          </button>
+                          <div className="grid grid-cols-1 gap-1 pl-5">
+                            {group.items.map((item) => {
+                              const checked = selectedFrameworks.includes(item.code);
+                              return (
+                                <label
+                                  key={item.code}
+                                  className="flex items-start gap-2 cursor-pointer group"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleFramework(item.code)}
+                                    className="mt-0.5 accent-primary flex-shrink-0"
+                                  />
+                                  <span className="flex-1 min-w-0">
+                                    <span className="text-xs font-medium">{item.label}</span>
+                                    <span className="text-[10px] text-muted-foreground ml-1.5">{item.description}</span>
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div className="flex gap-2 pt-1 border-t">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFrameworks(ALL_FRAMEWORK_CODES)}
+                        className="text-[10px] text-primary hover:underline font-medium"
+                      >
+                        Select all
+                      </button>
+                      <span className="text-[10px] text-muted-foreground">·</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFrameworks([])}
+                        className="text-[10px] text-muted-foreground hover:underline"
+                      >
+                        Clear all
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </>
           )}
 
@@ -157,7 +311,7 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
           )}
         </div>
 
-        <div className="px-6 pb-6 flex gap-3">
+        <div className="px-6 pb-6 flex gap-3 flex-shrink-0 border-t pt-4">
           <button onClick={onClose} className="flex-1 py-2.5 border rounded-lg text-sm hover:bg-accent">Cancel</button>
           <button onClick={handleSubmit} disabled={!file || uploading}
             className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground py-2.5 rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50">

@@ -33,6 +33,7 @@ class AssessmentService:
         company_id: str,
         user_id: str,
         include_references: bool = True,
+        regulatory_frameworks: Optional[list] = None,
     ) -> Assessment:
         """
         Trigger a new assessment for a document.
@@ -63,7 +64,7 @@ class AssessmentService:
         await self.db.refresh(assessment)
 
         # Build context
-        context = await self._build_context(document, company, assessment, include_references)
+        context = await self._build_context(document, company, assessment, include_references, regulatory_frameworks)
 
         # Run assessment
         try:
@@ -106,6 +107,7 @@ class AssessmentService:
         company: Company,
         assessment: Assessment,
         include_references: bool,
+        regulatory_frameworks: Optional[list] = None,
     ) -> AssessmentContext:
         """Build the full context needed for assessment"""
         # Load DTAP
@@ -160,6 +162,7 @@ class AssessmentService:
             dtap_profile=dtap_profile,
             company_agencies=company.agencies or [],
             company_sub_sectors=company.sub_sectors or [],
+            regulatory_frameworks=regulatory_frameworks if regulatory_frameworks is not None else (document.regulatory_frameworks or []),
             user_references=user_references,
             enforcement_records=enforcement_records,
         )

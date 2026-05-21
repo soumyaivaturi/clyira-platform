@@ -69,8 +69,12 @@ export const documentsApi = {
 
 // ── Assessments ───────────────────────────────────────────────────────────────
 export const assessmentsApi = {
-  run: (documentId: string, includeReferences = true) =>
-    api.post("/assessments/run", { document_id: documentId, include_references: includeReferences }),
+  run: (documentId: string, includeReferences = true, regulatoryFrameworks?: string[]) =>
+    api.post("/assessments/run", {
+      document_id: documentId,
+      include_references: includeReferences,
+      ...(regulatoryFrameworks ? { regulatory_frameworks: regulatoryFrameworks } : {}),
+    }),
   get: (id: string) => api.get(`/assessments/${id}`),
   getFindings: (id: string, params?: { severity?: string; level?: string }) =>
     api.get(`/assessments/${id}/findings`, { params }),

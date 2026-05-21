@@ -22,7 +22,7 @@ router = APIRouter()
 class RunAssessmentRequest(BaseModel):
     document_id: str
     include_references: bool = True
-    agencies: list[str] = []
+    regulatory_frameworks: list[str] = []  # overrides document-level selection when non-empty
 
 
 class FindingOut(BaseModel):
@@ -93,6 +93,7 @@ async def run_assessment(
         company_id=current_user.company_id,
         user_id=current_user.id,
         include_references=data.include_references,
+        regulatory_frameworks=data.regulatory_frameworks or None,
     )
     return AssessmentOut.model_validate(assessment)
 
