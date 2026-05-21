@@ -26,6 +26,44 @@ class LLMEngine:
         self.model_name = settings.GEMINI_MODEL
         self.max_tokens = settings.GEMINI_MAX_TOKENS
 
+    async def run_checks(self, level: str, checks: list[str], context: AssessmentContext) -> list[FindingResult]:
+        """Evaluate specific named checks via LLM (fallback for unimplemented rule checks)."""
+        if not settings.GEMINI_API_KEY:
+            return []
+        profile = context.dtap_profile
+        check_labels = [c.replace("_", " ").title() for c in checks]
+
+        prompt = (
+            f"## Document Assessment — Level {level} Checks\n"
+            f"Document type: {profile.document_category} (DTAP: {profile.dtap_id})\n\n"
+            f"### Checks to perform:\n"
+            + "\n".join(f"- {label}" for label in check_labels)
+            + f"\n\n### Document Content:\n{context.document_text[:40000]}\n\n"
+            f"### Regulatory context: agencies = {', '.join(context.company_agencies)}\n\n"
+            f"### Output Instructions:\n"
+            f"For each check above, identify ALL gaps and non-conformances. "
+            f"Be comprehensive — flag anything missing, ambiguous, or non-compliant. "
+            f"Return ONLY a JSON array of findings.\n"
+        )
+        if context.regulatory_frameworks:
+            prompt += f"Frameworks to assess against: {', '.join(context.regulatory_frameworks)}\n"
+
+        system = self._get_system_prompt(level)
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=system,
+                    temperature=0.3,
+                    max_output_tokens=self.max_tokens,
+                ),
+            )
+            return self._parse_findings_response(response.text, level)
+        except Exception as e:
+            logger.error(f"LLM run_checks failed for {level}: {e}")
+            return []
+
     async def run(self, context: AssessmentContext, levels: list[str]) -> list[FindingResult]:
         """Run LLM assessment for specified levels"""
         findings: list[FindingResult] = []
@@ -57,7 +95,7 @@ class LLMEngine:
                 contents=user_prompt,
                 config=genai_types.GenerateContentConfig(
                     system_instruction=system_prompt,
-                    temperature=0.1,
+                    temperature=0.3,
                     max_output_tokens=self.max_tokens,
                 ),
             )
@@ -69,26 +107,34 @@ class LLMEngine:
             return []
 
     def _get_system_prompt(self, level: str) -> str:
-        return f"""You are Clyira's Assessment Engine, a specialized AI for evaluating pharmaceutical
-quality documents against regulatory standards. You are performing Level {level} assessment.
+        return f"""You are a senior FDA/EMA regulatory assessor and GMP compliance expert with 20+ years of experience conducting inspections. You are performing a Level {level} assessment of a pharmaceutical quality document.
 
-CRITICAL RULES:
-1. Every finding MUST have a verifiable regulatory citation or evidence basis.
-2. Do NOT generate findings you cannot substantiate from the document text.
-3. Severity must be justified — do not over-escalate.
-4. Be specific about location in document (section, paragraph).
-5. Provide actionable remediation for each finding.
+YOUR MANDATE: Be THOROUGH and COMPREHENSIVE. Find ALL issues — gaps, ambiguities, missing elements, weak language, incomplete procedures, data integrity risks, and regulatory non-conformances. An undetected finding that becomes an FDA 483 observation is worse than a false positive that gets reviewed and closed.
+
+ASSESSMENT APPROACH:
+- Think like an FDA investigator who will issue a 483 observation for every gap
+- Flag anything that is unclear, incomplete, missing, ambiguous, or non-compliant
+- Include both major findings (critical/high) AND minor observations (medium/low/info)
+- Do not self-censor — surface every potential issue you identify
+- A document that passes your review should be genuinely inspection-ready
+
+SEVERITY GUIDE:
+- critical: Would result in a Warning Letter or import alert
+- high: Would result in a 483 observation or CAPA requirement
+- medium: Would be flagged in an internal audit
+- low: Best practice gap or minor documentation weakness
+- info: Advisory observation for improvement
 
 CITATION TYPES:
-- "direct": Explicit regulatory requirement (cite specific CFR/Annex/Guidance)
-- "traceability": Internal standard or cross-reference requirement
+- "direct": Explicit regulatory requirement (cite specific CFR/Annex/Guidance section)
+- "traceability": Internal consistency or cross-reference requirement
 - "substantive": Industry best practice with regulatory backing
 
-OUTPUT FORMAT: Respond with a JSON array of findings. Each finding must have:
-- level, severity, category, title, description, evidence, location
-- regulatory_citation, citation_type, agency
-- suggestion_draft (remediation text)
-- confidence_score (0.0-1.0)"""
+OUTPUT FORMAT: Return a JSON array of ALL findings. Do not omit findings to save space.
+Each finding: {{"level": "...", "severity": "...", "category": "...", "title": "...",
+"description": "...", "evidence": "...", "location": "...",
+"regulatory_citation": "...", "citation_type": "...", "agency": "...",
+"suggestion_draft": "...", "confidence_score": 0.0}}"""
 
     def _build_assessment_prompt(self, level: str, context: AssessmentContext) -> str:
         """Build the assessment prompt with full context"""
@@ -130,12 +176,11 @@ OUTPUT FORMAT: Respond with a JSON array of findings. Each finding must have:
 
         prompt_parts.append("""
 ### Output Instructions:
-Return a JSON array of findings. If no issues found for a check, do not include it.
-Only report genuine issues with substantive evidence.
-Format: [{"level": "...", "severity": "...", "category": "...", "title": "...",
-"description": "...", "evidence": "...", "location": "...",
-"regulatory_citation": "...", "citation_type": "...", "agency": "...",
-"suggestion_draft": "...", "confidence_score": 0.0}]
+Return a comprehensive JSON array of ALL findings for every check listed above.
+For each check, look deeply — report every gap, ambiguity, missing element, weak language, or non-conformance.
+If a section is present but incomplete, flag it. If language is vague, flag it. If a requirement is implied but not explicit, flag it.
+Aim for complete coverage: it is better to report 20 findings and have 2 dismissed than to miss 5 real issues.
+Return ONLY the JSON array with no preamble or explanation.
 """)
 
         return "\n".join(prompt_parts)
@@ -190,39 +235,62 @@ Return as JSON array: [{"suggestion": "...", "next_step": "..."}]"""
         return prompt
 
     def _parse_findings_response(self, response_text: str, level: str) -> list[FindingResult]:
-        try:
-            json_text = response_text
-            if "```json" in json_text:
-                json_text = json_text.split("```json")[1].split("```")[0]
-            elif "```" in json_text:
-                json_text = json_text.split("```")[1].split("```")[0]
+        json_text = response_text
+        if "```json" in json_text:
+            json_text = json_text.split("```json")[1].split("```")[0]
+        elif "```" in json_text:
+            json_text = json_text.split("```")[1].split("```")[0]
+        json_text = json_text.strip()
 
-            data = json.loads(json_text.strip())
+        # Try clean parse first
+        try:
+            data = json.loads(json_text)
             if not isinstance(data, list):
                 data = [data]
+        except json.JSONDecodeError:
+            # Response was truncated — recover complete objects by extracting individual {...} blocks
+            data = []
+            depth = 0
+            start = None
+            for i, ch in enumerate(json_text):
+                if ch == "{":
+                    if depth == 0:
+                        start = i
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0 and start is not None:
+                        try:
+                            obj = json.loads(json_text[start:i + 1])
+                            data.append(obj)
+                        except json.JSONDecodeError:
+                            pass
+                        start = None
+            if not data:
+                logger.warning(f"Could not recover any findings from truncated LLM response for {level}")
+                return []
+            logger.info(f"Recovered {len(data)} findings from truncated response for {level}")
 
-            findings = []
-            for item in data:
-                findings.append(FindingResult(
-                    level=item.get("level", level),
-                    severity=item.get("severity", "medium"),
-                    category=item.get("category", ""),
-                    title=item.get("title", ""),
-                    description=item.get("description", ""),
-                    evidence=item.get("evidence", ""),
-                    location=item.get("location", ""),
-                    regulatory_citation=item.get("regulatory_citation", ""),
-                    citation_type=item.get("citation_type", ""),
-                    agency=item.get("agency", ""),
-                    suggestion_draft=item.get("suggestion_draft", ""),
-                    confidence_score=item.get("confidence_score", 0.7),
-                    validated=False,
-                ))
-            return findings
-
-        except (json.JSONDecodeError, KeyError, IndexError) as e:
-            logger.warning(f"Failed to parse LLM response for {level}: {e}")
-            return []
+        findings = []
+        for item in data:
+            if not item.get("title") or not item.get("description"):
+                continue
+            findings.append(FindingResult(
+                level=item.get("level", level),
+                severity=item.get("severity", "medium"),
+                category=item.get("category", ""),
+                title=item.get("title", ""),
+                description=item.get("description", ""),
+                evidence=item.get("evidence", ""),
+                location=item.get("location", ""),
+                regulatory_citation=item.get("regulatory_citation", ""),
+                citation_type=item.get("citation_type", ""),
+                agency=item.get("agency", ""),
+                suggestion_draft=item.get("suggestion_draft", ""),
+                confidence_score=item.get("confidence_score", 0.7),
+                validated=False,
+            ))
+        return findings
 
     def _parse_remediation_response(self, response_text: str) -> list[dict]:
         try:

@@ -38,15 +38,38 @@ class RuleEngine:
         return findings
 
     async def _run_level(self, level: str, checks: list[str], context: AssessmentContext) -> list[FindingResult]:
-        """Run all checks for a specific level"""
+        """Run all checks for a specific level. Unimplemented checks are queued for LLM fallback."""
         findings = []
+        unimplemented = []
+
         for check_name in checks:
             check_fn = self._get_check_function(level, check_name)
             if check_fn:
                 result = check_fn(context)
                 if result:
                     findings.extend(result if isinstance(result, list) else [result])
+            else:
+                unimplemented.append(check_name)
+
+        # Route unimplemented rule checks to LLM
+        if unimplemented and context.dtap_profile:
+            llm_findings = await self._llm_fallback(level, unimplemented, context)
+            findings.extend(llm_findings)
+
         return findings
+
+    async def _llm_fallback(self, level: str, checks: list[str], context: AssessmentContext) -> list[FindingResult]:
+        """Send unimplemented rule checks to the LLM engine."""
+        from app.engines.llm_engine import LLMEngine
+        from app.core.config import settings
+        if not settings.GEMINI_API_KEY:
+            return []
+        try:
+            engine = LLMEngine()
+            return await engine.run_checks(level, checks, context)
+        except Exception as e:
+            logger.warning(f"LLM fallback failed for {level} checks {checks}: {e}")
+            return []
 
     def _get_check_function(self, level: str, check_name: str):
         """Resolve check function by level and name"""
