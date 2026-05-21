@@ -79,6 +79,22 @@ async def health_check():
     }
 
 
+# DB diagnostics — shows which tables exist (remove after debugging)
+@app.get("/debug/tables")
+async def debug_tables():
+    from sqlalchemy import text, inspect
+    from app.core.database import engine
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(text(
+                "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename"
+            ))
+            tables = [row[0] for row in result]
+        return {"status": "connected", "tables": tables, "count": len(tables)}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
 # API info
 @app.get("/")
 async def root():
