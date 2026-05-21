@@ -1,0 +1,87 @@
+version: '3.9'
+
+services:
+  # PostgreSQL with pgvector for regulatory corpus embeddings
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: clyira-db
+    environment:
+      POSTGRES_DB: clyira
+      POSTGRES_USER: clyira_admin
+      POSTGRES_PASSWORD: clyira_dev_2026
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clyira_admin -d clyira"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching, job queues, and WebSocket pub/sub
+  redis:
+    image: redis:7-alpine
+    container_name: clyira-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI backend (Python)
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: clyira-api
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://clyira_admin:clyira_dev_2026@db:5432/clyira
+      - REDIS_URL=redis://redis:6379/0
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - SECRET_KEY=${SECRET_KEY:-clyira-dev-secret-key-change-in-production}
+      - ENVIRONMENT=development
+      - CORS_ORIGINS=http://localhost:3000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/api:/app
+      - uploaded_documents:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Celery worker for async assessment jobs
+  worker:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: clyira-worker
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://clyira_admin:clyira_dev_2026@db:5432/clyira
+      - REDIS_URL=redis://redis:6379/0
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - SECRET_KEY=${SECRET_KEY:-clyira-dev-secret-key-change-in-production}
+      - ENVIRONMENT=development
+    volumes:
+      - ./apps/api:/app
+      - uploaded_documents:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.tasks.worker worker --loglevel=info --concurrency=2
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploaded_documents:

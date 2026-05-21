@@ -1,0 +1,115 @@
+"""
+Auth Service — JWT creation/verification, password hashing, user management.
+"""
+import re
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.models.company import Company
+from app.models.user import User
+from app.models.base import generate_uuid
+
+_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+ALGORITHM = "HS256"
+
+
+# ── Password ──────────────────────────────────────────────────────────────────
+
+def hash_password(plain: str) -> str:
+    return _pwd_context.hash(plain)
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return _pwd_context.verify(plain, hashed)
+
+
+# ── JWT ───────────────────────────────────────────────────────────────────────
+
+def create_access_token(user: User) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    payload = {
+        "sub": user.id,
+        "email": user.email,
+        "company_id": user.company_id,
+        "role": user.role,
+        "exp": expire,
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_access_token(token: str) -> Optional[dict]:
+    try:
+        return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        return None
+
+
+# ── DB helpers ────────────────────────────────────────────────────────────────
+
+def _slugify(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return f"{slug}-{generate_uuid()[:8]}"
+
+
+async def get_user_by_email(db: AsyncSession, email: str) -> Optional[User]:
+    result = await db.execute(
+        select(User).options(selectinload(User.company)).where(User.email == email)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_user_by_id(db: AsyncSession, user_id: str) -> Optional[User]:
+    result = await db.execute(
+        select(User).options(selectinload(User.company)).where(User.id == user_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def authenticate_user(db: AsyncSession, email: str, password: str) -> Optional[User]:
+    user = await get_user_by_email(db, email)
+    if not user or not verify_password(password, user.password_hash):
+        return None
+    return user
+
+
+async def create_company_and_user(
+    db: AsyncSession,
+    email: str,
+    password: str,
+    full_name: str,
+    company_name: str,
+) -> User:
+    company = Company(
+        id=generate_uuid(),
+        name=company_name,
+        slug=_slugify(company_name),
+        sub_sectors=[],
+        agencies=[],
+        markets=[],
+        certifications=[],
+        settings={},
+        onboarding_complete=False,
+    )
+    db.add(company)
+    await db.flush()  # get company.id before creating user
+
+    user = User(
+        id=generate_uuid(),
+        company_id=company.id,
+        email=email,
+        password_hash=hash_password(password),
+        full_name=full_name,
+        role="admin",  # first user in a company is admin
+    )
+    db.add(user)
+    await db.flush()
+    return user
