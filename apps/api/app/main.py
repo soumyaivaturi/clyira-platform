@@ -2,7 +2,7 @@
 Clyira API — Main Application Entry Point
 Quality Intelligence Platform for Life Sciences
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
@@ -138,3 +138,47 @@ app.include_router(documents.router, prefix="/api/v1/documents", tags=["Document
 app.include_router(assessments.router, prefix="/api/v1/assessments", tags=["Assessments"])
 app.include_router(readiness.router, prefix="/api/v1/readiness", tags=["Audit Readiness"])
 app.include_router(inspections.router, prefix="/api/v1/inspections", tags=["Real-Time Audit Support"])
+
+
+# Admin: seed enforcement corpus via HTTP (protected by secret header)
+@app.post("/admin/seed-enforcement")
+async def seed_enforcement_corpus(
+    request: Request,
+    years: int = 3,
+    source: str = "all",
+):
+    import os, asyncio
+    from fastapi import Request
+    import os as _os, asyncio as _asyncio
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != _os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(status_code=403, detail="Forbidden")
+
+    async def _run_seed():
+        import sys
+        sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), "..", "scripts"))
+        import httpx as _httpx
+        from seed_enforcement import (
+            fetch_openfda, fetch_warning_letters, fetch_ema_noncompliance,
+            parse_openfda_record, compute_trends, write_to_db, OPENFDA_ENDPOINTS,
+        )
+        from app.core.database import engine as _engine
+        db_url = str(_engine.url)
+        records: list = []
+        async with _httpx.AsyncClient(follow_redirects=True) as client:
+            if source in ("all", "fda"):
+                for ep_key in ("drug_enforcement", "device_enforcement"):
+                    raw = await fetch_openfda(client, OPENFDA_ENDPOINTS[ep_key], years)
+                    records.extend(parse_openfda_record(r, ep_key.split("_")[0]) for r in raw)
+            if source in ("all", "wl"):
+                records.extend(await fetch_warning_letters(client, years))
+            if source in ("all", "ema"):
+                records.extend(await fetch_ema_noncompliance(client, years))
+        records = [r for r in records if r.get("observation_categories") or r.get("cfr_citations")]
+        records = compute_trends(records)
+        inserted = await write_to_db(records, db_url)
+        print(f"Enforcement seeder done: {inserted} new records")
+
+    _asyncio.create_task(_run_seed())
+    return {"status": "seeding_started", "source": source, "years": years}
