@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/", "/auth/login", "/auth/register", "/auth/forgot", "/auth/onboarding"];
+const PUBLIC_AUTH_PREFIXES = ["/auth/login", "/auth/register", "/auth/forgot", "/auth/onboarding"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+  // "/" must be exact-matched — using startsWith("/") would match every path
+  const isPublic = pathname === "/" || PUBLIC_AUTH_PREFIXES.some((p) => pathname.startsWith(p));
   const token = request.cookies.get("clyira_token")?.value;
 
   // Unauthenticated → redirect to login (for protected routes)
