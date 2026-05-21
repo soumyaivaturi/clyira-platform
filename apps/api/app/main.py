@@ -13,6 +13,15 @@ from app.routers import auth, documents, assessments, companies, readiness, insp
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events"""
+    # Auto-create all DB tables from SQLAlchemy models (safe to run repeatedly)
+    from sqlalchemy import text
+    from app.models import Base
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
+        await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "vector"'))
+        await conn.run_sync(Base.metadata.create_all)
+
     from app.dtap import DTAPRegistry
     DTAPRegistry.initialize()
 
