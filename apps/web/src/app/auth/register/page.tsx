@@ -43,7 +43,16 @@ export default function RegisterPage() {
       await register(form);
       router.push("/auth/onboarding");
     } catch (err: any) {
-      const msg = err?.response?.data?.detail ?? "Registration failed. Please try again.";
+      let msg = "Registration failed. Please try again.";
+      if (!err.response) {
+        if (err.code === "ECONNABORTED") {
+          msg = "Request timed out — server is starting up, please wait 30 seconds and try again.";
+        } else {
+          msg = `Network error: ${err.message}. Check browser console for CORS details.`;
+        }
+      } else {
+        msg = err.response?.data?.detail ?? `Server error (${err.response.status})`;
+      }
       setError(msg);
     }
   };
