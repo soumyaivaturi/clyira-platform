@@ -40,6 +40,10 @@ export default function RegisterPage() {
       setError("Password must be at least 8 characters");
       return;
     }
+    if (new TextEncoder().encode(form.password).length > 72) {
+      setError("Password must be 72 characters or fewer");
+      return;
+    }
     setStep("company");
   };
 
@@ -138,7 +142,7 @@ export default function RegisterPage() {
                     required
                     value={form.password}
                     onChange={set("password")}
-                    placeholder="Min. 8 characters"
+                    placeholder="8–72 characters"
                     className="w-full px-3 py-2.5 pr-10 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
                   />
                   <button

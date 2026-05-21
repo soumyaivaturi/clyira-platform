@@ -54,6 +54,8 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
     if len(data.password) < 8:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Password must be at least 8 characters")
+    if len(data.password.encode()) > 72:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Password must be 72 characters or fewer")
 
     try:
         user = await auth_service.create_company_and_user(
