@@ -30,6 +30,23 @@ async def lifespan(app: FastAPI):
             # Create all tables
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+
+            # Add any columns missing from existing tables (schema drift fix)
+            async with engine.begin() as conn:
+                for table in Base.metadata.sorted_tables:
+                    result = await conn.execute(text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema='public' AND table_name=:t"
+                    ), {"t": table.name})
+                    existing = {row[0] for row in result}
+                    for col in table.columns:
+                        if col.name not in existing:
+                            col_type = col.type.compile(engine.dialect)
+                            await conn.execute(text(
+                                f'ALTER TABLE "{table.name}" ADD COLUMN IF NOT EXISTS "{col.name}" {col_type}'
+                            ))
+                            print(f"  Migration   : added {table.name}.{col.name} ({col_type})")
+
             print("  Database    : connected and schema ready")
             break
         except Exception as e:
@@ -79,18 +96,21 @@ async def health_check():
     }
 
 
-# DB diagnostics — shows which tables exist (remove after debugging)
+# DB diagnostics — shows tables and columns (remove after debugging)
 @app.get("/debug/tables")
 async def debug_tables():
-    from sqlalchemy import text, inspect
+    from sqlalchemy import text
     from app.core.database import engine
     try:
         async with engine.connect() as conn:
             result = await conn.execute(text(
-                "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename"
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE table_schema='public' ORDER BY table_name, ordinal_position"
             ))
-            tables = [row[0] for row in result]
-        return {"status": "connected", "tables": tables, "count": len(tables)}
+            schema: dict = {}
+            for table_name, col_name in result:
+                schema.setdefault(table_name, []).append(col_name)
+        return {"status": "connected", "tables": schema, "count": len(schema)}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 
