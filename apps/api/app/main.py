@@ -14,13 +14,24 @@ from app.routers import auth, documents, assessments, companies, readiness, insp
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events"""
     # Auto-create all DB tables from SQLAlchemy models (safe to run repeatedly)
+    import asyncio
     from sqlalchemy import text
     from app.models import Base
     from app.core.database import engine
-    async with engine.begin() as conn:
-        await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
-        await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "vector"'))
-        await conn.run_sync(Base.metadata.create_all)
+    for attempt in range(5):
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
+                await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "vector"'))
+                await conn.run_sync(Base.metadata.create_all)
+            print("  Database    : connected and schema ready")
+            break
+        except Exception as e:
+            print(f"  Database    : connection attempt {attempt + 1}/5 failed — {e}")
+            if attempt == 4:
+                print("  Database    : could not connect after 5 attempts, continuing anyway")
+            else:
+                await asyncio.sleep(3)
 
     from app.dtap import DTAPRegistry
     DTAPRegistry.initialize()
