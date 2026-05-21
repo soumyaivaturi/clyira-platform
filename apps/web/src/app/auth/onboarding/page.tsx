@@ -215,7 +215,7 @@ export default function OnboardingPage() {
             Clyira will now assess your documents against the relevant regulatory frameworks for your sub-sectors and markets.
           </p>
           <button
-            onClick={() => router.push("/dashboard")}
+            onClick={() => { window.location.href = "/dashboard"; }}
             className="w-full bg-primary text-primary-foreground py-3 rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
           >
             Open Dashboard

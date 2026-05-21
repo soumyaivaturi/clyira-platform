@@ -52,7 +52,7 @@ export default function RegisterPage() {
     setError("");
     const attempt = async () => {
       await register(form);
-      router.push("/auth/onboarding");
+      window.location.href = "/auth/onboarding";
     };
     try {
       await attempt();
