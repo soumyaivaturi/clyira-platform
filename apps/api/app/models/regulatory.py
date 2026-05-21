@@ -1,7 +1,6 @@
 """Regulatory Corpus and Enforcement Record models"""
 from sqlalchemy import Column, String, Text, Integer, Float, Boolean
-from sqlalchemy.dialects.postgresql import JSONB, ARRAY
-from pgvector.sqlalchemy import Vector
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models.base import Base, TimestampMixin, generate_uuid
 
@@ -28,8 +27,8 @@ class RegulatoryCorpus(Base, TimestampMixin):
     document_categories = Column(JSONB, default=list)  # Which doc types it applies to
     departments = Column(JSONB, default=list)  # Which departments
 
-    # Vector embedding for RAG
-    embedding = Column(Vector(1536))
+    # Embedding stored as JSONB array (migrate to pgvector when available on host)
+    embedding = Column(JSONB, nullable=True)
 
     # Status
     is_current = Column(Boolean, default=True)
@@ -65,5 +64,5 @@ class EnforcementRecord(Base, TimestampMixin):
     trending = Column(Boolean, default=False)  # Is this a trending pattern?
     trend_velocity = Column(Float)  # Rate of increase in similar findings
 
-    # Vector embedding
-    embedding = Column(Vector(1536))
+    # Embedding stored as JSONB array (migrate to pgvector when available on host)
+    embedding = Column(JSONB, nullable=True)

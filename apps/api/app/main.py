@@ -20,9 +20,15 @@ async def lifespan(app: FastAPI):
     from app.core.database import engine
     for attempt in range(5):
         try:
+            # Extensions in isolated transactions — failures are non-fatal
+            for ext in ("uuid-ossp", "vector"):
+                try:
+                    async with engine.begin() as conn:
+                        await conn.execute(text(f'CREATE EXTENSION IF NOT EXISTS "{ext}"'))
+                except Exception:
+                    pass
+            # Create all tables
             async with engine.begin() as conn:
-                await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
-                await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "vector"'))
                 await conn.run_sync(Base.metadata.create_all)
             print("  Database    : connected and schema ready")
             break
