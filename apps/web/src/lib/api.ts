@@ -1,8 +1,15 @@
 import axios from "axios";
 
+// In production, call the API directly to avoid Vercel's 10s proxy timeout.
+// NEXT_PUBLIC_API_URL is set to the Render service URL in Vercel env vars.
+const API_BASE = process.env.NEXT_PUBLIC_API_URL
+  ? `${process.env.NEXT_PUBLIC_API_URL}/api/v1`
+  : "/api/v1";
+
 const api = axios.create({
-  baseURL: "/api/v1",
+  baseURL: API_BASE,
   headers: { "Content-Type": "application/json" },
+  timeout: 60000, // 60s — accommodates Render free-tier cold starts (~30s)
 });
 
 api.interceptors.request.use((config) => {
