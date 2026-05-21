@@ -3,7 +3,6 @@ services:
     name: clyira-api
     runtime: docker
     dockerfilePath: apps/api/Dockerfile
-    dockerContext: apps/api
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
