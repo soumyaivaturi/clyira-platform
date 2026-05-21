@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Shield, Eye, EyeOff, Loader2, ChevronRight, ChevronLeft } from "lucide-react";
@@ -15,6 +15,13 @@ export default function RegisterPage() {
   const [step, setStep] = useState<Step>("account");
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+
+  useEffect(() => {
+    // Fire-and-forget warmup so Render's free-tier container is awake by
+    // the time the user finishes filling the form (~30-60s later).
+    fetch("/api/v1/auth/me").catch(() => {});
+  }, []);
 
   const [form, setForm] = useState({
     full_name: "",
@@ -39,21 +46,28 @@ export default function RegisterPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    try {
+    const attempt = async () => {
       await register(form);
       router.push("/auth/onboarding");
+    };
+    try {
+      await attempt();
     } catch (err: any) {
-      let msg = "Registration failed. Please try again.";
       if (!err.response) {
-        if (err.code === "ECONNABORTED") {
-          msg = "Request timed out — server is starting up, please wait 30 seconds and try again.";
-        } else {
-          msg = `Network error: ${err.message}. Check browser console for CORS details.`;
+        // Network error — likely a cold start. Wait 20s and retry once.
+        setRetrying(true);
+        setError("Server is starting up — retrying in 20 seconds…");
+        await new Promise((r) => setTimeout(r, 20000));
+        setRetrying(false);
+        setError("");
+        try {
+          await attempt();
+        } catch (err2: any) {
+          setError(err2.response?.data?.detail ?? "Registration failed. Please try again.");
         }
       } else {
-        msg = err.response?.data?.detail ?? `Server error (${err.response.status})`;
+        setError(err.response?.data?.detail ?? `Server error (${err.response.status})`);
       }
-      setError(msg);
     }
   };
 
@@ -191,11 +205,11 @@ export default function RegisterPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={isLoading}
+                  disabled={isLoading || retrying}
                   className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground py-2.5 rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                 >
-                  {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
-                  Create account
+                  {(isLoading || retrying) && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {retrying ? "Retrying…" : "Create account"}
                 </button>
               </div>
             </form>
