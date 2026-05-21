@@ -74,6 +74,7 @@ app = FastAPI(
     description="Quality Intelligence Platform for Life Sciences — Document Assessment, Audit Readiness, and Real-Time Audit Support",
     version=settings.APP_VERSION,
     lifespan=lifespan,
+    redirect_slashes=False,  # prevents 307 redirects that strip Auth headers through Vercel proxy
 )
 
 # CORS middleware
