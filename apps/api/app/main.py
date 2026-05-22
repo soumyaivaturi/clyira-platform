@@ -97,7 +97,7 @@ async def health_check():
     }
 
 
-# DB diagnostics — shows tables and columns (remove after debugging)
+# DB diagnostics — shows tables, columns, and row counts
 @app.get("/debug/tables")
 async def debug_tables():
     from sqlalchemy import text
@@ -111,7 +111,17 @@ async def debug_tables():
             schema: dict = {}
             for table_name, col_name in result:
                 schema.setdefault(table_name, []).append(col_name)
-        return {"status": "connected", "tables": schema, "count": len(schema)}
+
+            # Row counts for key tables
+            counts: dict = {}
+            for table in schema:
+                try:
+                    r = await conn.execute(text(f'SELECT COUNT(*) FROM "{table}"'))
+                    counts[table] = r.scalar()
+                except Exception:
+                    counts[table] = "?"
+
+        return {"status": "connected", "tables": schema, "row_counts": counts, "count": len(schema)}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 

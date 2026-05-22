@@ -103,7 +103,8 @@ class LLMEngine:
             return findings
 
         except Exception as e:
-            logger.error(f"LLM assessment failed for {level}: {e}")
+            logger.error(f"LLM assessment failed for {level}: {type(e).__name__}: {e}")
+            print(f"  LLM ERROR [{level}]: {type(e).__name__}: {e}")
             return []
 
     def _get_system_prompt(self, level: str) -> str:
