@@ -99,6 +99,28 @@ async def debug_config():
     }
 
 
+@app.get("/debug/llm")
+async def debug_llm():
+    """Direct Gemini API test — bypasses all assessment logic"""
+    if not settings.GEMINI_API_KEY:
+        return {"status": "error", "detail": "GEMINI_API_KEY not set"}
+    try:
+        from google import genai
+        from google.genai import types as genai_types
+        import time
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        t0 = time.time()
+        response = await client.aio.models.generate_content(
+            model=settings.GEMINI_MODEL,
+            contents="Reply with exactly: {\"ok\": true}",
+            config=genai_types.GenerateContentConfig(temperature=0.0, max_output_tokens=20),
+        )
+        elapsed = round(time.time() - t0, 2)
+        return {"status": "ok", "model": settings.GEMINI_MODEL, "elapsed_s": elapsed, "response": response.text}
+    except Exception as e:
+        return {"status": "error", "model": settings.GEMINI_MODEL, "detail": f"{type(e).__name__}: {e}"}
+
+
 # Health check
 @app.get("/health")
 async def health_check():
