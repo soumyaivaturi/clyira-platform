@@ -47,6 +47,7 @@ def _inspection_out(insp: Inspection) -> dict:
         "start_date": insp.start_date,
         "end_date": insp.end_date,
         "total_requests": insp.total_requests or 0,
+        "ai_agents_count": len(insp.ai_agents_active) if insp.ai_agents_active else 0,
         "created_at": str(insp.created_at),
     }
 

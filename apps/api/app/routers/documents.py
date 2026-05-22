@@ -2,13 +2,16 @@
 Document Management Router — Upload, Classification, AI Create, CRUD
 """
 import uuid
+import logging
 from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -53,21 +56,24 @@ async def list_documents(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Document).where(Document.company_id == current_user.company_id)
+    base_filter = [Document.company_id == current_user.company_id]
     if document_category:
-        query = query.where(Document.document_category == document_category)
+        base_filter.append(Document.document_category == document_category)
     if department_owner:
-        query = query.where(Document.department_owner == department_owner)
+        base_filter.append(Document.department_owner == department_owner)
     if status_filter:
-        query = query.where(Document.status == status_filter)
+        base_filter.append(Document.status == status_filter)
 
-    query = query.order_by(Document.created_at.desc()).limit(limit).offset(offset)
+    count_result = await db.execute(select(func.count()).select_from(Document).where(*base_filter))
+    total = count_result.scalar_one()
+
+    query = select(Document).where(*base_filter).order_by(Document.created_at.desc()).limit(limit).offset(offset)
     result = await db.execute(query)
     documents = result.scalars().all()
 
     return {
         "documents": [DocumentOut.model_validate(d).model_dump() for d in documents],
-        "total": len(documents),
+        "total": total,
         "limit": limit,
         "offset": offset,
     }
@@ -104,8 +110,8 @@ async def upload_document(
     if regulatory_frameworks:
         try:
             frameworks_list = _json.loads(regulatory_frameworks)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to parse regulatory_frameworks JSON: {e} — value: {regulatory_frameworks[:100]}")
 
     svc = DocumentService(db)
     document = await svc.upload_document(

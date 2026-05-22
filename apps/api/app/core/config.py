@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "Clyira"
     APP_VERSION: str = "0.1.0"
     ENVIRONMENT: str = "development"
-    DEBUG: bool = True
+    DEBUG: bool = False
     SECRET_KEY: str = "clyira-dev-secret-key-change-in-production"
 
     # Database

@@ -20,6 +20,7 @@ interface Inspection {
   start_date: string | null;
   end_date: string | null;
   total_requests: number;
+  ai_agents_count: number;
   created_at: string;
 }
 
@@ -38,7 +39,6 @@ const STATUS_TABS = [
   { key: "planned", label: "Planned" },
   { key: "active", label: "Active" },
   { key: "post_inspection", label: "Post-Inspection" },
-  { key: "closed", label: "Closed" },
 ];
 
 function CreateModal({ onClose, onCreate }: { onClose: () => void; onCreate: (data: any) => Promise<void> }) {
@@ -231,7 +231,7 @@ export default function InspectionsPage() {
                 {activeInsp.agency && `${activeInsp.agency} · `}
                 {typeLabel(activeInsp.inspection_type)} ·{" "}
                 {activeInsp.total_requests} request{activeInsp.total_requests !== 1 ? "s" : ""} logged ·{" "}
-                5 AI agents active
+                {activeInsp.ai_agents_count ?? 5} AI agents active
               </p>
             </div>
           </div>
