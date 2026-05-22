@@ -83,10 +83,12 @@ async def create_inspection(
         inspection_type=data.inspection_type,
         start_date=data.start_date,
         status="planned",
+        total_requests=0,
         ai_agents_active=["scribe", "prep_manager", "sme_coach", "qa_agent", "doc_reviewer"],
     )
     db.add(inspection)
-    await db.flush()
+    await db.commit()
+    await db.refresh(inspection)
     return _inspection_out(inspection)
 
 
@@ -146,6 +148,7 @@ async def activate_inspection(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inspection not found")
 
     inspection.status = "active"
+    await db.commit()
     return _inspection_out(inspection)
 
 
@@ -166,6 +169,7 @@ async def close_inspection(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inspection not found")
 
     inspection.status = "post_inspection"
+    await db.commit()
     return _inspection_out(inspection)
 
 
@@ -199,7 +203,8 @@ async def create_request(
     db.add(req)
 
     inspection.total_requests = (inspection.total_requests or 0) + 1
-    await db.flush()
+    await db.commit()
+    await db.refresh(req)
 
     return {
         "id": req.id,
@@ -268,6 +273,7 @@ async def update_request(
     if response_text:
         req.response_text = response_text
 
+    await db.commit()
     return {"request_id": request_id, "status": req.status, "updated": True}
 
 
@@ -298,7 +304,8 @@ async def add_scribe_entry(
         tags=data.tags,
     )
     db.add(entry)
-    await db.flush()
+    await db.commit()
+    await db.refresh(entry)
 
     return {
         "id": entry.id,

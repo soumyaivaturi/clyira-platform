@@ -4,7 +4,7 @@ Assessment Engine Router — Triggers and manages document assessments (L1–L11
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -157,8 +157,8 @@ async def get_findings(
 async def respond_to_finding(
     assessment_id: str,
     finding_id: str,
-    response_text: str,
-    finding_status: str = "acknowledged",
+    response_text: str = Query(...),
+    finding_status: str = Query("acknowledged"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -178,6 +178,7 @@ async def respond_to_finding(
 
     finding.status = finding_status
     finding.response_text = response_text
+    await db.commit()
 
     return {"finding_id": finding_id, "status": finding_status, "updated": True}
 
