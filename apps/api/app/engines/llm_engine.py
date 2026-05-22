@@ -28,7 +28,7 @@ async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
             "maxOutputTokens": settings.GEMINI_MAX_TOKENS,
         },
     }
-    for attempt in range(3):
+    for attempt in range(4):
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
                 url,
@@ -36,8 +36,8 @@ async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
                 json=payload,
             )
             if resp.status_code == 429:
-                wait = 30 * (2 ** attempt)  # 30s, 60s, 120s
-                print(f"  Gemini 429 rate limit (attempt {attempt+1}/3), waiting {wait}s...")
+                wait = 10 * (2 ** attempt)  # 10s, 20s, 40s, 80s
+                print(f"  Gemini 429 rate limit (attempt {attempt+1}/4), waiting {wait}s...")
                 await asyncio.sleep(wait)
                 continue
             resp.raise_for_status()
@@ -50,7 +50,7 @@ async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
             if not parts:
                 raise ValueError(f"Gemini candidate has no parts (finish_reason={candidates[0].get('finishReason')})")
             return parts[0]["text"]
-    raise Exception("Gemini quota/rate limit: failed after 3 attempts (all returned 429)")
+    raise Exception("Gemini quota/rate limit: failed after 4 attempts (all returned 429)")
 
 
 class LLMEngine:
