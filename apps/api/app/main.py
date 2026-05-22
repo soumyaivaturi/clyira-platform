@@ -87,6 +87,18 @@ app.add_middleware(
 )
 
 
+# Config diagnostics — shows which keys are present (never reveals values)
+@app.get("/debug/config")
+async def debug_config():
+    import os
+    return {
+        "GEMINI_API_KEY": "set" if settings.GEMINI_API_KEY else "MISSING",
+        "GEMINI_MODEL": settings.GEMINI_MODEL,
+        "DATABASE_URL": "set" if settings.DATABASE_URL else "MISSING",
+        "ENVIRONMENT": settings.ENVIRONMENT,
+    }
+
+
 # Health check
 @app.get("/health")
 async def health_check():
