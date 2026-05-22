@@ -20,25 +20,34 @@ class RuleEngine:
     """
 
     async def run(self, context: AssessmentContext, levels: list[str]) -> list[FindingResult]:
-        """Run rule checks for specified levels"""
+        """Run rule checks for specified levels. Batches all LLM fallbacks into one call."""
         findings: list[FindingResult] = []
         profile = context.dtap_profile
+        unimplemented_by_level: dict[str, list[str]] = {}
 
         for level in levels:
             level_config = profile.levels.get(level)
             if not level_config or not level_config.enabled:
                 continue
-
             if level_config.engine not in ("rule", "hybrid"):
                 continue
 
-            level_findings = await self._run_level(level, level_config.checks, context)
+            level_findings, unimplemented = self._run_level_sync(level, level_config.checks, context)
             findings.extend(level_findings)
+
+            # Only batch fallback for pure-rule levels — hybrid levels are covered by LLM engine pass
+            if unimplemented and level_config.engine == "rule":
+                unimplemented_by_level[level] = unimplemented
+
+        # ONE batched LLM call for all unimplemented rule checks across all levels
+        if unimplemented_by_level and context.dtap_profile:
+            llm_findings = await self._llm_fallback_batched(unimplemented_by_level, context)
+            findings.extend(llm_findings)
 
         return findings
 
-    async def _run_level(self, level: str, checks: list[str], context: AssessmentContext) -> list[FindingResult]:
-        """Run all checks for a specific level. Unimplemented checks are queued for LLM fallback."""
+    def _run_level_sync(self, level: str, checks: list[str], context: AssessmentContext) -> tuple[list[FindingResult], list[str]]:
+        """Run deterministic checks for a level. Returns (findings, unimplemented_check_names)."""
         findings = []
         unimplemented = []
 
@@ -51,27 +60,19 @@ class RuleEngine:
             else:
                 unimplemented.append(check_name)
 
-        # Route unimplemented rule checks to LLM
-        if unimplemented and context.dtap_profile:
-            llm_findings = await self._llm_fallback(level, unimplemented, context)
-            findings.extend(llm_findings)
+        return findings, unimplemented
 
-        return findings
-
-    async def _llm_fallback(self, level: str, checks: list[str], context: AssessmentContext) -> list[FindingResult]:
-        """Send unimplemented rule checks to the LLM engine."""
-        import asyncio
+    async def _llm_fallback_batched(self, unimplemented_by_level: dict[str, list[str]], context: AssessmentContext) -> list[FindingResult]:
+        """Send ALL unimplemented rule checks (across all levels) to LLM in ONE batched call."""
         from app.engines.llm_engine import LLMEngine
         from app.core.config import settings
         if not settings.GEMINI_API_KEY:
             return []
-        # 4s gap before every LLM call to stay under 15 RPM free-tier limit
-        await asyncio.sleep(4)
         try:
             engine = LLMEngine()
-            return await engine.run_checks(level, checks, context)
+            return await engine.run_checks_batched(unimplemented_by_level, context)
         except Exception as e:
-            logger.warning(f"LLM fallback failed for {level} checks {checks}: {e}")
+            logger.warning(f"Batched LLM fallback failed: {e}")
             return []
 
     def _get_check_function(self, level: str, check_name: str):

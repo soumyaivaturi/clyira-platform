@@ -59,61 +59,123 @@ class LLMEngine:
     Uses structured prompts with DTAP context for precise assessment.
     """
 
-    async def run_checks(self, level: str, checks: list[str], context: AssessmentContext) -> list[FindingResult]:
-        """Evaluate specific named checks via LLM (fallback for unimplemented rule checks)."""
+    async def run_checks_batched(self, checks_by_level: dict[str, list[str]], context: AssessmentContext) -> list[FindingResult]:
+        """Evaluate ALL unimplemented rule checks across multiple levels in ONE LLM call."""
         if not settings.GEMINI_API_KEY:
             return []
         profile = context.dtap_profile
-        check_labels = [c.replace("_", " ").title() for c in checks]
 
-        prompt = (
-            f"## Document Assessment — Level {level} Checks\n"
-            f"Document type: {profile.document_category} (DTAP: {profile.dtap_id})\n\n"
-            f"### Checks to perform:\n"
-            + "\n".join(f"- {label}" for label in check_labels)
-            + f"\n\n### Document Content:\n{context.document_text[:40000]}\n\n"
-            f"### Regulatory context: agencies = {', '.join(context.company_agencies)}\n\n"
-            f"### Output Instructions:\n"
-            f"For each check above, identify ALL gaps and non-conformances. "
-            f"Be comprehensive — flag anything missing, ambiguous, or non-compliant. "
-            f"Return ONLY a JSON array of findings.\n"
-        )
+        prompt_parts = [
+            f"## Multi-Level Document Assessment — Rule Checks",
+            f"Document type: {profile.document_category} (DTAP: {profile.dtap_id})",
+            f"",
+            f"### Checks to perform (grouped by level):",
+        ]
+        for level, checks in checks_by_level.items():
+            prompt_parts.append(f"\n**{level} — {self._get_level_name(level)}:**")
+            for check in checks:
+                prompt_parts.append(f"- {check.replace('_', ' ').title()}")
+
+        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:40000]}")
+        prompt_parts.append(f"\nApplicable agencies: {', '.join(context.company_agencies)}")
         if context.regulatory_frameworks:
-            prompt += f"Frameworks to assess against: {', '.join(context.regulatory_frameworks)}\n"
+            prompt_parts.append(f"Regulatory frameworks: {', '.join(context.regulatory_frameworks)}")
+        prompt_parts.append("""
+### Output Instructions:
+Identify ALL gaps and non-conformances for each check above.
+Each finding MUST include the correct "level" field (matching the level heading above, e.g. "L1", "L2").
+Return ONLY a JSON array of findings with no preamble.
+""")
 
-        system = self._get_system_prompt(level)
+        system = self._get_system_prompt("Multi-Level")
+        total_checks = sum(len(v) for v in checks_by_level.values())
+        print(f"  LLM: batched rule fallback for {list(checks_by_level.keys())} ({total_checks} checks)...")
         try:
-            text = await _call_gemini(system, prompt)
-            return self._parse_findings_response(text, level)
+            text = await _call_gemini(system, "\n".join(prompt_parts))
+            findings = self._parse_findings_response(text, list(checks_by_level.keys())[0])
+            print(f"  LLM: batched rule fallback → {len(findings)} findings")
+            return findings
         except Exception as e:
-            logger.error(f"LLM run_checks failed for {level}: {e}")
-            print(f"  LLM ERROR [{level}]: {type(e).__name__}: {e}")
+            logger.error(f"Batched rule fallback failed: {e}")
+            print(f"  LLM ERROR [batched rule]: {type(e).__name__}: {e}")
             return []
 
     async def run(self, context: AssessmentContext, levels: list[str]) -> list[FindingResult]:
-        """Run LLM assessment for specified levels"""
-        import asyncio
-        findings: list[FindingResult] = []
-        first = True
+        """Run LLM assessment for all enabled levels in ONE batched call."""
+        enabled_levels = [
+            l for l in levels
+            if context.dtap_profile.levels.get(l) and
+               context.dtap_profile.levels[l].enabled and
+               context.dtap_profile.levels[l].engine in ("llm", "hybrid")
+        ]
+        if not enabled_levels:
+            return []
 
-        for level in levels:
-            level_config = context.dtap_profile.levels.get(level)
-            if not level_config or not level_config.enabled:
-                continue
-            if level_config.engine not in ("llm", "hybrid"):
-                continue
-
-            # 4s spacing between calls keeps us under the 15 RPM free-tier limit
-            if not first:
-                await asyncio.sleep(4)
-            first = False
-
-            print(f"  LLM: running {level}...")
-            level_findings = await self._assess_level(level, context)
-            print(f"  LLM: {level} → {len(level_findings)} findings")
-            findings.extend(level_findings)
-
+        print(f"  LLM: batched assessment for {enabled_levels}...")
+        findings = await self._assess_levels_batched(enabled_levels, context)
+        print(f"  LLM: {len(findings)} findings across {len(enabled_levels)} levels")
         return findings
+
+    async def _assess_levels_batched(self, levels: list[str], context: AssessmentContext) -> list[FindingResult]:
+        """Assess all LLM/hybrid levels in a SINGLE Gemini call."""
+        if not settings.GEMINI_API_KEY:
+            return []
+        profile = context.dtap_profile
+
+        prompt_parts = [
+            f"## Document Under Assessment",
+            f"Category: {profile.document_category} (DTAP: {profile.dtap_id})",
+            f"",
+            f"### Assessment Levels and Checks:",
+        ]
+        for level in levels:
+            level_config = profile.levels[level]
+            prompt_parts.append(f"\n**{level} — {self._get_level_name(level)}:**")
+            for check in level_config.checks:
+                prompt_parts.append(f"- {check.replace('_', ' ').title()}")
+
+        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:40000]}")
+
+        if "L8" in levels and context.regulatory_context:
+            prompt_parts.append("\n### Regulatory Requirements (for L8):")
+            for reg in context.regulatory_context[:10]:
+                prompt_parts.append(f"- [{reg.get('citation_reference', '')}] {reg.get('content', '')[:200]}")
+
+        if context.user_references:
+            prompt_parts.append("\n### Organization References:")
+            for ref in context.user_references[:5]:
+                prompt_parts.append(f"- {ref.get('title', '')}: {ref.get('extracted_text', '')[:300]}")
+
+        if context.company_agencies:
+            prompt_parts.append(f"\nApplicable agencies: {', '.join(context.company_agencies)}")
+        if context.regulatory_frameworks:
+            prompt_parts.append(f"Regulatory frameworks: {', '.join(context.regulatory_frameworks)}")
+
+        prompt_parts.append("""
+### Critical Output Instructions:
+Each finding MUST include the correct "level" field (e.g., "L3", "L6", "L8", "L10").
+Aim for 8-15 findings per level. Be thorough and flag every gap.
+Return ALL findings for ALL levels in a single JSON array. No preamble.
+""")
+
+        system_prompt = f"""You are a senior FDA/EMA regulatory assessor performing a MULTI-LEVEL assessment of a pharmaceutical quality document.
+
+YOUR MANDATE: Find ALL issues — gaps, ambiguities, missing elements, weak language, non-conformances, data integrity risks.
+
+SEVERITY: critical (Warning Letter), high (483 obs), medium (internal audit), low (best practice), info (advisory).
+
+TAG every finding with its correct level (L3, L5, L6, L8, L9, L10, or L11).
+
+OUTPUT: Single JSON array. Each item: {{"level":"...","severity":"...","category":"...","title":"...","description":"...","evidence":"...","regulatory_citation":"...","citation_type":"...","agency":"...","suggestion_draft":"...","confidence_score":0.0}}"""
+
+        try:
+            text = await _call_gemini(system_prompt, "\n".join(prompt_parts))
+            findings = self._parse_findings_response(text, levels[0] if len(levels) == 1 else "?")
+            return findings
+        except Exception as e:
+            logger.error(f"Batched LLM assessment failed: {type(e).__name__}: {e}")
+            print(f"  LLM ERROR [batched]: {type(e).__name__}: {e}")
+            return []
 
     async def _assess_level(self, level: str, context: AssessmentContext) -> list[FindingResult]:
         """Run LLM assessment for a single level"""
@@ -203,10 +265,17 @@ Return ONLY the JSON array with no preamble or explanation.
     async def generate_remediation(
         self, findings: list[FindingResult], context: AssessmentContext
     ) -> list[FindingResult]:
-        """Generate remediation suggestions for findings that lack them"""
+        """Generate remediation suggestions for findings that lack them (top 20 by severity)."""
         findings_needing_remediation = [f for f in findings if not f.suggestion_draft]
         if not findings_needing_remediation:
             return findings
+
+        # Cap at 20 most critical findings to keep prompt size manageable
+        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+        findings_needing_remediation = sorted(
+            findings_needing_remediation,
+            key=lambda f: severity_order.get(f.severity, 5)
+        )[:20]
 
         prompt = self._build_remediation_prompt(findings_needing_remediation, context)
         try:
