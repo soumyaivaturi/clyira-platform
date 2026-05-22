@@ -17,7 +17,8 @@ GEMINI_V1_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}
 
 
 async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
-    """Make a single Gemini v1 REST call. Returns response text."""
+    """Make a single Gemini v1 REST call with retry on rate limits."""
+    import asyncio
     url = GEMINI_V1_URL.format(model=settings.GEMINI_MODEL)
     payload = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
@@ -27,15 +28,29 @@ async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
             "maxOutputTokens": settings.GEMINI_MAX_TOKENS,
         },
     }
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            url,
-            params={"key": settings.GEMINI_API_KEY},
-            json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+    for attempt in range(3):
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                url,
+                params={"key": settings.GEMINI_API_KEY},
+                json=payload,
+            )
+            if resp.status_code == 429:
+                wait = 30 * (2 ** attempt)  # 30s, 60s, 120s
+                print(f"  Gemini 429 rate limit (attempt {attempt+1}/3), waiting {wait}s...")
+                await asyncio.sleep(wait)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            candidates = data.get("candidates", [])
+            if not candidates:
+                raise ValueError(f"Gemini returned no candidates: {data.get('promptFeedback', data)}")
+            content = candidates[0].get("content", {})
+            parts = content.get("parts", [])
+            if not parts:
+                raise ValueError(f"Gemini candidate has no parts (finish_reason={candidates[0].get('finishReason')})")
+            return parts[0]["text"]
+    raise Exception("Gemini quota/rate limit: failed after 3 attempts (all returned 429)")
 
 
 class LLMEngine:
