@@ -276,20 +276,96 @@ async def debug_seed_test(request: Request):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
         import httpx
-        from seed_enforcement import fetch_openfda, parse_openfda_record, OPENFDA_ENDPOINTS
         from app.core.database import engine as _engine
         db_url = _engine.url.render_as_string(hide_password=False)
+        # Direct test — no seed_enforcement import, just raw httpx
+        cutoff = "20240101"
+        params = {"search": f"report_date:[{cutoff} TO 99991231]", "limit": 3}
         async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-            raw = await fetch_openfda(client, OPENFDA_ENDPOINTS["drug_enforcement"], 1, limit=5)
-        parsed = [parse_openfda_record(r, "drug") for r in raw]
+            resp = await client.get("https://api.fda.gov/drug/enforcement.json", params=params)
+        actual_url = str(resp.url)
+        data = resp.json()
+        results = data.get("results", [])
         return {
-            "openfda_reachable": True,
-            "raw_count": len(raw),
-            "parsed_count": len(parsed),
-            "sample": parsed[0] if parsed else None,
+            "http_status": resp.status_code,
+            "actual_url": actual_url,
+            "total_available": data.get("meta", {}).get("results", {}).get("total"),
+            "raw_count": len(results),
+            "first_firm": results[0].get("recalling_firm", "") if results else None,
             "db_url_prefix": db_url[:40] + "***",
         }
     except Exception as e:
         return {"error": str(e), "trace": traceback.format_exc()[-500:]}
+
+
+# Admin: re-extract document text for documents with empty extracted_text
+@app.post("/admin/reextract-documents")
+async def reextract_documents(request: Request):
+    """Re-extract text for all documents with empty extracted_text (e.g. DOCX table content bug)."""
+    import os
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from sqlalchemy import text, select
+    from app.core.database import AsyncSessionLocal
+    from app.models.document import Document
+    from app.services.document_service import DocumentService
+
+    updated = []
+    skipped = []
+    errors = []
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Document).where(
+                (Document.extracted_text == None) | (Document.extracted_text == "")
+            )
+        )
+        docs = result.scalars().all()
+
+        svc = DocumentService(db)
+
+        for doc in docs:
+            try:
+                # Try to fetch file content from storage
+                content = None
+                if settings.SUPABASE_URL and settings.SUPABASE_SERVICE_KEY and doc.file_path:
+                    try:
+                        from supabase import create_client
+                        client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
+                        content = client.storage.from_(settings.SUPABASE_STORAGE_BUCKET).download(doc.file_path)
+                    except Exception as e:
+                        errors.append({"id": doc.id, "title": doc.title, "error": f"Storage download: {e}"})
+                        continue
+                elif doc.file_path and os.path.exists(doc.file_path):
+                    with open(doc.file_path, "rb") as f:
+                        content = f.read()
+
+                if not content:
+                    skipped.append({"id": doc.id, "title": doc.title, "reason": "file not accessible"})
+                    continue
+
+                file_type = doc.file_type or "unknown"
+                new_text = await svc._extract_text_from_bytes(content, file_type)
+                if not new_text:
+                    skipped.append({"id": doc.id, "title": doc.title, "reason": "extraction returned empty"})
+                    continue
+
+                doc.extracted_text = new_text
+                doc.extracted_sections = svc._identify_sections(new_text)
+                await db.commit()
+                updated.append({"id": doc.id, "title": doc.title, "chars": len(new_text)})
+
+            except Exception as e:
+                errors.append({"id": doc.id, "title": doc.title, "error": str(e)})
+
+    return {
+        "status": "done",
+        "updated": len(updated),
+        "skipped": len(skipped),
+        "errors": len(errors),
+        "details": {"updated": updated, "skipped": skipped, "errors": errors},
+    }

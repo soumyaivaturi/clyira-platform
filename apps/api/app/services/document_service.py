@@ -173,7 +173,18 @@ class DocumentService:
             try:
                 from docx import Document as DocxDocument
                 doc = DocxDocument(io.BytesIO(content))
-                return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                parts = []
+                # Paragraphs (body text, headings)
+                for p in doc.paragraphs:
+                    if p.text.strip():
+                        parts.append(p.text)
+                # Tables — test methods and lab docs are almost entirely table-formatted
+                for table in doc.tables:
+                    for row in table.rows:
+                        row_texts = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                        if row_texts:
+                            parts.append(" | ".join(row_texts))
+                return "\n".join(parts)
             except Exception as e:
                 logger.error(f"DOCX extraction failed: {e}")
                 return ""

@@ -503,6 +503,11 @@ export default function DocumentDetailPage() {
         setAssessment(res.data);
         if (res.data.status === "completed") {
           await loadAssessment(assessmentId);
+          // Refresh doc to pick up updated score and status from DB
+          try {
+            const docRes = await documentsApi.get(id);
+            setDoc(docRes.data);
+          } catch { /* non-fatal — score ring just won't update */ }
           setAssessing(false);
           return;
         }
