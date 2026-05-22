@@ -13,7 +13,7 @@ from app.engines.types import AssessmentContext, FindingResult
 
 logger = logging.getLogger(__name__)
 
-GEMINI_V1_URL = "https://generativelanguage.googleapis.com/v1/models/{model}:generateContent"
+GEMINI_V1_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
 async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
