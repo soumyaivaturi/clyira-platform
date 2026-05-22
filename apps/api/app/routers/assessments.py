@@ -4,12 +4,12 @@ Assessment Engine Router — Triggers and manages document assessments (L1–L11
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, AsyncSessionLocal
 from app.core.dependencies import get_current_user
 from app.models.assessment import Assessment, Finding
 from app.models.document import Document
@@ -17,6 +17,24 @@ from app.models.user import User
 from app.services.assessment_service import AssessmentService
 
 router = APIRouter()
+
+
+async def _run_assessment_task(
+    assessment_id: str,
+    document_id: str,
+    company_id: str,
+    include_references: bool,
+    regulatory_frameworks: Optional[list],
+) -> None:
+    async with AsyncSessionLocal() as db:
+        svc = AssessmentService(db)
+        await svc.run_assessment_background(
+            assessment_id=assessment_id,
+            document_id=document_id,
+            company_id=company_id,
+            include_references=include_references,
+            regulatory_frameworks=regulatory_frameworks,
+        )
 
 
 class RunAssessmentRequest(BaseModel):
@@ -71,13 +89,14 @@ class AssessmentOut(BaseModel):
         from_attributes = True
 
 
-@router.post("/run", response_model=AssessmentOut, status_code=status.HTTP_201_CREATED)
+@router.post("/run", response_model=AssessmentOut, status_code=status.HTTP_202_ACCEPTED)
 async def run_assessment(
     data: RunAssessmentRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Trigger a full L1-L11 assessment for a document."""
+    """Trigger a full L1-L11 assessment. Returns immediately; poll GET /{id} for completion."""
     result = await db.execute(
         select(Document).where(
             Document.id == data.document_id,
@@ -95,6 +114,16 @@ async def run_assessment(
         include_references=data.include_references,
         regulatory_frameworks=data.regulatory_frameworks or None,
     )
+
+    background_tasks.add_task(
+        _run_assessment_task,
+        assessment.id,
+        data.document_id,
+        current_user.company_id,
+        data.include_references,
+        data.regulatory_frameworks or None,
+    )
+
     return AssessmentOut.model_validate(assessment)
 
 

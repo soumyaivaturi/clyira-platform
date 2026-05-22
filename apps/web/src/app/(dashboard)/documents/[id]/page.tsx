@@ -494,16 +494,47 @@ export default function DocumentDetailPage() {
     }
   };
 
+  const pollAssessment = async (assessmentId: string): Promise<void> => {
+    const maxAttempts = 90; // 90 × 10s = 15 min ceiling
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(r => setTimeout(r, 10000));
+      try {
+        const res = await assessmentsApi.get(assessmentId);
+        setAssessment(res.data);
+        if (res.data.status === "completed") {
+          await loadAssessment(assessmentId);
+          setAssessing(false);
+          return;
+        }
+        if (res.data.status === "failed") {
+          setError("Assessment failed. Please try again.");
+          setAssessing(false);
+          return;
+        }
+      } catch { /* continue polling */ }
+    }
+    setError("Assessment is taking longer than expected. Refresh to check status.");
+    setAssessing(false);
+  };
+
   const runAssessment = async () => {
     if (!doc) return;
     setAssessing(true); setError("");
     try {
       const res = await assessmentsApi.run(doc.id, true, selectedFrameworks);
       setAssessment(res.data);
-      if (res.data.id) await loadAssessment(res.data.id);
+      const status = res.data.status;
+      if (status === "queued" || status === "running") {
+        // Assessment running in background — poll for completion
+        pollAssessment(res.data.id);
+      } else if (res.data.id) {
+        await loadAssessment(res.data.id);
+        setAssessing(false);
+      } else {
+        setAssessing(false);
+      }
     } catch (err: any) {
       setError(err?.response?.data?.detail ?? "Assessment failed.");
-    } finally {
       setAssessing(false);
     }
   };
@@ -572,7 +603,9 @@ export default function DocumentDetailPage() {
           className="flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 flex-shrink-0"
           title={`Assess against ${selectedFrameworks.length} frameworks`}>
           {assessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-          {assessing ? "Assessing…" : assessment ? "Re-assess" : "Run Assessment"}
+          {assessing
+            ? (assessment?.status === "queued" ? "Queued…" : "Assessing…")
+            : assessment ? "Re-assess" : "Run Assessment"}
         </button>
       </div>
 

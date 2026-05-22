@@ -74,7 +74,7 @@ export const assessmentsApi = {
       document_id: documentId,
       include_references: includeReferences,
       ...(regulatoryFrameworks ? { regulatory_frameworks: regulatoryFrameworks } : {}),
-    }),
+    }, { timeout: 600000 }),  // 10-min timeout — L1-L11 assessment is LLM-intensive
   get: (id: string) => api.get(`/assessments/${id}`),
   getFindings: (id: string, params?: { severity?: string; level?: string }) =>
     api.get(`/assessments/${id}/findings`, { params }),

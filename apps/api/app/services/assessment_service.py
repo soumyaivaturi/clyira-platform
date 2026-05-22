@@ -36,25 +36,22 @@ class AssessmentService:
         regulatory_frameworks: Optional[list] = None,
     ) -> Assessment:
         """
-        Trigger a new assessment for a document.
-        Creates assessment record and runs the pipeline.
+        Create an assessment record with status='queued' and return immediately.
+        The caller is responsible for running the actual pipeline in a background task.
         """
-        # Load document
         document = await self.db.get(Document, document_id)
         if not document:
             raise ValueError(f"Document {document_id} not found")
 
-        # Load company
         company = await self.db.get(Company, company_id)
         if not company:
             raise ValueError(f"Company {company_id} not found")
 
-        # Create assessment record
         assessment = Assessment(
             document_id=document_id,
             company_id=company_id,
             triggered_by=user_id,
-            status="running",
+            status="queued",
             dtap_id=document.dtap_id,
             include_references=include_references,
             agencies_assessed=company.agencies or [],
@@ -62,18 +59,33 @@ class AssessmentService:
         self.db.add(assessment)
         await self.db.commit()
         await self.db.refresh(assessment)
+        return assessment
 
-        # Build context
+    async def run_assessment_background(
+        self,
+        assessment_id: str,
+        document_id: str,
+        company_id: str,
+        include_references: bool = True,
+        regulatory_frameworks: Optional[list] = None,
+    ) -> None:
+        """Run the full L1-L11 pipeline for an existing assessment record."""
+        document = await self.db.get(Document, document_id)
+        company = await self.db.get(Company, company_id)
+        assessment = await self.db.get(Assessment, assessment_id)
+        if not all([document, company, assessment]):
+            logger.error(f"Background assessment {assessment_id}: missing record(s)")
+            return
+
+        assessment.status = "running"
+        await self.db.commit()
+
         context = await self._build_context(document, company, assessment, include_references, regulatory_frameworks)
 
-        # Run assessment
         try:
             results = await self.orchestrator.run_assessment(context)
-
-            # Store findings
             await self._store_findings(assessment.id, results["findings"])
 
-            # Update assessment with results
             assessment.status = "completed"
             assessment.clyira_score = results["score"]
             assessment.score_band = results["score_band"]
@@ -87,19 +99,17 @@ class AssessmentService:
             assessment.levels_run = results["levels_run"]
             assessment.model_version = settings.GEMINI_MODEL
 
-            # Update document latest score
             document.latest_score = results["score"]
             document.latest_assessment_id = assessment.id
             document.status = "assessed"
 
             await self.db.commit()
-            return assessment
+            logger.info(f"Assessment {assessment_id} completed: score={results['score']}")
 
         except Exception as e:
-            logger.error(f"Assessment failed: {e}")
+            logger.error(f"Background assessment {assessment_id} failed: {e}")
             assessment.status = "failed"
             await self.db.commit()
-            raise
 
     async def _build_context(
         self,
