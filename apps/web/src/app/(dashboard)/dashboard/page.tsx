@@ -52,7 +52,6 @@ export default function DashboardPage() {
 
   useEffect(() => { load(); }, []);
 
-  const totalFindings = 0; // will come from API later
   const score = readiness?.company_score;
 
   return (

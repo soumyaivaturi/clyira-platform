@@ -473,20 +473,25 @@ export default function DocumentDetailPage() {
       if (res.data.latest_assessment_id) {
         await loadAssessment(res.data.latest_assessment_id);
       }
-    } catch {
-      setError("Document not found.");
+    } catch (err: any) {
+      const status = err?.response?.status;
+      setError(status === 404 ? "Document not found." : "Failed to load document. Please refresh.");
     } finally {
       setLoading(false);
     }
   };
 
   const loadAssessment = async (assessmentId: string) => {
-    const [aRes, fRes] = await Promise.all([
-      assessmentsApi.get(assessmentId),
-      assessmentsApi.getFindings(assessmentId),
-    ]);
-    setAssessment(aRes.data);
-    setFindings(fRes.data.findings ?? []);
+    try {
+      const [aRes, fRes] = await Promise.all([
+        assessmentsApi.get(assessmentId),
+        assessmentsApi.getFindings(assessmentId),
+      ]);
+      setAssessment(aRes.data);
+      setFindings(fRes.data.findings ?? []);
+    } catch {
+      setError("Could not load assessment results.");
+    }
   };
 
   const runAssessment = async () => {

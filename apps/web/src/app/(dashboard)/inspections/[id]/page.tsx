@@ -162,10 +162,12 @@ export default function WarRoomPage() {
   const [sendingScribe, setSendingScribe] = useState(false);
   const [activating, setActivating] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const loadAll = async () => {
     setLoading(true);
+    setLoadError("");
     try {
       const [inspRes, logRes] = await Promise.all([
         inspectionsApi.get(id),
@@ -173,6 +175,8 @@ export default function WarRoomPage() {
       ]);
       setInspection(inspRes.data);
       setLog(logRes.data.entries ?? []);
+    } catch {
+      setLoadError("Could not load inspection. Please refresh.");
     } finally {
       setLoading(false);
     }
@@ -249,7 +253,7 @@ export default function WarRoomPage() {
   if (!inspection) {
     return (
       <div className="text-center py-24">
-        <p className="text-muted-foreground">Inspection not found.</p>
+        <p className="text-muted-foreground">{loadError || "Inspection not found."}</p>
         <Link href="/inspections" className="text-sm text-primary hover:underline mt-2 inline-block">← Back to inspections</Link>
       </div>
     );

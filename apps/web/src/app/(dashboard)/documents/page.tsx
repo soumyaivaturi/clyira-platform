@@ -433,15 +433,19 @@ export default function DocumentsPage() {
   const [deptFilter, setDeptFilter] = useState("");
   const [showUpload, setShowUpload] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError("");
     try {
       const res = await documentsApi.list({
         ...(categoryFilter ? { document_category: categoryFilter } : {}),
         ...(deptFilter ? { department_owner: deptFilter } : {}),
       });
       setDocuments(res.data.documents ?? []);
+    } catch {
+      setLoadError("Could not load documents. Please refresh.");
     } finally {
       setLoading(false);
     }
@@ -476,6 +480,12 @@ export default function DocumentsPage() {
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-4 py-3">
+          {loadError}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">

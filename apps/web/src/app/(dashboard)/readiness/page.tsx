@@ -32,12 +32,17 @@ export default function ReadinessPage() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [tab, setTab] = useState<"overview" | "gaps" | "mock">("overview");
+  const [error, setError] = useState("");
+  const [mockError, setMockError] = useState("");
 
   const load = async () => {
     setLoading(true);
+    setError("");
     try {
       const res = await readinessApi.dashboard();
       setReadiness(res.data);
+    } catch {
+      setError("Could not load readiness data. Please refresh.");
     } finally {
       setLoading(false);
     }
@@ -45,10 +50,13 @@ export default function ReadinessPage() {
 
   const runMock = async () => {
     setRunning(true);
+    setMockError("");
     try {
       const res = await readinessApi.mockInspection();
       setMockResult(res.data);
       setTab("mock");
+    } catch {
+      setMockError("Failed to generate mock inspection. Please try again.");
     } finally {
       setRunning(false);
     }
@@ -84,6 +92,17 @@ export default function ReadinessPage() {
           </button>
         </div>
       </div>
+
+      {error && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-4 py-3">
+          {error}
+        </div>
+      )}
+      {mockError && (
+        <div className="bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg px-4 py-3">
+          {mockError}
+        </div>
+      )}
 
       {/* Company Score Banner */}
       <div className="bg-card border rounded-xl p-6">
