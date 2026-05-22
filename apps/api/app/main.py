@@ -265,3 +265,31 @@ async def seed_enforcement_corpus(
         raise HTTPException(status_code=403, detail="Forbidden")
     background_tasks.add_task(_run_enforcement_seed, source, years)
     return {"status": "seeding_started", "source": source, "years": years}
+
+
+# Debug: test seeder connectivity + first-pass synchronously (admin only)
+@app.get("/debug/seed-test")
+async def debug_seed_test(request: Request):
+    import os, sys, traceback
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        import httpx
+        from seed_enforcement import fetch_openfda, parse_openfda_record, OPENFDA_ENDPOINTS
+        from app.core.database import engine as _engine
+        db_url = _engine.url.render_as_string(hide_password=False)
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            raw = await fetch_openfda(client, OPENFDA_ENDPOINTS["drug_enforcement"], 1, limit=5)
+        parsed = [parse_openfda_record(r, "drug") for r in raw]
+        return {
+            "openfda_reachable": True,
+            "raw_count": len(raw),
+            "parsed_count": len(parsed),
+            "sample": parsed[0] if parsed else None,
+            "db_url_prefix": db_url[:40] + "***",
+        }
+    except Exception as e:
+        return {"error": str(e), "trace": traceback.format_exc()[-500:]}
