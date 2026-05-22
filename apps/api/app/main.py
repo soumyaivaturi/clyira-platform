@@ -2,7 +2,7 @@
 Clyira API — Main Application Entry Point
 Quality Intelligence Platform for Life Sciences
 """
-from fastapi import FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
@@ -211,44 +211,57 @@ app.include_router(readiness.router, prefix="/api/v1/readiness", tags=["Audit Re
 app.include_router(inspections.router, prefix="/api/v1/inspections", tags=["Real-Time Audit Support"])
 
 
-# Admin: seed enforcement corpus via HTTP (protected by secret header)
-@app.post("/admin/seed-enforcement")
-async def seed_enforcement_corpus(
-    request: Request,
-    years: int = 3,
-    source: str = "all",
-):
-    import os, asyncio
-    from fastapi import Request
-    import os as _os, asyncio as _asyncio
-    secret = request.headers.get("X-Admin-Secret", "")
-    if secret != _os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
-        from fastapi import HTTPException as _HTTPException
-        raise _HTTPException(status_code=403, detail="Forbidden")
-
-    async def _run_seed():
-        import sys
-        sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), "..", "scripts"))
-        import httpx as _httpx
-        from seed_enforcement import (
-            fetch_openfda, fetch_warning_letters, fetch_ema_noncompliance,
-            parse_openfda_record, compute_trends, write_to_db, OPENFDA_ENDPOINTS,
-        )
-        from app.core.database import engine as _engine
-        db_url = str(_engine.url)
-        records: list = []
-        async with _httpx.AsyncClient(follow_redirects=True) as client:
+async def _run_enforcement_seed(source: str, years: int) -> None:
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    import httpx
+    from seed_enforcement import (
+        fetch_openfda, fetch_warning_letters, fetch_ema_noncompliance,
+        parse_openfda_record, compute_trends, write_to_db, OPENFDA_ENDPOINTS,
+    )
+    from app.core.database import engine as _engine
+    # render_as_string preserves the password (str() obscures it with ***)
+    db_url = _engine.url.render_as_string(hide_password=False)
+    records: list = []
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            headers={"User-Agent": "Clyira/1.0 (enforcement corpus builder)"},
+            timeout=60.0,
+        ) as client:
             if source in ("all", "fda"):
                 for ep_key in ("drug_enforcement", "device_enforcement"):
                     raw = await fetch_openfda(client, OPENFDA_ENDPOINTS[ep_key], years)
                     records.extend(parse_openfda_record(r, ep_key.split("_")[0]) for r in raw)
+                    print(f"  openFDA {ep_key}: {len(raw)} raw records")
             if source in ("all", "wl"):
-                records.extend(await fetch_warning_letters(client, years))
+                wl = await fetch_warning_letters(client, years)
+                records.extend(wl)
+                print(f"  Warning letters: {len(wl)} records")
             if source in ("all", "ema"):
-                records.extend(await fetch_ema_noncompliance(client, years))
+                ema = await fetch_ema_noncompliance(client, years)
+                records.extend(ema)
+                print(f"  EMA non-compliance: {len(ema)} records")
         records = compute_trends(records)
         inserted = await write_to_db(records, db_url)
-        print(f"Enforcement seeder done: {inserted} new records")
+        print(f"Enforcement seeder complete: {inserted} new records inserted (total fetched={len(records)})")
+    except Exception as e:
+        print(f"Enforcement seeder ERROR: {e}")
+        raise
 
-    _asyncio.create_task(_run_seed())
+
+# Admin: seed enforcement corpus via HTTP (protected by secret header)
+@app.post("/admin/seed-enforcement")
+async def seed_enforcement_corpus(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    years: int = 3,
+    source: str = "all",
+):
+    import os
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Forbidden")
+    background_tasks.add_task(_run_enforcement_seed, source, years)
     return {"status": "seeding_started", "source": source, "years": years}
