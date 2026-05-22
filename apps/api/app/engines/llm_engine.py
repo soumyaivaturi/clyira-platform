@@ -1,41 +1,48 @@
 """
 LLM Engine — Gemini-powered semantic analysis.
+Calls the Gemini v1 REST API directly via httpx to avoid SDK v1beta routing issues.
 Handles: L3 (Content Quality), L6 (Cross-Doc Consistency), L8 (Regulatory Gap),
          L10 (Longitudinal Intelligence), and remediation generation.
-Uses google-generativeai (stable v1 SDK) — not google-genai (v1beta).
 """
 import json
 import logging
-
-import google.generativeai as genai
-from google.generativeai import types as genai_types
+import httpx
 
 from app.core.config import settings
 from app.engines.types import AssessmentContext, FindingResult
 
 logger = logging.getLogger(__name__)
 
+GEMINI_V1_URL = "https://generativelanguage.googleapis.com/v1/models/{model}:generateContent"
+
+
+async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
+    """Make a single Gemini v1 REST call. Returns response text."""
+    url = GEMINI_V1_URL.format(model=settings.GEMINI_MODEL)
+    payload = {
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": settings.GEMINI_MAX_TOKENS,
+        },
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            url,
+            params={"key": settings.GEMINI_API_KEY},
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+
 
 class LLMEngine:
     """
-    Semantic analysis engine powered by Gemini.
+    Semantic analysis engine powered by Gemini v1 REST API.
     Uses structured prompts with DTAP context for precise assessment.
     """
-
-    def __init__(self):
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        self.model_name = settings.GEMINI_MODEL
-        self.max_tokens = settings.GEMINI_MAX_TOKENS
-
-    def _make_model(self, system_prompt: str) -> genai.GenerativeModel:
-        return genai.GenerativeModel(
-            model_name=self.model_name,
-            system_instruction=system_prompt,
-            generation_config=genai_types.GenerationConfig(
-                temperature=0.3,
-                max_output_tokens=self.max_tokens,
-            ),
-        )
 
     async def run_checks(self, level: str, checks: list[str], context: AssessmentContext) -> list[FindingResult]:
         """Evaluate specific named checks via LLM (fallback for unimplemented rule checks)."""
@@ -61,9 +68,8 @@ class LLMEngine:
 
         system = self._get_system_prompt(level)
         try:
-            model = self._make_model(system)
-            response = await model.generate_content_async(prompt)
-            return self._parse_findings_response(response.text, level)
+            text = await _call_gemini(system, prompt)
+            return self._parse_findings_response(text, level)
         except Exception as e:
             logger.error(f"LLM run_checks failed for {level}: {e}")
             print(f"  LLM ERROR [{level}]: {type(e).__name__}: {e}")
@@ -97,11 +103,8 @@ class LLMEngine:
         user_prompt = self._build_assessment_prompt(level, context)
 
         try:
-            model = self._make_model(system_prompt)
-            response = await model.generate_content_async(user_prompt)
-            findings = self._parse_findings_response(response.text, level)
-            return findings
-
+            text = await _call_gemini(system_prompt, user_prompt)
+            return self._parse_findings_response(text, level)
         except Exception as e:
             logger.error(f"LLM assessment failed for {level}: {type(e).__name__}: {e}")
             print(f"  LLM ERROR [{level}]: {type(e).__name__}: {e}")
@@ -126,11 +129,6 @@ SEVERITY GUIDE:
 - low: Best practice gap or minor documentation weakness
 - info: Advisory observation for improvement
 
-CITATION TYPES:
-- "direct": Explicit regulatory requirement (cite specific CFR/Annex/Guidance section)
-- "traceability": Internal consistency or cross-reference requirement
-- "substantive": Industry best practice with regulatory backing
-
 OUTPUT FORMAT: Return a JSON array of ALL findings. Do not omit findings to save space.
 Each finding: {{"level": "...", "severity": "...", "category": "...", "title": "...",
 "description": "...", "evidence": "...", "location": "...",
@@ -138,7 +136,6 @@ Each finding: {{"level": "...", "severity": "...", "category": "...", "title": "
 "suggestion_draft": "...", "confidence_score": 0.0}}"""
 
     def _build_assessment_prompt(self, level: str, context: AssessmentContext) -> str:
-        """Build the assessment prompt with full context"""
         profile = context.dtap_profile
         level_config = profile.levels[level]
 
@@ -153,17 +150,16 @@ Each finding: {{"level": "...", "severity": "...", "category": "...", "title": "
         for check in level_config.checks:
             prompt_parts.append(f"- {check.replace('_', ' ').title()}")
 
-        prompt_parts.append(f"\n### Document Content (truncated to key sections):")
-        doc_excerpt = context.document_text[:50000]
-        prompt_parts.append(doc_excerpt)
+        prompt_parts.append(f"\n### Document Content:")
+        prompt_parts.append(context.document_text[:50000])
 
-        if context.regulatory_context and level in ("L8",):
+        if context.regulatory_context and level == "L8":
             prompt_parts.append("\n### Relevant Regulatory Requirements:")
             for reg in context.regulatory_context[:10]:
                 prompt_parts.append(f"- [{reg.get('citation_reference', '')}] {reg.get('content', '')[:200]}")
 
         if context.user_references:
-            prompt_parts.append("\n### Organization-Specific References (uploaded by user):")
+            prompt_parts.append("\n### Organization-Specific References:")
             for ref in context.user_references[:5]:
                 prompt_parts.append(f"- {ref.get('title', 'Reference')}: {ref.get('extracted_text', '')[:500]}")
 
@@ -171,16 +167,12 @@ Each finding: {{"level": "...", "severity": "...", "category": "...", "title": "
             prompt_parts.append(f"\n### Applicable Agencies: {', '.join(context.company_agencies)}")
 
         if context.regulatory_frameworks:
-            prompt_parts.append(f"\n### Regulatory Frameworks Selected for Assessment:")
-            prompt_parts.append(f"Assess this document specifically against: {', '.join(context.regulatory_frameworks)}")
-            prompt_parts.append("Prioritize citations and gap analysis from these frameworks only.")
+            prompt_parts.append(f"\n### Regulatory Frameworks:")
+            prompt_parts.append(f"Assess against: {', '.join(context.regulatory_frameworks)}")
 
         prompt_parts.append("""
 ### Output Instructions:
-Return a comprehensive JSON array of ALL findings for every check listed above.
-For each check, look deeply — report every gap, ambiguity, missing element, weak language, or non-conformance.
-If a section is present but incomplete, flag it. If language is vague, flag it. If a requirement is implied but not explicit, flag it.
-Aim for complete coverage: it is better to report 20 findings and have 2 dismissed than to miss 5 real issues.
+Return a comprehensive JSON array of ALL findings. Be thorough — aim for 15-25 findings per level.
 Return ONLY the JSON array with no preamble or explanation.
 """)
 
@@ -191,24 +183,21 @@ Return ONLY the JSON array with no preamble or explanation.
     ) -> list[FindingResult]:
         """Generate remediation suggestions for findings that lack them"""
         findings_needing_remediation = [f for f in findings if not f.suggestion_draft]
-
         if not findings_needing_remediation:
             return findings
 
         prompt = self._build_remediation_prompt(findings_needing_remediation, context)
-
         try:
-            model = self._make_model(
+            text = await _call_gemini(
                 "You are Clyira's Remediation Engine. Generate specific, actionable remediation "
-                "suggestions for quality document findings. Be practical and reference industry standards."
+                "suggestions for quality document findings. Be practical and reference industry standards.",
+                prompt,
             )
-            response = await model.generate_content_async(prompt)
-            remediation_data = self._parse_remediation_response(response.text)
+            remediation_data = self._parse_remediation_response(text)
             for i, finding in enumerate(findings_needing_remediation):
                 if i < len(remediation_data):
                     finding.suggestion_draft = remediation_data[i].get("suggestion", "")
                     finding.next_step_text = remediation_data[i].get("next_step", "")
-
         except Exception as e:
             logger.error(f"Remediation generation failed: {e}")
 
@@ -220,12 +209,7 @@ Return ONLY the JSON array with no preamble or explanation.
             prompt += f"{i+1}. [{f.level}] {f.severity.upper()} — {f.title}\n"
             prompt += f"   Description: {f.description}\n"
             prompt += f"   Citation: {f.regulatory_citation}\n\n"
-
-        prompt += """For each finding, provide:
-1. suggestion_draft: Specific text/content to fix the issue
-2. next_step: Immediate action the user should take
-
-Return as JSON array: [{"suggestion": "...", "next_step": "..."}]"""
+        prompt += 'Return as JSON array: [{"suggestion": "...", "next_step": "..."}]'
         return prompt
 
     def _parse_findings_response(self, response_text: str, level: str) -> list[FindingResult]:
@@ -241,10 +225,8 @@ Return as JSON array: [{"suggestion": "...", "next_step": "..."}]"""
             if not isinstance(data, list):
                 data = [data]
         except json.JSONDecodeError:
-            # Recover complete objects from truncated response
             data = []
-            depth = 0
-            start = None
+            depth, start = 0, None
             for i, ch in enumerate(json_text):
                 if ch == "{":
                     if depth == 0:
@@ -254,15 +236,13 @@ Return as JSON array: [{"suggestion": "...", "next_step": "..."}]"""
                     depth -= 1
                     if depth == 0 and start is not None:
                         try:
-                            obj = json.loads(json_text[start:i + 1])
-                            data.append(obj)
+                            data.append(json.loads(json_text[start:i + 1]))
                         except json.JSONDecodeError:
                             pass
                         start = None
             if not data:
-                logger.warning(f"Could not recover any findings from truncated LLM response for {level}")
+                logger.warning(f"Could not recover findings from LLM response for {level}")
                 return []
-            logger.info(f"Recovered {len(data)} findings from truncated response for {level}")
 
         findings = []
         for item in data:
@@ -299,16 +279,11 @@ Return as JSON array: [{"suggestion": "...", "next_step": "..."}]"""
     @staticmethod
     def _get_level_name(level: str) -> str:
         names = {
-            "L1": "Structural Integrity",
-            "L2": "Document Control",
-            "L3": "Content Quality",
-            "L4": "ALCOA+ Data Integrity",
-            "L5": "Data Intelligence",
-            "L6": "Cross-Document Consistency",
-            "L7": "Lifecycle Compliance",
-            "L8": "Regulatory Gap Analysis",
-            "L9": "Enforcement Risk",
-            "L10": "Longitudinal Intelligence",
+            "L1": "Structural Integrity", "L2": "Document Control",
+            "L3": "Content Quality", "L4": "ALCOA+ Data Integrity",
+            "L5": "Data Intelligence", "L6": "Cross-Document Consistency",
+            "L7": "Lifecycle Compliance", "L8": "Regulatory Gap Analysis",
+            "L9": "Enforcement Risk", "L10": "Longitudinal Intelligence",
             "L11": "Submission Readiness",
         }
         return names.get(level, level)

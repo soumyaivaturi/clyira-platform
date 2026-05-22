@@ -101,24 +101,26 @@ async def debug_config():
 
 @app.get("/debug/llm")
 async def debug_llm():
-    """Direct Gemini API test using stable google-generativeai SDK"""
+    """Direct Gemini v1 REST API test — bypasses SDK v1beta routing"""
     if not settings.GEMINI_API_KEY:
         return {"status": "error", "detail": "GEMINI_API_KEY not set"}
     try:
-        import google.generativeai as genai
-        from google.generativeai import types as genai_types
-        import time
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        model = genai.GenerativeModel(
-            model_name=settings.GEMINI_MODEL,
-            generation_config=genai_types.GenerationConfig(temperature=0.0, max_output_tokens=10),
-        )
+        import httpx, time
+        url = f"https://generativelanguage.googleapis.com/v1/models/{settings.GEMINI_MODEL}:generateContent"
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": "Reply with exactly: OK"}]}],
+            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 10},
+        }
         t0 = time.time()
-        response = await model.generate_content_async("Reply with exactly: OK")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, params={"key": settings.GEMINI_API_KEY}, json=payload)
         elapsed = round(time.time() - t0, 2)
-        return {"status": "ok", "model": settings.GEMINI_MODEL, "elapsed_s": elapsed, "response": response.text}
+        if resp.status_code == 200:
+            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            return {"status": "ok", "model": settings.GEMINI_MODEL, "elapsed_s": elapsed, "response": text}
+        return {"status": "error", "http_status": resp.status_code, "detail": resp.text[:300]}
     except Exception as e:
-        return {"status": "error", "model": settings.GEMINI_MODEL, "detail": f"{type(e).__name__}: {e}"}
+        return {"status": "error", "detail": f"{type(e).__name__}: {e}"}
 
 
 # Health check
