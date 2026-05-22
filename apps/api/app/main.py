@@ -187,6 +187,27 @@ async def debug_tables():
         return {"status": "error", "detail": str(e)}
 
 
+@app.get("/debug/doc-text/{document_id}")
+async def debug_doc_text(document_id: str, request: Request):
+    """Show extracted_text length and preview for a document (admin only)"""
+    import os
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from sqlalchemy import text
+    from app.core.database import engine
+    async with engine.connect() as conn:
+        r = await conn.execute(
+            text("SELECT id, title, file_type, status, length(extracted_text) as text_len, left(extracted_text, 500) as preview FROM documents WHERE id=:id"),
+            {"id": document_id}
+        )
+        row = r.fetchone()
+        if not row:
+            return {"error": "not found"}
+        return {"id": row[0], "title": row[1], "file_type": row[2], "status": row[3], "text_length": row[4], "preview": row[5]}
+
+
 # API info
 @app.get("/")
 async def root():
