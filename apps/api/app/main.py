@@ -101,24 +101,49 @@ async def debug_config():
 
 @app.get("/debug/llm")
 async def debug_llm():
-    """Direct Gemini v1 REST API test — bypasses SDK v1beta routing"""
+    """List available Gemini models for this API key, then test the first usable one"""
     if not settings.GEMINI_API_KEY:
         return {"status": "error", "detail": "GEMINI_API_KEY not set"}
     try:
         import httpx, time
-        url = f"https://generativelanguage.googleapis.com/v1/models/{settings.GEMINI_MODEL}:generateContent"
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": "Reply with exactly: OK"}]}],
-            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 10},
-        }
-        t0 = time.time()
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, params={"key": settings.GEMINI_API_KEY}, json=payload)
-        elapsed = round(time.time() - t0, 2)
-        if resp.status_code == 200:
-            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            return {"status": "ok", "model": settings.GEMINI_MODEL, "elapsed_s": elapsed, "response": text}
-        return {"status": "error", "http_status": resp.status_code, "detail": resp.text[:300]}
+            # List models on both v1 and v1beta
+            results = {}
+            for api_ver in ("v1", "v1beta"):
+                r = await client.get(
+                    f"https://generativelanguage.googleapis.com/{api_ver}/models",
+                    params={"key": settings.GEMINI_API_KEY},
+                )
+                if r.status_code == 200:
+                    models = r.json().get("models", [])
+                    results[api_ver] = [
+                        m["name"] for m in models
+                        if "generateContent" in m.get("supportedGenerationMethods", [])
+                    ]
+                else:
+                    results[api_ver] = f"error {r.status_code}: {r.text[:100]}"
+
+            # Try to call the first available generateContent model
+            test_result = {}
+            candidates = results.get("v1beta", []) if isinstance(results.get("v1beta"), list) else []
+            if candidates:
+                model_name = candidates[0].replace("models/", "")
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+                t0 = time.time()
+                r = await client.post(
+                    url,
+                    params={"key": settings.GEMINI_API_KEY},
+                    json={"contents": [{"role": "user", "parts": [{"text": "Say OK"}]}],
+                          "generationConfig": {"maxOutputTokens": 5}},
+                )
+                elapsed = round(time.time() - t0, 2)
+                if r.status_code == 200:
+                    text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                    test_result = {"model_tested": model_name, "ok": True, "elapsed_s": elapsed, "response": text}
+                else:
+                    test_result = {"model_tested": model_name, "ok": False, "error": r.text[:200]}
+
+        return {"available_models": results, "test": test_result}
     except Exception as e:
         return {"status": "error", "detail": f"{type(e).__name__}: {e}"}
 
