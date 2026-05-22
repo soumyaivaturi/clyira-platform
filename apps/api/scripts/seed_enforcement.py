@@ -617,9 +617,8 @@ async def main():
             log.info(f"  Parsed {len(ema_records)} EMA records")
             all_records.extend(ema_records)
 
-    # Filter records with at least one observation category (relevant to QA)
-    all_records = [r for r in all_records if r.get("observation_categories") or r.get("cfr_citations")]
-    log.info(f"Records with QA relevance: {len(all_records)}")
+    # Keep all records — even those without matched categories are useful for trend analysis
+    log.info(f"Total records fetched: {len(all_records)}")
 
     # Compute trend analysis
     all_records = compute_trends(all_records)

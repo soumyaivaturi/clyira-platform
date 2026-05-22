@@ -185,7 +185,6 @@ async def seed_enforcement_corpus(
                 records.extend(await fetch_warning_letters(client, years))
             if source in ("all", "ema"):
                 records.extend(await fetch_ema_noncompliance(client, years))
-        records = [r for r in records if r.get("observation_categories") or r.get("cfr_citations")]
         records = compute_trends(records)
         inserted = await write_to_db(records, db_url)
         print(f"Enforcement seeder done: {inserted} new records")
