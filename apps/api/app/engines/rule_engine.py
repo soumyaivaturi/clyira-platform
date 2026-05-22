@@ -60,10 +60,13 @@ class RuleEngine:
 
     async def _llm_fallback(self, level: str, checks: list[str], context: AssessmentContext) -> list[FindingResult]:
         """Send unimplemented rule checks to the LLM engine."""
+        import asyncio
         from app.engines.llm_engine import LLMEngine
         from app.core.config import settings
         if not settings.GEMINI_API_KEY:
             return []
+        # 4s gap before every LLM call to stay under 15 RPM free-tier limit
+        await asyncio.sleep(4)
         try:
             engine = LLMEngine()
             return await engine.run_checks(level, checks, context)
