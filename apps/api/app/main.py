@@ -101,7 +101,7 @@ async def debug_config():
 
 @app.get("/debug/llm")
 async def debug_llm():
-    """Direct Gemini API test — bypasses all assessment logic"""
+    """Direct Gemini API test — lists available models and tests generation"""
     if not settings.GEMINI_API_KEY:
         return {"status": "error", "detail": "GEMINI_API_KEY not set"}
     try:
@@ -109,16 +109,33 @@ async def debug_llm():
         from google.genai import types as genai_types
         import time
         client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        t0 = time.time()
-        response = await client.aio.models.generate_content(
-            model=settings.GEMINI_MODEL,
-            contents="Reply with exactly: {\"ok\": true}",
-            config=genai_types.GenerateContentConfig(temperature=0.0, max_output_tokens=20),
-        )
-        elapsed = round(time.time() - t0, 2)
-        return {"status": "ok", "model": settings.GEMINI_MODEL, "elapsed_s": elapsed, "response": response.text}
+
+        # List available models
+        available = []
+        try:
+            async for m in await client.aio.models.list():
+                if "generateContent" in (m.supported_actions or []):
+                    available.append(m.name)
+        except Exception as list_err:
+            available = [f"list_error: {list_err}"]
+
+        # Try a few candidate model names
+        results = {}
+        for candidate in ["gemini-1.5-flash-latest", "gemini-1.5-flash-002", "gemini-2.0-flash", "gemini-2.0-flash-lite"]:
+            try:
+                t0 = time.time()
+                resp = await client.aio.models.generate_content(
+                    model=candidate,
+                    contents="Say OK",
+                    config=genai_types.GenerateContentConfig(temperature=0.0, max_output_tokens=5),
+                )
+                results[candidate] = {"ok": True, "elapsed_s": round(time.time() - t0, 2), "text": resp.text}
+            except Exception as e:
+                results[candidate] = {"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}
+
+        return {"available_models": available[:20], "model_tests": results}
     except Exception as e:
-        return {"status": "error", "model": settings.GEMINI_MODEL, "detail": f"{type(e).__name__}: {e}"}
+        return {"status": "error", "detail": f"{type(e).__name__}: {e}"}
 
 
 # Health check
