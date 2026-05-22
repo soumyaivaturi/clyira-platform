@@ -166,8 +166,9 @@ async def fetch_openfda(
     skip = 0
 
     while True:
+        # Use spaces not +: httpx URL-encodes + as %2B which breaks Lucene range syntax
         params = {
-            "search": f'report_date:[{cutoff}+TO+99991231]',
+            "search": f'report_date:[{cutoff} TO 99991231]',
             "limit": limit,
             "skip": skip,
         }
