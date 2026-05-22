@@ -92,7 +92,9 @@ class LLMEngine:
 
     async def run(self, context: AssessmentContext, levels: list[str]) -> list[FindingResult]:
         """Run LLM assessment for specified levels"""
+        import asyncio
         findings: list[FindingResult] = []
+        first = True
 
         for level in levels:
             level_config = context.dtap_profile.levels.get(level)
@@ -100,6 +102,11 @@ class LLMEngine:
                 continue
             if level_config.engine not in ("llm", "hybrid"):
                 continue
+
+            # 4s spacing between calls keeps us under the 15 RPM free-tier limit
+            if not first:
+                await asyncio.sleep(4)
+            first = False
 
             print(f"  LLM: running {level}...")
             level_findings = await self._assess_level(level, context)

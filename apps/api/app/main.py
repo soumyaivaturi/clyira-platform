@@ -271,6 +271,26 @@ async def _run_enforcement_seed(source: str, years: int) -> None:
         raise
 
 
+# Admin: reset stuck assessments (status=running → failed)
+@app.post("/admin/reset-stuck-assessments")
+async def reset_stuck_assessments(request: Request):
+    import os
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from sqlalchemy import text
+    from app.core.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(text(
+            "UPDATE assessments SET status='failed' WHERE status='running' "
+            "RETURNING id, document_id"
+        ))
+        rows = result.fetchall()
+        await db.commit()
+    return {"reset": len(rows), "ids": [str(r[0]) for r in rows]}
+
+
 # Admin: seed enforcement corpus via HTTP (protected by secret header)
 @app.post("/admin/seed-enforcement")
 async def seed_enforcement_corpus(
