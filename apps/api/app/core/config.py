@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     # Gemini (Google AI)
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-1.5-pro"
+    GEMINI_MODEL: str = "gemini-1.5-flash"
     GEMINI_MAX_TOKENS: int = 8192
 
     # Anthropic (Claude API) — kept for backwards compatibility
