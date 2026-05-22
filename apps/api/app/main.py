@@ -101,41 +101,24 @@ async def debug_config():
 
 @app.get("/debug/llm")
 async def debug_llm():
-    """Direct Gemini API test — lists available models and tests generation"""
+    """Direct Gemini API test using stable google-generativeai SDK"""
     if not settings.GEMINI_API_KEY:
         return {"status": "error", "detail": "GEMINI_API_KEY not set"}
     try:
-        from google import genai
-        from google.genai import types as genai_types
+        import google.generativeai as genai
+        from google.generativeai import types as genai_types
         import time
-        client = genai.Client(api_key=settings.GEMINI_API_KEY)
-
-        # List available models
-        available = []
-        try:
-            async for m in await client.aio.models.list():
-                if "generateContent" in (m.supported_actions or []):
-                    available.append(m.name)
-        except Exception as list_err:
-            available = [f"list_error: {list_err}"]
-
-        # Try a few candidate model names
-        results = {}
-        for candidate in ["gemini-1.5-flash-latest", "gemini-1.5-flash-002", "gemini-2.0-flash", "gemini-2.0-flash-lite"]:
-            try:
-                t0 = time.time()
-                resp = await client.aio.models.generate_content(
-                    model=candidate,
-                    contents="Say OK",
-                    config=genai_types.GenerateContentConfig(temperature=0.0, max_output_tokens=5),
-                )
-                results[candidate] = {"ok": True, "elapsed_s": round(time.time() - t0, 2), "text": resp.text}
-            except Exception as e:
-                results[candidate] = {"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}
-
-        return {"available_models": available[:20], "model_tests": results}
+        genai.configure(api_key=settings.GEMINI_API_KEY)
+        model = genai.GenerativeModel(
+            model_name=settings.GEMINI_MODEL,
+            generation_config=genai_types.GenerationConfig(temperature=0.0, max_output_tokens=10),
+        )
+        t0 = time.time()
+        response = await model.generate_content_async("Reply with exactly: OK")
+        elapsed = round(time.time() - t0, 2)
+        return {"status": "ok", "model": settings.GEMINI_MODEL, "elapsed_s": elapsed, "response": response.text}
     except Exception as e:
-        return {"status": "error", "detail": f"{type(e).__name__}: {e}"}
+        return {"status": "error", "model": settings.GEMINI_MODEL, "detail": f"{type(e).__name__}: {e}"}
 
 
 # Health check

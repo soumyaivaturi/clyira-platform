@@ -2,12 +2,13 @@
 LLM Engine — Gemini-powered semantic analysis.
 Handles: L3 (Content Quality), L6 (Cross-Doc Consistency), L8 (Regulatory Gap),
          L10 (Longitudinal Intelligence), and remediation generation.
+Uses google-generativeai (stable v1 SDK) — not google-genai (v1beta).
 """
 import json
 import logging
 
-from google import genai
-from google.genai import types as genai_types
+import google.generativeai as genai
+from google.generativeai import types as genai_types
 
 from app.core.config import settings
 from app.engines.types import AssessmentContext, FindingResult
@@ -22,9 +23,19 @@ class LLMEngine:
     """
 
     def __init__(self):
-        self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        genai.configure(api_key=settings.GEMINI_API_KEY)
         self.model_name = settings.GEMINI_MODEL
         self.max_tokens = settings.GEMINI_MAX_TOKENS
+
+    def _make_model(self, system_prompt: str) -> genai.GenerativeModel:
+        return genai.GenerativeModel(
+            model_name=self.model_name,
+            system_instruction=system_prompt,
+            generation_config=genai_types.GenerationConfig(
+                temperature=0.3,
+                max_output_tokens=self.max_tokens,
+            ),
+        )
 
     async def run_checks(self, level: str, checks: list[str], context: AssessmentContext) -> list[FindingResult]:
         """Evaluate specific named checks via LLM (fallback for unimplemented rule checks)."""
@@ -50,18 +61,12 @@ class LLMEngine:
 
         system = self._get_system_prompt(level)
         try:
-            response = await self.client.aio.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=system,
-                    temperature=0.3,
-                    max_output_tokens=self.max_tokens,
-                ),
-            )
+            model = self._make_model(system)
+            response = await model.generate_content_async(prompt)
             return self._parse_findings_response(response.text, level)
         except Exception as e:
             logger.error(f"LLM run_checks failed for {level}: {e}")
+            print(f"  LLM ERROR [{level}]: {type(e).__name__}: {e}")
             return []
 
     async def run(self, context: AssessmentContext, levels: list[str]) -> list[FindingResult]:
@@ -75,7 +80,9 @@ class LLMEngine:
             if level_config.engine not in ("llm", "hybrid"):
                 continue
 
+            print(f"  LLM: running {level}...")
             level_findings = await self._assess_level(level, context)
+            print(f"  LLM: {level} → {len(level_findings)} findings")
             findings.extend(level_findings)
 
         return findings
@@ -90,15 +97,8 @@ class LLMEngine:
         user_prompt = self._build_assessment_prompt(level, context)
 
         try:
-            response = await self.client.aio.models.generate_content(
-                model=self.model_name,
-                contents=user_prompt,
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    temperature=0.3,
-                    max_output_tokens=self.max_tokens,
-                ),
-            )
+            model = self._make_model(system_prompt)
+            response = await model.generate_content_async(user_prompt)
             findings = self._parse_findings_response(response.text, level)
             return findings
 
@@ -198,18 +198,11 @@ Return ONLY the JSON array with no preamble or explanation.
         prompt = self._build_remediation_prompt(findings_needing_remediation, context)
 
         try:
-            response = await self.client.aio.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=(
-                        "You are Clyira's Remediation Engine. Generate specific, actionable remediation "
-                        "suggestions for quality document findings. Be practical and reference industry standards."
-                    ),
-                    temperature=0.2,
-                    max_output_tokens=self.max_tokens,
-                ),
+            model = self._make_model(
+                "You are Clyira's Remediation Engine. Generate specific, actionable remediation "
+                "suggestions for quality document findings. Be practical and reference industry standards."
             )
+            response = await model.generate_content_async(prompt)
             remediation_data = self._parse_remediation_response(response.text)
             for i, finding in enumerate(findings_needing_remediation):
                 if i < len(remediation_data):
@@ -243,13 +236,12 @@ Return as JSON array: [{"suggestion": "...", "next_step": "..."}]"""
             json_text = json_text.split("```")[1].split("```")[0]
         json_text = json_text.strip()
 
-        # Try clean parse first
         try:
             data = json.loads(json_text)
             if not isinstance(data, list):
                 data = [data]
         except json.JSONDecodeError:
-            # Response was truncated — recover complete objects by extracting individual {...} blocks
+            # Recover complete objects from truncated response
             data = []
             depth = 0
             start = None
