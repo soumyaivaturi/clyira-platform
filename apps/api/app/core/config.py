@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
 
-    # Gemini (Google AI — fallback when no Groq key)
+    # Gemini (Google AI — primary for deep LLM analysis, 1,500 req/day free)
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-2.0-flash"
     GEMINI_MAX_TOKENS: int = 16384
 
     # Anthropic (Claude API) — kept for backwards compatibility

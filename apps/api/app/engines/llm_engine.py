@@ -19,11 +19,11 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
 def _llm_available() -> bool:
-    return bool(settings.GROQ_API_KEY or settings.GEMINI_API_KEY)
+    return bool(settings.GEMINI_API_KEY or settings.GROQ_API_KEY)
 
 
 def _active_model() -> str:
-    return settings.GROQ_MODEL if settings.GROQ_API_KEY else settings.GEMINI_MODEL
+    return settings.GEMINI_MODEL if settings.GEMINI_API_KEY else settings.GROQ_MODEL
 
 
 async def _call_groq(system_prompt: str, user_prompt: str) -> str:
@@ -100,12 +100,12 @@ async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
 
 
 async def _call_llm(system_prompt: str, user_prompt: str) -> str:
-    """Route to Groq (preferred) or Gemini (fallback) based on which key is configured."""
-    if settings.GROQ_API_KEY:
-        return await _call_groq(system_prompt, user_prompt)
+    """Route to Gemini (primary — large context, 1,500 RPD free) or Groq (fallback)."""
     if settings.GEMINI_API_KEY:
         return await _call_gemini(system_prompt, user_prompt)
-    raise ValueError("No LLM API key configured — set GROQ_API_KEY or GEMINI_API_KEY")
+    if settings.GROQ_API_KEY:
+        return await _call_groq(system_prompt, user_prompt)
+    raise ValueError("No LLM API key configured — set GEMINI_API_KEY or GROQ_API_KEY")
 
 
 class LLMEngine:
@@ -131,7 +131,7 @@ class LLMEngine:
             for check in checks:
                 prompt_parts.append(f"- {check.replace('_', ' ').title()}")
 
-        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:15000]}")
+        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:40000]}")
         prompt_parts.append(f"\nApplicable agencies: {', '.join(context.company_agencies)}")
         if context.regulatory_frameworks:
             prompt_parts.append(f"Regulatory frameworks: {', '.join(context.regulatory_frameworks)}")
@@ -189,7 +189,7 @@ Return ONLY a JSON array of findings with no preamble.
             for check in level_config.checks:
                 prompt_parts.append(f"- {check.replace('_', ' ').title()}")
 
-        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:15000]}")
+        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:40000]}")
 
         if "L8" in levels and context.regulatory_context:
             prompt_parts.append("\n### Regulatory Requirements (for L8):")
@@ -291,7 +291,7 @@ Each finding: {{"level": "...", "severity": "...", "category": "...", "title": "
             prompt_parts.append(f"- {check.replace('_', ' ').title()}")
 
         prompt_parts.append(f"\n### Document Content:")
-        prompt_parts.append(context.document_text[:15000])
+        prompt_parts.append(context.document_text[:40000])
 
         if context.regulatory_context and level == "L8":
             prompt_parts.append("\n### Relevant Regulatory Requirements:")
