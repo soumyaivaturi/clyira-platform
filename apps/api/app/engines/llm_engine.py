@@ -154,7 +154,7 @@ Return ONLY a JSON array of findings with no preamble.
         prompt_parts.append("""
 ### Critical Output Instructions:
 Each finding MUST include the correct "level" field (e.g., "L3", "L6", "L8", "L10").
-Aim for 8-15 findings per level. Be thorough and flag every gap.
+Aim for 5-8 findings per level. Flag the most significant gaps per level.
 Return ALL findings for ALL levels in a single JSON array. No preamble.
 """)
 
