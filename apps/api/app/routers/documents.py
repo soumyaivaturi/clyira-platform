@@ -231,3 +231,60 @@ async def add_references(
         added.append({"id": ref.id, "title": ref.title})
 
     return {"document_id": document_id, "references_added": len(added), "references": added}
+
+
+@router.get("/{document_id}/assessment-history", response_model=dict)
+async def get_assessment_history(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return all completed assessments for a document, ordered newest first.
+    Used for re-assessment version history comparison.
+    """
+    doc_result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.company_id == current_user.company_id,
+        )
+    )
+    if not doc_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    from app.models.assessment import Assessment
+    from sqlalchemy import desc
+    result = await db.execute(
+        select(Assessment)
+        .where(
+            Assessment.document_id == document_id,
+            Assessment.status == "completed",
+        )
+        .order_by(desc(Assessment.created_at))
+    )
+    assessments = result.scalars().all()
+
+    return {
+        "document_id": document_id,
+        "assessments": [
+            {
+                "id": a.id,
+                "clyira_score": a.clyira_score,
+                "adjusted_score": a.adjusted_score,
+                "score_band": a.score_band,
+                "findings_critical": a.findings_critical,
+                "findings_high": a.findings_high,
+                "findings_medium": a.findings_medium,
+                "findings_low": a.findings_low,
+                "findings_info": a.findings_info,
+                "data_integrity_hold": a.data_integrity_hold or False,
+                "dtap_id": a.dtap_id,
+                "levels_run": a.levels_run,
+                "model_version": a.model_version,
+                "processing_time_seconds": a.processing_time_seconds,
+                "created_at": str(a.created_at),
+            }
+            for a in assessments
+        ],
+        "count": len(assessments),
+    }

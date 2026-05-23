@@ -189,12 +189,31 @@ class DocumentService:
                 logger.error(f"DOCX extraction failed: {e}")
                 return ""
         elif file_type == "pdf":
+            # Primary: pdfplumber — better for structured/table-heavy PDFs
+            try:
+                import pdfplumber
+                pages = []
+                with pdfplumber.open(io.BytesIO(content)) as pdf:
+                    for page in pdf.pages:
+                        text = page.extract_text() or ""
+                        # Also extract tables as pipe-delimited text
+                        for table in page.extract_tables():
+                            rows = [" | ".join(str(c or "").strip() for c in row) for row in table if any(c for c in row)]
+                            text += "\n" + "\n".join(rows)
+                        if text.strip():
+                            pages.append(text)
+                result = "\n".join(pages)
+                if result.strip():
+                    return result
+            except Exception as e:
+                logger.warning(f"pdfplumber failed, falling back to PyPDF2: {e}")
+            # Fallback: PyPDF2
             try:
                 from PyPDF2 import PdfReader
                 reader = PdfReader(io.BytesIO(content))
                 return "\n".join(page.extract_text() or "" for page in reader.pages)
             except Exception as e:
-                logger.error(f"PDF extraction failed: {e}")
+                logger.error(f"PDF extraction failed entirely: {e}")
                 return ""
         elif file_type in ("txt", "md"):
             return content.decode("utf-8", errors="ignore")

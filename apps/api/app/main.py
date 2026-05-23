@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from app.core.config import settings
 from app.routers import auth, documents, assessments, companies, readiness, inspections
+from app.routers import assistant, export, audit
 
 
 @asynccontextmanager
@@ -231,6 +232,9 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(companies.router, prefix="/api/v1/companies", tags=["Companies"])
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
 app.include_router(assessments.router, prefix="/api/v1/assessments", tags=["Assessments"])
+app.include_router(export.router, prefix="/api/v1/assessments", tags=["Export"])
+app.include_router(assistant.router, prefix="/api/v1/assistant", tags=["Author & QA Assistant"])
+app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit Trail"])
 app.include_router(readiness.router, prefix="/api/v1/readiness", tags=["Audit Readiness"])
 app.include_router(inspections.router, prefix="/api/v1/inspections", tags=["Real-Time Audit Support"])
 

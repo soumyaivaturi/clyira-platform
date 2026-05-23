@@ -88,6 +88,7 @@ class AssessmentService:
 
             assessment.status = "completed"
             assessment.clyira_score = results["score"]
+            assessment.adjusted_score = results["score"]  # starts equal; updates as findings are resolved
             assessment.score_band = results["score_band"]
             assessment.findings_critical = results["finding_counts"]["critical"]
             assessment.findings_high = results["finding_counts"]["high"]
@@ -97,6 +98,8 @@ class AssessmentService:
             assessment.enforcement_matches = results["enforcement_matches"]
             assessment.processing_time_seconds = results["processing_time_seconds"]
             assessment.levels_run = results["levels_run"]
+            assessment.data_integrity_hold = results.get("data_integrity_hold", False)
+            assessment.suspended_reason = results.get("suspended_reason")
             from app.engines.llm_engine import _active_model
             assessment.model_version = _active_model()
 
@@ -106,6 +109,28 @@ class AssessmentService:
 
             await self.db.commit()
             logger.info(f"Assessment {assessment_id} completed: score={results['score']}")
+
+            # Audit log
+            try:
+                await self.write_audit_log(
+                    company_id=company_id,
+                    user_id=assessment.triggered_by,
+                    user_email=None,
+                    event_type="assessment_run",
+                    resource_type="assessment",
+                    resource_id=assessment_id,
+                    resource_label=document.title,
+                    detail={
+                        "score": results["score"],
+                        "score_band": results["score_band"],
+                        "findings_count": len(results["findings"]),
+                        "data_integrity_hold": results.get("data_integrity_hold", False),
+                        "dtap_id": assessment.dtap_id,
+                    },
+                )
+                await self.db.commit()
+            except Exception:
+                pass  # audit log failure must never break an assessment
 
         except Exception as e:
             import traceback
@@ -184,6 +209,7 @@ class AssessmentService:
 
     async def _store_findings(self, assessment_id: str, findings: list[FindingResult]):
         """Persist findings to database"""
+        from app.engines.scoring import ScoringEngine
         for finding in findings:
             db_finding = Finding(
                 assessment_id=assessment_id,
@@ -205,10 +231,69 @@ class AssessmentService:
                 next_step_text=finding.next_step_text,
                 validated=finding.validated,
                 confidence_score=finding.confidence_score,
+                remediation_priority=ScoringEngine.get_remediation_priority(finding.severity),
                 status="open",
             )
             self.db.add(db_finding)
 
+        await self.db.flush()
+
+    async def recompute_adjusted_score(self, assessment_id: str) -> float | None:
+        """Recompute adjusted_score from current finding statuses and persist to DB."""
+        assessment = await self.db.get(Assessment, assessment_id)
+        if not assessment:
+            return None
+
+        dtap_profile = None
+        if assessment.dtap_id:
+            from app.dtap import DTAPRegistry
+            dtap_profile = DTAPRegistry.get(assessment.dtap_id)
+        if not dtap_profile:
+            return None
+
+        result = await self.db.execute(
+            select(Finding).where(Finding.assessment_id == assessment_id)
+        )
+        findings = result.scalars().all()
+        if not findings:
+            return None
+
+        from app.engines.scoring import ScoringEngine
+        db_dicts = [
+            {"level": f.level, "severity": f.severity, "status": f.status, "title": f.title}
+            for f in findings
+        ]
+        score_result = ScoringEngine().calculate_from_db_findings(db_dicts, dtap_profile)
+        new_score = score_result["score"]
+
+        assessment.adjusted_score = new_score
+        await self.db.commit()
+        return new_score
+
+    async def write_audit_log(
+        self,
+        company_id: str,
+        user_id: str | None,
+        user_email: str | None,
+        event_type: str,
+        resource_type: str,
+        resource_id: str,
+        resource_label: str = "",
+        detail: dict | None = None,
+    ) -> None:
+        """Write an immutable audit log entry."""
+        from app.models.audit import AuditLog
+        log = AuditLog(
+            company_id=company_id,
+            user_id=user_id,
+            user_email=user_email,
+            event_type=event_type,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            resource_label=resource_label,
+            detail=detail or {},
+        )
+        self.db.add(log)
         await self.db.flush()
 
     @staticmethod

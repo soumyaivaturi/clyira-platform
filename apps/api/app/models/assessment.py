@@ -40,6 +40,11 @@ class Assessment(Base, TimestampMixin):
     enforcement_matches = Column(Integer, default=0)
     enforcement_details = Column(JSONB, default=list)
 
+    # Risk flags (Phase 4)
+    data_integrity_hold = Column(Boolean, default=False)
+    suspended_reason = Column(String(500))
+    adjusted_score = Column(Float)  # Recomputed as users resolve findings
+
     # Metadata
     processing_time_seconds = Column(Float)
     tokens_used = Column(Integer)
@@ -89,7 +94,9 @@ class Finding(Base, TimestampMixin):
     # Status workflow
     status = Column(String(50), default="open")  # open, acknowledged, in_progress, resolved, disputed
     response_text = Column(Text)  # User's response to finding
+    dispute_reason = Column(Text)  # Reason when status=disputed
     resolved_at = Column(String)
+    actioned_by = Column(String)  # User ID who last changed status
 
     # Anti-hallucination gate
     validated = Column(Boolean, default=False)  # Passed verification check

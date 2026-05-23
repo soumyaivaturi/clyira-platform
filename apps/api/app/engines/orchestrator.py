@@ -98,6 +98,7 @@ class AssessmentOrchestrator:
 
         # Phase 5: Scoring
         logger.info("Phase 5: Calculating score")
+        from app.engines.scoring import ScoringEngine
         score_result = self.scoring_engine.calculate(validated_findings, profile)
 
         # Phase 6: Generate remediation
@@ -114,6 +115,8 @@ class AssessmentOrchestrator:
             "score": score_result["score"],
             "score_band": score_result["score_band"],
             "level_scores": score_result["level_scores"],
+            "data_integrity_hold": score_result.get("data_integrity_hold", False),
+            "suspended_reason": score_result.get("suspended_reason"),
             "finding_counts": {
                 "critical": sum(1 for f in validated_findings if f.severity == "critical"),
                 "high": sum(1 for f in validated_findings if f.severity == "high"),

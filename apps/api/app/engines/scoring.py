@@ -1,6 +1,10 @@
 """
 Scoring Engine — Calculates the Clyira Score from assessment findings.
-Score = 100 - weighted_deductions_per_level
+Score = 100 - sum(level_score_weight × min(raw_level_deduction, 100))
+
+Severity deductions: critical=25, high=10, medium=3, low=1
+Action state discounting: resolved→0× weight, in_progress→0.5× weight
+L4 data integrity hold: any critical L4 finding caps score at 50 and sets hold flag.
 """
 import logging
 from app.dtap.profile import DTAPProfile
@@ -9,13 +13,31 @@ from app.engines.types import FindingResult
 logger = logging.getLogger(__name__)
 
 
-# Severity deduction points
+# Phase 4 severity deductions (25/10/3/1)
 SEVERITY_DEDUCTIONS = {
-    "critical": 15.0,
-    "high": 8.0,
-    "medium": 4.0,
-    "low": 2.0,
+    "critical": 25.0,
+    "high": 10.0,
+    "medium": 3.0,
+    "low": 1.0,
     "info": 0.5,
+}
+
+# Action state deduction multipliers — resolved findings don't penalize score
+ACTION_STATE_MULTIPLIERS = {
+    "open": 1.0,
+    "acknowledged": 1.0,
+    "in_progress": 0.5,
+    "resolved": 0.0,
+    "disputed": 1.0,  # pending review — full weight until resolved
+}
+
+# Remediation priority mapping
+SEVERITY_PRIORITY = {
+    "critical": 1,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+    "info": 3,
 }
 
 # Score bands
@@ -34,39 +56,60 @@ class ScoringEngine:
 
     Algorithm:
     1. Group findings by level
-    2. For each level: sum deductions based on severity
-    3. Apply level weight from DTAP
-    4. Cap per-level deduction at the level's max weight contribution
-    5. Final score = 100 - total_weighted_deductions
+    2. For each level: sum severity deductions (with action-state multipliers)
+    3. Cap per-level raw deduction at 100 to prevent overflow
+    4. Multiply capped deduction by level score_weight from DTAP
+    5. Final score = 100 - sum(weighted_level_deductions)
+    6. L4 critical hold: cap score at 50 and set data_integrity_hold flag
     """
 
-    def calculate(self, findings: list[FindingResult], profile: DTAPProfile) -> dict:
-        """Calculate the overall Clyira Score"""
+    def calculate(
+        self,
+        findings: list[FindingResult],
+        profile: DTAPProfile,
+        finding_statuses: dict[str, str] | None = None,
+    ) -> dict:
+        """
+        Calculate the Clyira Score.
+        finding_statuses: optional dict mapping finding title → status for action-state scoring.
+        When None, all findings are treated as open.
+        """
         level_scores: dict[str, dict] = {}
         total_deduction = 0.0
+        data_integrity_hold = False
 
         enabled_levels = profile.get_enabled_levels()
 
         for level in enabled_levels:
             level_findings = [f for f in findings if f.level == level]
-            weight = profile.get_level_weight(level)
+            weight = profile.score_weights.get(level, 0.0)
 
-            # Calculate raw deduction for this level
-            raw_deduction = sum(
-                SEVERITY_DEDUCTIONS.get(f.severity, 0.0)
-                for f in level_findings
-            )
+            # Detect L4 data integrity hold
+            if level == "L4":
+                if any(f.severity == "critical" for f in level_findings):
+                    data_integrity_hold = True
 
-            # Cap deduction — a single level cannot tank the whole score
-            max_level_deduction = weight * 100  # Max contribution proportional to weight
-            capped_deduction = min(raw_deduction, max_level_deduction)
+            # Sum deductions with optional action-state multiplier
+            raw_deduction = 0.0
+            for f in level_findings:
+                base = SEVERITY_DEDUCTIONS.get(f.severity, 0.0)
+                if finding_statuses is not None:
+                    # Use provided status map (keyed by title)
+                    status = finding_statuses.get(f.title, "open")
+                else:
+                    # Default all to open at assessment time
+                    status = "open"
+                multiplier = ACTION_STATE_MULTIPLIERS.get(status, 1.0)
+                raw_deduction += base * multiplier
 
-            # Weight the deduction
-            weighted_deduction = capped_deduction * weight
+            # Cap per-level raw deduction at 100 then apply level weight
+            capped = min(raw_deduction, 100.0)
+            weighted_deduction = capped * weight
             total_deduction += weighted_deduction
 
-            # Per-level score (100 - deduction for that level)
-            level_score = max(0.0, 100.0 - raw_deduction)
+            # Per-level score for display (uncapped)
+            display_raw = sum(SEVERITY_DEDUCTIONS.get(f.severity, 0.0) for f in level_findings)
+            level_score = max(0.0, 100.0 - display_raw)
 
             level_scores[level] = {
                 "score": round(level_score, 1),
@@ -76,11 +119,14 @@ class ScoringEngine:
                 "weight": weight,
             }
 
-        # Final score
         final_score = max(0.0, min(100.0, 100.0 - total_deduction))
-        score_band = self._get_band(final_score)
 
-        logger.info(f"Score calculated: {final_score:.1f} ({score_band})")
+        # L4 hold caps score at 50 — data integrity issues prevent passing
+        if data_integrity_hold:
+            final_score = min(final_score, 50.0)
+
+        score_band = self._get_band(final_score)
+        logger.info(f"Score calculated: {final_score:.1f} ({score_band}), L4_hold={data_integrity_hold}")
 
         return {
             "score": round(final_score, 1),
@@ -88,11 +134,36 @@ class ScoringEngine:
             "total_deduction": round(total_deduction, 1),
             "level_scores": level_scores,
             "findings_total": len(findings),
+            "data_integrity_hold": data_integrity_hold,
+            "suspended_reason": (
+                "Critical ALCOA+/Data Integrity finding detected (L4) — document score capped at 50"
+                if data_integrity_hold else None
+            ),
         }
+
+    def calculate_from_db_findings(self, db_findings: list[dict], profile: DTAPProfile) -> dict:
+        """
+        Recompute score from DB finding records (with their current status).
+        db_findings: list of dicts with keys: level, severity, status, title
+        """
+        # Build synthetic FindingResult list
+        class _F:
+            def __init__(self, d):
+                self.level = d.get("level", "L1")
+                self.severity = d.get("severity", "medium")
+                self.title = d.get("title", "")
+
+        synthetic = [_F(d) for d in db_findings]
+        # Build status map by title
+        statuses = {d.get("title", ""): d.get("status", "open") for d in db_findings}
+        return self.calculate(synthetic, profile, finding_statuses=statuses)
+
+    @staticmethod
+    def get_remediation_priority(severity: str) -> int:
+        return SEVERITY_PRIORITY.get(severity, 3)
 
     @staticmethod
     def _get_band(score: float) -> str:
-        """Determine score band"""
         for threshold, band in SCORE_BANDS:
             if score >= threshold:
                 return band
@@ -101,10 +172,7 @@ class ScoringEngine:
     def calculate_readiness_score(
         self, document_scores: list[dict], weights: dict[str, float] | None = None
     ) -> dict:
-        """
-        Calculate aggregated readiness score from multiple document scores.
-        Used for department and company-level scoring.
-        """
+        """Aggregate readiness score from multiple document scores."""
         if not document_scores:
             return {"score": 0.0, "score_band": "Critical", "document_count": 0}
 

@@ -61,7 +61,10 @@ class FindingOut(BaseModel):
     severity_elevated: bool = False
     suggestion_draft: Optional[str] = None
     next_step_text: Optional[str] = None
+    remediation_priority: Optional[int] = None
     status: str
+    response_text: Optional[str] = None
+    dispute_reason: Optional[str] = None
     confidence_score: Optional[float] = None
     validated: bool = False
 
@@ -74,6 +77,7 @@ class AssessmentOut(BaseModel):
     document_id: str
     status: str
     clyira_score: Optional[float] = None
+    adjusted_score: Optional[float] = None
     score_band: Optional[str] = None
     findings_critical: int = 0
     findings_high: int = 0
@@ -81,6 +85,8 @@ class AssessmentOut(BaseModel):
     findings_low: int = 0
     findings_info: int = 0
     enforcement_matches: int = 0
+    data_integrity_hold: bool = False
+    suspended_reason: Optional[str] = None
     processing_time_seconds: Optional[float] = None
     levels_run: Optional[list] = None
     created_at: Optional[datetime] = None
@@ -182,15 +188,21 @@ async def get_findings(
     }
 
 
+class FindingActionRequest(BaseModel):
+    finding_status: str
+    response_text: Optional[str] = ""
+    dispute_reason: Optional[str] = ""
+
+
 @router.patch("/{assessment_id}/findings/{finding_id}", response_model=dict)
-async def respond_to_finding(
+async def action_finding(
     assessment_id: str,
     finding_id: str,
-    response_text: str = Query(...),
-    finding_status: str = Query("acknowledged"),
+    data: FindingActionRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Update finding status (acknowledge / in_progress / resolve / dispute) and recompute adjusted score."""
     result = await db.execute(
         select(Finding).where(
             Finding.id == finding_id,
@@ -202,14 +214,57 @@ async def respond_to_finding(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
 
     valid_statuses = {"open", "acknowledged", "in_progress", "resolved", "disputed"}
-    if finding_status not in valid_statuses:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Status must be one of: {valid_statuses}")
+    if data.finding_status not in valid_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Status must be one of: {valid_statuses}",
+        )
 
-    finding.status = finding_status
-    finding.response_text = response_text
+    prev_status = finding.status
+    finding.status = data.finding_status
+    if data.response_text:
+        finding.response_text = data.response_text
+    if data.dispute_reason:
+        finding.dispute_reason = data.dispute_reason
+    if data.finding_status == "resolved":
+        from datetime import datetime
+        finding.resolved_at = datetime.utcnow().isoformat()
+    finding.actioned_by = current_user.id
     await db.commit()
 
-    return {"finding_id": finding_id, "status": finding_status, "updated": True}
+    # Recompute adjusted score
+    svc = AssessmentService(db)
+    new_score = await svc.recompute_adjusted_score(assessment_id)
+
+    # Audit log
+    try:
+        assessment_row = await db.get(Assessment, assessment_id)
+        await svc.write_audit_log(
+            company_id=current_user.company_id,
+            user_id=current_user.id,
+            user_email=current_user.email,
+            event_type=f"finding_{data.finding_status}",
+            resource_type="finding",
+            resource_id=finding_id,
+            resource_label=finding.title,
+            detail={
+                "from_status": prev_status,
+                "to_status": data.finding_status,
+                "assessment_id": assessment_id,
+                "adjusted_score": new_score,
+                "dispute_reason": data.dispute_reason or None,
+            },
+        )
+        await db.commit()
+    except Exception:
+        pass
+
+    return {
+        "finding_id": finding_id,
+        "status": data.finding_status,
+        "adjusted_score": new_score,
+        "updated": True,
+    }
 
 
 @router.get("/{assessment_id}/report")
@@ -236,7 +291,10 @@ async def get_report(
     return {
         "assessment_id": assessment_id,
         "score": assessment.clyira_score,
+        "adjusted_score": assessment.adjusted_score,
         "score_band": assessment.score_band,
+        "data_integrity_hold": assessment.data_integrity_hold or False,
+        "suspended_reason": assessment.suspended_reason,
         "findings": [FindingOut.model_validate(f).model_dump() for f in findings],
         "summary": {
             "critical": assessment.findings_critical,
@@ -245,4 +303,30 @@ async def get_report(
             "low": assessment.findings_low,
             "info": assessment.findings_info,
         },
+    }
+
+
+@router.get("/{assessment_id}/live-score", response_model=dict)
+async def get_live_score(
+    assessment_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recompute score from current finding statuses (reflects resolved/in-progress findings)."""
+    result = await db.execute(
+        select(Assessment).where(
+            Assessment.id == assessment_id,
+            Assessment.company_id == current_user.company_id,
+        )
+    )
+    assessment = result.scalar_one_or_none()
+    if not assessment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")
+
+    svc = AssessmentService(db)
+    new_score = await svc.recompute_adjusted_score(assessment_id)
+    return {
+        "assessment_id": assessment_id,
+        "adjusted_score": new_score,
+        "initial_score": assessment.clyira_score,
     }

@@ -6,6 +6,7 @@ from app.models.assessment import Assessment, Finding
 from app.models.regulatory import RegulatoryCorpus, EnforcementRecord
 from app.models.readiness import ReadinessScore
 from app.models.inspection import Inspection, InspectionRequest, InspectionLog
+from app.models.audit import AuditLog
 
 __all__ = [
     "Base",
@@ -21,4 +22,5 @@ __all__ = [
     "Inspection",
     "InspectionRequest",
     "InspectionLog",
+    "AuditLog",
 ]

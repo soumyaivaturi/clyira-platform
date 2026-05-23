@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
   ChevronRight, FileText, Play, Loader2, AlertTriangle,
   CheckCircle2, ChevronDown, ChevronUp, BookOpen, Zap,
   Upload, Plus, X, FileUp, CheckSquare, Square, ShieldCheck,
+  Download, MessageCircle, Send, History, Lock, CheckCheck,
+  ThumbsUp, Clock, Flag,
 } from "lucide-react";
-import { documentsApi, assessmentsApi } from "@/lib/api";
+import { documentsApi, assessmentsApi, assistantApi, documentHistoryApi } from "@/lib/api";
 import { ScoreRing, ScoreBadge } from "@/components/shared/score-display";
 import { SeverityBadge, LevelBadge, DocStatusBadge, FindingStatusBadge } from "@/components/shared/badges";
 import { formatDate, formatFileSize, getSeverityConfig, timeAgo } from "@/lib/utils";
@@ -28,15 +30,25 @@ interface Finding {
   location?: string; regulatory_citation?: string; citation_type?: string;
   agency?: string; enforcement_match: boolean; enforcement_context?: string;
   severity_elevated: boolean; suggestion_draft?: string; next_step_text?: string;
-  status: string; confidence_score?: number; validated: boolean;
+  remediation_priority?: number;
+  status: string; response_text?: string; dispute_reason?: string;
+  confidence_score?: number; validated: boolean;
 }
 
 interface Assessment {
   id: string; document_id: string; status: string; clyira_score?: number;
-  score_band?: string; findings_critical: number; findings_high: number;
+  adjusted_score?: number; score_band?: string;
+  findings_critical: number; findings_high: number;
   findings_medium: number; findings_low: number; findings_info: number;
   enforcement_matches: number; processing_time_seconds?: number;
   levels_run?: string[]; created_at?: string;
+  data_integrity_hold?: boolean; suspended_reason?: string;
+}
+
+interface HistoryEntry {
+  id: string; clyira_score?: number; adjusted_score?: number;
+  score_band?: string; findings_critical: number; findings_high: number;
+  created_at: string; dtap_id?: string;
 }
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
@@ -192,108 +204,246 @@ function FrameworkSelectorPanel({
 
 // ── Finding Card ───────────────────────────────────────────────────────────────
 
-function FindingCard({ finding }: { finding: Finding }) {
+function FindingCard({
+  finding,
+  documentId,
+  assessmentId,
+  onStatusChange,
+}: {
+  finding: Finding;
+  documentId: string;
+  assessmentId: string;
+  onStatusChange?: (findingId: string, newStatus: string, adjustedScore?: number) => void;
+}) {
   const [expanded, setExpanded] = useState(finding.severity === "critical" || finding.severity === "high");
+  const [localStatus, setLocalStatus] = useState(finding.status);
+  const [actioning, setActioning] = useState(false);
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [showDisputeModal, setShowDisputeModal] = useState(false);
+  const [disputeReason, setDisputeReason] = useState("");
   const cfg = getSeverityConfig(finding.severity);
 
+  const doAction = async (newStatus: string, disputeReason_?: string) => {
+    setActioning(true);
+    try {
+      const res = await assessmentsApi.actionFinding(
+        assessmentId, finding.id, newStatus, "", disputeReason_
+      );
+      setLocalStatus(newStatus);
+      onStatusChange?.(finding.id, newStatus, res.data?.adjusted_score);
+    } catch { /* ignore */ }
+    finally { setActioning(false); }
+  };
+
+  const loadDraft = async () => {
+    setDraftLoading(true);
+    try {
+      const res = await assistantApi.draftFix(documentId, finding.id);
+      setDraft(res.data.draft_text);
+    } catch { setDraft("Draft unavailable — LLM service may be busy. Try again."); }
+    finally { setDraftLoading(false); }
+  };
+
+  const ACTION_BUTTONS = [
+    { status: "acknowledged", label: "Acknowledge", icon: ThumbsUp, show: localStatus === "open" },
+    { status: "in_progress", label: "In Progress", icon: Clock, show: localStatus === "acknowledged" },
+    { status: "resolved", label: "Resolve", icon: CheckCheck, show: ["open","acknowledged","in_progress"].includes(localStatus) },
+    { status: "disputed", label: "Dispute", icon: Flag, show: localStatus !== "resolved", isDispute: true },
+  ];
+
   return (
-    <div className={cn("border rounded-lg overflow-hidden", cfg.border)}>
-      <button
-        className={cn("w-full flex items-start gap-3 px-4 py-3 text-left", cfg.bg, "hover:opacity-90 transition-opacity")}
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className={cn("w-1 self-stretch rounded-full flex-shrink-0", cfg.dot)} style={{ minHeight: 20 }} />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap mb-1">
-            <SeverityBadge severity={finding.severity} />
-            <LevelBadge level={finding.level} compact />
-            {finding.enforcement_match && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-200">
-                <Zap className="w-2.5 h-2.5" /> Enforcement match
-              </span>
-            )}
-            {finding.severity_elevated && (
-              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">
-                ↑ Elevated
-              </span>
-            )}
-            <FindingStatusBadge status={finding.status} className="ml-auto" />
-          </div>
-          <p className="text-sm font-semibold leading-snug pr-6">{finding.title}</p>
-          {!expanded && finding.regulatory_citation && (
-            <p className="text-[11px] font-mono text-muted-foreground mt-1 truncate">{finding.regulatory_citation}</p>
-          )}
-        </div>
-        <div className="flex-shrink-0 mt-0.5">
-          {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
-        </div>
-      </button>
-
-      {expanded && (
-        <div className="px-4 py-4 space-y-4 bg-card border-t">
-          {/* Description */}
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Description</p>
-            <p className="text-sm leading-relaxed">{finding.description}</p>
-          </div>
-
-          {/* Evidence */}
-          {finding.evidence && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Evidence</p>
-              <p className="text-sm text-muted-foreground italic leading-relaxed">"{finding.evidence}"</p>
+    <>
+      {showDisputeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-card border rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
+            <h3 className="font-semibold">Dispute Finding</h3>
+            <p className="text-sm text-muted-foreground">{finding.title}</p>
+            <textarea
+              value={disputeReason}
+              onChange={e => setDisputeReason(e.target.value)}
+              placeholder="Explain why this finding is inaccurate or should not apply..."
+              className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[80px]"
+            />
+            <div className="flex gap-3">
+              <button onClick={() => setShowDisputeModal(false)} className="flex-1 py-2 border rounded-lg text-sm hover:bg-accent">Cancel</button>
+              <button
+                onClick={() => { doAction("disputed", disputeReason); setShowDisputeModal(false); }}
+                disabled={!disputeReason.trim()}
+                className="flex-1 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-700 disabled:opacity-50"
+              >
+                Submit Dispute
+              </button>
             </div>
-          )}
-
-          {/* Location + Citation */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {finding.location && (
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Location</p>
-                <p className="text-xs bg-muted rounded px-2 py-1.5">{finding.location}</p>
-              </div>
-            )}
-            {finding.regulatory_citation && (
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
-                  Regulatory Citation · <span className="capitalize font-normal">{finding.agency}</span>
-                </p>
-                <p className="text-xs font-mono bg-clyira-50 text-clyira-800 border border-clyira-100 rounded px-2 py-1.5 leading-relaxed">
-                  {finding.regulatory_citation}
-                </p>
-              </div>
-            )}
           </div>
-
-          {/* Enforcement context */}
-          {finding.enforcement_match && finding.enforcement_context && (
-            <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
-              <p className="text-xs font-semibold text-red-800 mb-1 flex items-center gap-1">
-                <Zap className="w-3 h-3" /> Enforcement Intelligence
-              </p>
-              <p className="text-xs text-red-700 leading-relaxed">{finding.enforcement_context}</p>
-            </div>
-          )}
-
-          {/* Remediation */}
-          {finding.suggestion_draft && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5">
-              <p className="text-xs font-semibold text-blue-800 mb-1.5 flex items-center gap-1">
-                <BookOpen className="w-3 h-3" /> Suggested Remediation
-              </p>
-              <p className="text-sm text-blue-900 leading-relaxed whitespace-pre-wrap">{finding.suggestion_draft}</p>
-            </div>
-          )}
-
-          {/* Confidence */}
-          {finding.confidence_score != null && (
-            <p className="text-[10px] text-muted-foreground">
-              Confidence: {(finding.confidence_score * 100).toFixed(0)}% · {finding.validated ? "Validated" : "Unvalidated"}
-            </p>
-          )}
         </div>
       )}
-    </div>
+
+      <div className={cn("border rounded-lg overflow-hidden", cfg.border)}>
+        <button
+          className={cn("w-full flex items-start gap-3 px-4 py-3 text-left", cfg.bg, "hover:opacity-90 transition-opacity")}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <div className={cn("w-1 self-stretch rounded-full flex-shrink-0", cfg.dot)} style={{ minHeight: 20 }} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <SeverityBadge severity={finding.severity} />
+              <LevelBadge level={finding.level} compact />
+              {finding.enforcement_match && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-200">
+                  <Zap className="w-2.5 h-2.5" /> Enforcement match
+                </span>
+              )}
+              {finding.severity_elevated && (
+                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">
+                  ↑ Elevated
+                </span>
+              )}
+              <FindingStatusBadge status={localStatus} className="ml-auto" />
+            </div>
+            <p className="text-sm font-semibold leading-snug pr-6">{finding.title}</p>
+            {!expanded && finding.regulatory_citation && (
+              <p className="text-[11px] font-mono text-muted-foreground mt-1 truncate">{finding.regulatory_citation}</p>
+            )}
+          </div>
+          <div className="flex-shrink-0 mt-0.5">
+            {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+          </div>
+        </button>
+
+        {expanded && (
+          <div className="px-4 py-4 space-y-4 bg-card border-t">
+            {/* Description */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Description</p>
+              <p className="text-sm leading-relaxed">{finding.description}</p>
+            </div>
+
+            {/* Evidence */}
+            {finding.evidence && (
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Evidence</p>
+                <p className="text-sm text-muted-foreground italic leading-relaxed">"{finding.evidence}"</p>
+              </div>
+            )}
+
+            {/* Location + Citation */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {finding.location && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Location</p>
+                  <p className="text-xs bg-muted rounded px-2 py-1.5">{finding.location}</p>
+                </div>
+              )}
+              {finding.regulatory_citation && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+                    Regulatory Citation · <span className="capitalize font-normal">{finding.agency}</span>
+                  </p>
+                  <p className="text-xs font-mono bg-clyira-50 text-clyira-800 border border-clyira-100 rounded px-2 py-1.5 leading-relaxed">
+                    {finding.regulatory_citation}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Enforcement context */}
+            {finding.enforcement_match && finding.enforcement_context && (
+              <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
+                <p className="text-xs font-semibold text-red-800 mb-1 flex items-center gap-1">
+                  <Zap className="w-3 h-3" /> Enforcement Intelligence
+                </p>
+                <p className="text-xs text-red-700 leading-relaxed">{finding.enforcement_context}</p>
+              </div>
+            )}
+
+            {/* Remediation */}
+            {finding.suggestion_draft && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5">
+                <p className="text-xs font-semibold text-blue-800 mb-1.5 flex items-center gap-1">
+                  <BookOpen className="w-3 h-3" /> Suggested Remediation
+                </p>
+                <p className="text-sm text-blue-900 leading-relaxed whitespace-pre-wrap">{finding.suggestion_draft}</p>
+              </div>
+            )}
+
+            {/* Author Assistant — Draft Fix */}
+            <div>
+              {!draft && (
+                <button
+                  onClick={loadDraft}
+                  disabled={draftLoading}
+                  className="flex items-center gap-1.5 text-xs text-primary border border-primary/30 hover:bg-primary/5 rounded-lg px-3 py-1.5 transition-colors"
+                >
+                  {draftLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <BookOpen className="w-3 h-3" />}
+                  {draftLoading ? "Drafting fix…" : "Draft Fix with Author Assistant"}
+                </button>
+              )}
+              {draft && (
+                <div className="bg-violet-50 border border-violet-200 rounded-lg px-3 py-2.5">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-xs font-semibold text-violet-800 flex items-center gap-1">
+                      <BookOpen className="w-3 h-3" /> Author Assistant Draft
+                    </p>
+                    <button onClick={() => setDraft(null)} className="text-violet-400 hover:text-violet-600">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <p className="text-sm text-violet-900 leading-relaxed whitespace-pre-wrap">{draft}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Dispute reason display */}
+            {localStatus === "disputed" && finding.dispute_reason && (
+              <div className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
+                <p className="text-xs font-semibold text-orange-800 mb-0.5">Dispute Reason</p>
+                <p className="text-xs text-orange-700">{finding.dispute_reason}</p>
+              </div>
+            )}
+
+            {/* Action buttons */}
+            {localStatus !== "resolved" && (
+              <div className="flex items-center gap-2 flex-wrap pt-1 border-t">
+                <span className="text-xs text-muted-foreground font-medium">Actions:</span>
+                {actioning ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+                ) : (
+                  ACTION_BUTTONS.filter(b => b.show).map(btn => (
+                    <button
+                      key={btn.status}
+                      onClick={() => btn.isDispute ? setShowDisputeModal(true) : doAction(btn.status)}
+                      className={cn(
+                        "flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md border transition-colors",
+                        btn.status === "resolved" ? "border-green-300 text-green-700 hover:bg-green-50" :
+                        btn.status === "disputed" ? "border-orange-300 text-orange-700 hover:bg-orange-50" :
+                        "border-border text-muted-foreground hover:bg-accent",
+                      )}
+                    >
+                      <btn.icon className="w-2.5 h-2.5" />
+                      {btn.label}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+            {localStatus === "resolved" && (
+              <div className="flex items-center gap-1.5 text-xs text-green-700 pt-1 border-t">
+                <CheckCheck className="w-3.5 h-3.5" /> Finding resolved
+              </div>
+            )}
+
+            {/* Confidence */}
+            {finding.confidence_score != null && (
+              <p className="text-[10px] text-muted-foreground">
+                Confidence: {(finding.confidence_score * 100).toFixed(0)}% · {finding.validated ? "Validated" : "Unvalidated"}
+                {finding.remediation_priority && ` · Priority ${finding.remediation_priority}`}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -451,6 +601,143 @@ function UploadReferenceModal({
   );
 }
 
+// ── QA Assistant Panel ─────────────────────────────────────────────────────────
+
+function QAAssistantPanel({ documentId, assessmentId }: { documentId: string; assessmentId?: string }) {
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState<{ text: string; citations: string[] } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const ask = async () => {
+    if (!question.trim()) return;
+    setLoading(true); setError(""); setAnswer(null);
+    try {
+      const res = await assistantApi.ask(documentId, question, assessmentId);
+      setAnswer({ text: res.data.answer, citations: res.data.citations || [] });
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? "QA service unavailable. Please try again.");
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <div className="bg-card border rounded-xl overflow-hidden">
+      <div className="px-5 py-4 border-b flex items-center gap-2">
+        <MessageCircle className="w-4 h-4 text-primary" />
+        <h2 className="font-semibold">QA Assistant</h2>
+        <span className="text-[10px] bg-primary/10 text-primary font-medium px-1.5 py-0.5 rounded-full">Beta</span>
+      </div>
+      <div className="p-5 space-y-3">
+        <p className="text-xs text-muted-foreground">
+          Ask questions about this document — e.g. "Does this SOP address deviation handling?" or "What's missing from the root cause section?"
+        </p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={question}
+            onChange={e => setQuestion(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && !loading && ask()}
+            placeholder="Ask a compliance question about this document…"
+            className="flex-1 px-3 py-2 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          <button
+            onClick={ask}
+            disabled={loading || !question.trim()}
+            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          </button>
+        </div>
+        {error && (
+          <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-2">{error}</p>
+        )}
+        {answer && (
+          <div className="space-y-2">
+            <div className="bg-muted/40 rounded-lg px-4 py-3">
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">{answer.text}</p>
+            </div>
+            {answer.citations.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {answer.citations.map((c, i) => (
+                  <span key={i} className="text-[10px] font-mono bg-clyira-50 text-clyira-800 border border-clyira-100 px-1.5 py-0.5 rounded">{c}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Assessment History Panel ───────────────────────────────────────────────────
+
+function AssessmentHistoryPanel({ documentId }: { documentId: string }) {
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const load = async () => {
+    if (history.length > 0) { setExpanded(!expanded); return; }
+    setLoading(true);
+    try {
+      const res = await documentHistoryApi.getAssessmentHistory(documentId);
+      setHistory(res.data.assessments || []);
+      setExpanded(true);
+    } catch { }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div className="bg-card border rounded-xl overflow-hidden">
+      <button
+        onClick={load}
+        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/30 transition-colors text-left"
+      >
+        <div className="flex items-center gap-2">
+          <History className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm font-medium">Assessment History</span>
+          {history.length > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
+              {history.length} runs
+            </span>
+          )}
+        </div>
+        {loading
+          ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+          : <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
+        }
+      </button>
+      {expanded && history.length > 0 && (
+        <div className="border-t divide-y">
+          {history.map((h, i) => (
+            <div key={h.id} className="flex items-center gap-4 px-5 py-3">
+              <span className="text-xs text-muted-foreground w-4 text-right">{i + 1}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-muted-foreground">{new Date(h.created_at).toLocaleString()}</p>
+                {h.dtap_id && <p className="text-[10px] text-muted-foreground/70 font-mono">{h.dtap_id}</p>}
+              </div>
+              <div className="text-right">
+                <p className="text-sm font-bold tabular-nums">{h.clyira_score?.toFixed(1) ?? "—"}</p>
+                {h.adjusted_score !== h.clyira_score && h.adjusted_score != null && (
+                  <p className="text-[10px] text-green-600 font-medium">→ {h.adjusted_score.toFixed(1)} adj.</p>
+                )}
+                <p className="text-[10px] text-muted-foreground">{h.score_band}</p>
+              </div>
+              <div className="text-right text-xs text-red-600 font-semibold tabular-nums w-6">
+                {h.findings_critical > 0 ? h.findings_critical : ""}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {expanded && history.length === 0 && (
+        <div className="px-5 py-6 text-center text-sm text-muted-foreground border-t">No completed assessments yet.</div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function DocumentDetailPage() {
@@ -458,8 +745,10 @@ export default function DocumentDetailPage() {
   const [doc, setDoc] = useState<Document | null>(null);
   const [assessment, setAssessment] = useState<Assessment | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
+  const [adjustedScore, setAdjustedScore] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [assessing, setAssessing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [showRefUpload, setShowRefUpload] = useState(false);
   const [error, setError] = useState("");
@@ -488,10 +777,31 @@ export default function DocumentDetailPage() {
         assessmentsApi.getFindings(assessmentId),
       ]);
       setAssessment(aRes.data);
+      setAdjustedScore(aRes.data.adjusted_score ?? null);
       setFindings(fRes.data.findings ?? []);
     } catch {
       setError("Could not load assessment results.");
     }
+  };
+
+  const handleFindingStatusChange = useCallback((_findingId: string, _newStatus: string, newAdjustedScore?: number) => {
+    if (newAdjustedScore != null) setAdjustedScore(newAdjustedScore);
+  }, []);
+
+  const exportDocx = async () => {
+    if (!assessment) return;
+    setExporting(true);
+    try {
+      const res = await assessmentsApi.exportDocx(assessment.id);
+      const blob = new Blob([res.data], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Clyira_${doc?.title?.slice(0, 30) ?? "Report"}_${assessment.id.slice(0, 8)}.docx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { setError("Export failed. Please try again."); }
+    finally { setExporting(false); }
   };
 
   const pollAssessment = async (assessmentId: string): Promise<void> => {
@@ -604,6 +914,17 @@ export default function DocumentDetailPage() {
             </div>
           </div>
         </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {assessment?.status === "completed" && (
+            <button
+              onClick={exportDocx}
+              disabled={exporting}
+              className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm font-medium hover:bg-accent disabled:opacity-50"
+            >
+              {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              Export DOCX
+            </button>
+          )}
         <button onClick={runAssessment} disabled={assessing}
           className="flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 flex-shrink-0"
           title={`Assess against ${selectedFrameworks.length} frameworks`}>
@@ -612,18 +933,37 @@ export default function DocumentDetailPage() {
             ? (assessment?.status === "queued" ? "Queued…" : "Assessing…")
             : assessment ? "Re-assess" : "Run Assessment"}
         </button>
+        </div>
       </div>
 
       {error && (
         <div className="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-4 py-3">{error}</div>
       )}
 
+      {/* Data Integrity Hold Banner */}
+      {assessment?.data_integrity_hold && (
+        <div className="flex items-start gap-3 bg-red-50 border border-red-300 rounded-xl px-5 py-3.5">
+          <Lock className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-red-800 text-sm">Data Integrity Hold</p>
+            <p className="text-xs text-red-700 mt-0.5">
+              {assessment.suspended_reason || "Critical ALCOA+/Data Integrity finding detected. Score capped at 50 until resolved."}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Score + meta cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-card border rounded-xl p-5 flex items-center gap-5">
-          <ScoreRing score={doc.latest_score} size="md" />
+          <ScoreRing score={adjustedScore ?? doc.latest_score} size="md" />
           <div>
             <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Clyira Score</p>
+            {assessment && adjustedScore != null && adjustedScore !== assessment.clyira_score && (
+              <p className="text-[10px] text-green-600 font-medium">
+                ↑ {adjustedScore.toFixed(1)} (adjusted) · was {assessment.clyira_score?.toFixed(1)}
+              </p>
+            )}
             {assessment && (
               <>
                 <p className="text-xs text-muted-foreground mt-1">
@@ -720,11 +1060,27 @@ export default function DocumentDetailPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {sortedFindings.map(f => <FindingCard key={f.id} finding={f} />)}
+              {sortedFindings.map(f => (
+                <FindingCard
+                  key={f.id}
+                  finding={f}
+                  documentId={id}
+                  assessmentId={assessment.id}
+                  onStatusChange={handleFindingStatusChange}
+                />
+              ))}
             </div>
           )}
         </div>
       )}
+
+      {/* QA Assistant */}
+      {assessment?.status === "completed" && (
+        <QAAssistantPanel documentId={id} assessmentId={assessment.id} />
+      )}
+
+      {/* Assessment History */}
+      <AssessmentHistoryPanel documentId={id} />
 
       {/* Custom Validation References */}
       <div className="bg-card border rounded-xl overflow-hidden">

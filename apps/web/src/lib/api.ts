@@ -74,15 +74,48 @@ export const assessmentsApi = {
       document_id: documentId,
       include_references: includeReferences,
       ...(regulatoryFrameworks ? { regulatory_frameworks: regulatoryFrameworks } : {}),
-    }, { timeout: 600000 }),  // 10-min timeout — L1-L11 assessment is LLM-intensive
+    }, { timeout: 600000 }),
   get: (id: string) => api.get(`/assessments/${id}`),
   getFindings: (id: string, params?: { severity?: string; level?: string }) =>
     api.get(`/assessments/${id}/findings`, { params }),
-  respondToFinding: (assessmentId: string, findingId: string, response_text: string, finding_status: string) =>
-    api.patch(`/assessments/${assessmentId}/findings/${findingId}`, null, {
-      params: { response_text, finding_status },
+  actionFinding: (
+    assessmentId: string,
+    findingId: string,
+    finding_status: string,
+    response_text?: string,
+    dispute_reason?: string,
+  ) =>
+    api.patch(`/assessments/${assessmentId}/findings/${findingId}`, {
+      finding_status,
+      response_text: response_text || "",
+      dispute_reason: dispute_reason || "",
     }),
+  getLiveScore: (id: string) => api.get(`/assessments/${id}/live-score`),
   getReport: (id: string) => api.get(`/assessments/${id}/report`),
+  exportDocx: (id: string) =>
+    api.get(`/assessments/${id}/export/docx`, { responseType: "blob", timeout: 60000 }),
+};
+
+// ── Assistant ─────────────────────────────────────────────────────────────────
+export const assistantApi = {
+  draftFix: (document_id: string, finding_id: string, context_hint?: string) =>
+    api.post("/assistant/author", { document_id, finding_id, context_hint: context_hint || "" }),
+  ask: (document_id: string, question: string, assessment_id?: string) =>
+    api.post("/assistant/qa", { document_id, question, assessment_id }),
+};
+
+// ── Audit Trail ───────────────────────────────────────────────────────────────
+export const auditApi = {
+  getLog: (params?: { event_type?: string; resource_type?: string; limit?: number; offset?: number }) =>
+    api.get("/audit/log", { params }),
+  getResourceLog: (resourceId: string) => api.get(`/audit/log/${resourceId}`),
+};
+
+// ── Document History ──────────────────────────────────────────────────────────
+// (extends documentsApi — separate export to avoid circular ref)
+export const documentHistoryApi = {
+  getAssessmentHistory: (documentId: string) =>
+    api.get(`/documents/${documentId}/assessment-history`),
 };
 
 // ── Readiness ─────────────────────────────────────────────────────────────────
