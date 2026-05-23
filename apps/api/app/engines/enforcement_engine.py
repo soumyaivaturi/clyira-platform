@@ -1,123 +1,149 @@
 """
-Enforcement Engine — Pattern matching against enforcement intelligence (L9).
-Matches findings against Warning Letters, 483s, and other enforcement actions.
-Elevates severity when a finding matches a known enforcement pattern.
+Enforcement Engine — BM25 matching against FDA Warning Letters (L9).
+
+For each finding, searches 2,919 Warning Letter observations via BM25
+and attaches the most relevant precedent as enforcement_context.
+
+Severity elevation thresholds (CFR citation frequency across the corpus):
+  ≥ 25 observations  → elevate one level (low→medium, medium→high, high→critical)
+  ≥ 45 observations  → force severity to critical
+
+A single L9 finding is created per unique CFR section that exceeds the
+≥25 threshold, summarising the enforcement risk for that citation.
 """
 import logging
-from typing import Optional
-
 from app.engines.types import AssessmentContext, FindingResult
+from app.engines import rag_engine
 
 logger = logging.getLogger(__name__)
+
+_FREQ_ELEVATE = 25    # observations needed to elevate one severity level
+_FREQ_CRITICAL = 45   # observations needed to force critical
+
+_ELEVATION_MAP = {
+    "low": "medium",
+    "medium": "high",
+    "high": "critical",
+    "critical": "critical",
+}
 
 
 class EnforcementEngine:
     """
-    Matches assessment findings against enforcement records.
-    When a finding aligns with a known enforcement action pattern,
-    severity is elevated and enforcement context is attached.
+    Annotates existing findings with FDA Warning Letter precedent and elevates
+    severity based on CFR citation frequency. Returns new L9 findings for CFR
+    sections that breach enforcement frequency thresholds.
     """
 
-    # Severity elevation rules
-    ELEVATION_MAP = {
-        "low": "medium",
-        "medium": "high",
-        "high": "critical",
-        "critical": "critical",  # Already max
-    }
+    ELEVATION_MAP = _ELEVATION_MAP
 
     async def run(
         self, context: AssessmentContext, existing_findings: list[FindingResult]
     ) -> list[FindingResult]:
         """
-        Run enforcement matching (L9).
-        Searches for enforcement records matching the current findings.
+        Annotate existing_findings in-place; return new L9 enforcement-pattern findings.
+
+        Mutation: sets enforcement_match, enforcement_context, severity_elevated, severity
+        on findings whose CFR citation is high-frequency in the Warning Letter corpus.
         """
-        if not context.enforcement_records:
-            logger.info("No enforcement records available for matching")
+        if not existing_findings:
             return []
 
-        findings = []
-
-        # For each enforcement record, check if any current finding aligns
-        for record in context.enforcement_records:
-            matched_finding = self._match_against_findings(record, existing_findings, context)
-            if matched_finding:
-                findings.append(matched_finding)
-
-        return findings
-
-    def _match_against_findings(
-        self, record: dict, existing_findings: list[FindingResult], context: AssessmentContext
-    ) -> Optional[FindingResult]:
-        """Check if an enforcement record matches any existing finding"""
-        record_categories = record.get("observation_categories", [])
-        record_cfr = record.get("cfr_citations", [])
+        l9_findings: list[FindingResult] = []
+        seen_cfr_l9: set[str] = set()   # one L9 finding per unique CFR section
 
         for finding in existing_findings:
-            # Match by category
-            category_match = finding.category in record_categories
-            # Match by CFR citation
-            citation_match = any(
-                cfr in (finding.regulatory_citation or "")
-                for cfr in record_cfr
-            )
+            cfr = (finding.regulatory_citation or "").strip()
 
-            if category_match or citation_match:
-                return FindingResult(
-                    level="L9",
-                    severity="high",
-                    category="enforcement_pattern_match",
-                    title=f"Enforcement pattern match: {record.get('title', 'Unknown')}",
-                    description=(
-                        f"This finding aligns with enforcement action {record.get('reference_number', '')} "
-                        f"issued to {record.get('company_cited', 'another company')} on {record.get('issue_date', '')}. "
-                        f"Similar observations have resulted in {record.get('outcome', 'enforcement action')}."
-                    ),
-                    evidence=f"Finding '{finding.title}' matches pattern in {record.get('record_type', '')} "
-                             f"{record.get('reference_number', '')}",
-                    regulatory_citation=finding.regulatory_citation or "",
-                    citation_type="enforcement",
-                    agency=record.get("agency", "FDA"),
-                    enforcement_match=True,
-                    enforcement_context=(
-                        f"{record.get('record_type', '').replace('_', ' ').title()} "
-                        f"{record.get('reference_number', '')} — "
-                        f"{record.get('summary', '')[:200]}"
-                    ),
-                    confidence_score=0.85,
-                    validated=True,
-                )
+            # BM25 search: title + CFR citation as query for best retrieval
+            query = f"{finding.title} {cfr}".strip()
+            precedents = rag_engine.search(query, n_results=2, cfr_filter=cfr or None)
 
-        return None
+            if precedents:
+                finding.enforcement_match = True
+                finding.enforcement_context = rag_engine.format_enforcement_excerpt(precedents)
+
+            # CFR frequency-based severity elevation
+            if cfr:
+                freq = rag_engine.get_cfr_observation_count(cfr)
+
+                if freq >= _FREQ_CRITICAL:
+                    original = finding.severity
+                    finding.severity = "critical"
+                    if not finding.severity_elevated:
+                        finding.severity_elevated = True
+                        prefix = (
+                            f"⚠ Severity elevated to critical: {cfr} appears in {freq} "
+                            f"FDA Warning Letters — top enforcement priority.\n\n"
+                        )
+                        finding.enforcement_context = prefix + (finding.enforcement_context or "")
+                    if cfr not in seen_cfr_l9:
+                        seen_cfr_l9.add(cfr)
+                        l9_findings.append(
+                            self._make_l9_finding(cfr, freq, precedents, "critical")
+                        )
+
+                elif freq >= _FREQ_ELEVATE and not finding.severity_elevated:
+                    original = finding.severity
+                    elevated = _ELEVATION_MAP.get(finding.severity, finding.severity)
+                    if elevated != original:
+                        finding.severity = elevated
+                        finding.severity_elevated = True
+                        prefix = (
+                            f"⚠ Severity elevated from {original} to {elevated}: "
+                            f"{cfr} appears in {freq} FDA Warning Letters.\n\n"
+                        )
+                        finding.enforcement_context = prefix + (finding.enforcement_context or "")
+                    if cfr not in seen_cfr_l9:
+                        seen_cfr_l9.add(cfr)
+                        l9_findings.append(
+                            self._make_l9_finding(cfr, freq, precedents, elevated)
+                        )
+
+        if l9_findings:
+            logger.info(f"Enforcement engine: {len(l9_findings)} L9 findings, "
+                        f"{sum(1 for f in existing_findings if f.enforcement_match)} findings annotated")
+
+        return l9_findings
+
+    def _make_l9_finding(
+        self,
+        cfr: str,
+        freq: int,
+        precedents: list[dict],
+        severity: str,
+    ) -> FindingResult:
+        company = precedents[0]['company'] if precedents else "multiple companies"
+        year = precedents[0]['year'] if precedents else ""
+        office = precedents[0]['office'] if precedents else "FDA"
+        excerpt = precedents[0]['text'][:400] if precedents else ""
+        return FindingResult(
+            level="L9",
+            severity=severity,
+            category="enforcement_pattern_match",
+            title=f"High-frequency enforcement pattern: {cfr} ({freq} FDA Warning Letters)",
+            description=(
+                f"{cfr} appears in {freq} FDA Warning Letters — placing this in the top enforcement "
+                f"risk categories tracked by Clyira's corpus. FDA investigators specifically target "
+                f"this deficiency category during inspections. Companies with this finding unresolved "
+                f"face elevated Warning Letter and 483 observation risk. "
+                f"Recent example: {company} ({office}, {year})."
+            ),
+            evidence=excerpt,
+            regulatory_citation=cfr,
+            citation_type="enforcement",
+            agency="FDA",
+            enforcement_match=True,
+            enforcement_context=rag_engine.format_enforcement_excerpt(precedents),
+            severity_elevated=True,
+            confidence_score=0.95,
+            validated=True,
+        )
 
     def elevate_severities(
         self, findings: list[FindingResult], enforcement_records: list[dict]
     ) -> list[FindingResult]:
-        """
-        Elevate severity of findings that match enforcement patterns.
-        A finding whose category appears in trending enforcement patterns
-        gets bumped up one severity level.
-        """
-        if not enforcement_records:
-            return findings
-
-        # Collect trending categories
-        trending_categories = set()
-        for record in enforcement_records:
-            if record.get("trending", False):
-                trending_categories.update(record.get("observation_categories", []))
-
-        # Elevate matching findings
-        for finding in findings:
-            if finding.category in trending_categories and not finding.severity_elevated:
-                original = finding.severity
-                finding.severity = self.ELEVATION_MAP.get(finding.severity, finding.severity)
-                if finding.severity != original:
-                    finding.severity_elevated = True
-                    finding.enforcement_context = (
-                        f"Severity elevated from {original} to {finding.severity} "
-                        f"due to trending enforcement pattern in category '{finding.category}'."
-                    )
-
+        # Elevation is now handled inside run() via CFR frequency.
+        # This method is kept for orchestrator compatibility; enforcement_records
+        # is always empty in the BM25 path, so we just return unchanged.
         return findings
