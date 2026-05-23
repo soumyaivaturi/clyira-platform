@@ -46,6 +46,8 @@ CAPA_DTAP = DTAPProfile(
                 "classification_present",  # minor, major, critical
                 "source_identification",  # audit, deviation, complaint, etc.
                 "approval_chain_complete",
+                "capa_id",
+                "action_owners_and_dates",
             ],
         ),
         "L2": LevelConfig(
@@ -59,11 +61,12 @@ CAPA_DTAP = DTAPProfile(
                 "timeline_entries",
                 "owner_assignment",
                 "department_identification",
+                "unsigned_approvals",
             ],
         ),
         "L3": LevelConfig(
             enabled=True,
-            engine="llm",
+            engine="hybrid",
             weight=1.8,
             checks=[
                 "root_cause_depth",  # Is RCA superficial or thorough?
@@ -75,6 +78,10 @@ CAPA_DTAP = DTAPProfile(
                 "timeline_realism",
                 "containment_adequacy",
                 "scope_appropriateness",
+                "human_error_root_cause",
+                "training_only_capa",
+                "effectiveness_criteria",
+                "retrospective_capa",
             ],
             required_context=["document_text", "dtap_profile"],
         ),
@@ -88,6 +95,8 @@ CAPA_DTAP = DTAPProfile(
                 "batch_records_cited",
                 "trend_data_referenced",
                 "investigation_completeness",
+                "oos_invalidation_basis",
+                "testing_into_compliance",
             ],
         ),
         "L5": LevelConfig(

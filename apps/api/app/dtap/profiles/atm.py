@@ -60,7 +60,7 @@ ATM_DTAP = DTAPProfile(
         ),
         "L3": LevelConfig(
             enabled=True,
-            engine="llm",
+            engine="hybrid",
             weight=1.6,
             checks=[
                 "procedure_specificity",
@@ -71,6 +71,7 @@ ATM_DTAP = DTAPProfile(
                 "calculation_formula_correctness",
                 "units_consistency",
                 "sample_preparation_completeness",
+                "system_suitability",
             ],
             required_context=["document_text", "dtap_profile"],
         ),
@@ -129,7 +130,7 @@ ATM_DTAP = DTAPProfile(
         ),
         "L8": LevelConfig(
             enabled=True,
-            engine="llm",
+            engine="hybrid",
             weight=1.5,
             checks=[
                 "usp_ep_jp_alignment",
@@ -137,6 +138,8 @@ ATM_DTAP = DTAPProfile(
                 "21_cfr_211_160_compliance",
                 "data_integrity_per_annexes",
                 "pharmacopoeia_monograph_match",
+                "validation_declaration",
+                "oos_trigger",
             ],
             required_context=["document_text", "regulatory_corpus", "company_agencies"],
         ),
