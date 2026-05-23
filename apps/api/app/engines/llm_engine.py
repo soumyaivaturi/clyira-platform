@@ -17,7 +17,7 @@ GEMINI_V1_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}
 
 
 async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
-    """Make a single Gemini v1 REST call with retry on rate limits."""
+    """Make a single Gemini v1 REST call. Retries on RPM rate limits; fails fast on daily quota exhaustion."""
     import asyncio
     url = GEMINI_V1_URL.format(model=settings.GEMINI_MODEL)
     payload = {
@@ -28,16 +28,21 @@ async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
             "maxOutputTokens": settings.GEMINI_MAX_TOKENS,
         },
     }
-    for attempt in range(4):
-        async with httpx.AsyncClient(timeout=120.0) as client:
+    for attempt in range(3):
+        async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 url,
                 params={"key": settings.GEMINI_API_KEY},
                 json=payload,
             )
             if resp.status_code == 429:
-                wait = 10 * (2 ** attempt)  # 10s, 20s, 40s, 80s
-                print(f"  Gemini 429 rate limit (attempt {attempt+1}/4), waiting {wait}s...")
+                body = resp.text.lower()
+                # Daily quota exhausted — retrying won't help, fail immediately
+                if "quota" in body or "daily" in body or "exceeded" in body:
+                    raise Exception(f"Gemini daily quota exhausted — assessment will complete with rule-only findings")
+                # RPM rate limit — short wait and retry
+                wait = 5 * (2 ** attempt)  # 5s, 10s, 20s
+                print(f"  Gemini 429 RPM limit (attempt {attempt+1}/3), waiting {wait}s...")
                 await asyncio.sleep(wait)
                 continue
             resp.raise_for_status()
@@ -50,7 +55,7 @@ async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
             if not parts:
                 raise ValueError(f"Gemini candidate has no parts (finish_reason={candidates[0].get('finishReason')})")
             return parts[0]["text"]
-    raise Exception("Gemini quota/rate limit: failed after 4 attempts (all returned 429)")
+    raise Exception("Gemini RPM rate limit: failed after 3 attempts")
 
 
 class LLMEngine:
