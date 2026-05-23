@@ -27,7 +27,7 @@ def _active_model() -> str:
 
 
 async def _call_groq(system_prompt: str, user_prompt: str) -> str:
-    """Call Groq (LLaMA) via OpenAI-compatible API. Retries on TPM 429; fails fast on daily quota."""
+    """Call Groq (LLaMA) via OpenAI-compatible API. Retries on TPM 429 and 529 overload; fails fast on daily quota."""
     import asyncio
     payload = {
         "model": settings.GROQ_MODEL,
@@ -38,8 +38,8 @@ async def _call_groq(system_prompt: str, user_prompt: str) -> str:
         "temperature": 0.3,
         "max_tokens": settings.GEMINI_MAX_TOKENS,
     }
-    for attempt in range(3):
-        async with httpx.AsyncClient(timeout=60.0) as client:
+    for attempt in range(4):
+        async with httpx.AsyncClient(timeout=90.0) as client:
             resp = await client.post(
                 GROQ_URL,
                 headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
@@ -49,14 +49,20 @@ async def _call_groq(system_prompt: str, user_prompt: str) -> str:
                 body = resp.text.lower()
                 if "day" in body or "daily" in body or "quota" in body:
                     raise Exception("Groq daily quota exhausted")
-                wait = 15 * (attempt + 1)  # 15s, 30s, 45s — TPM resets every minute
-                print(f"  Groq 429 TPM limit (attempt {attempt+1}/3), waiting {wait}s...")
+                wait = 15 * (attempt + 1)  # 15s, 30s, 45s, 60s — TPM resets every minute
+                print(f"  Groq 429 TPM limit (attempt {attempt+1}/4), waiting {wait}s...")
+                await asyncio.sleep(wait)
+                continue
+            if resp.status_code == 529:
+                # Groq service overloaded — back off and retry
+                wait = 10 * (attempt + 1)  # 10s, 20s, 30s, 40s
+                print(f"  Groq 529 overloaded (attempt {attempt+1}/4), waiting {wait}s...")
                 await asyncio.sleep(wait)
                 continue
             resp.raise_for_status()
             data = resp.json()
             return data["choices"][0]["message"]["content"]
-    raise Exception("Groq TPM rate limit: failed after 3 attempts")
+    raise Exception("Groq service unavailable after 4 attempts (429/529)")
 
 
 async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
@@ -100,9 +106,17 @@ async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
 
 
 async def _call_llm(system_prompt: str, user_prompt: str) -> str:
-    """Route to Groq (primary — 14,400 RPD free, reliable) or Gemini (fallback when Groq key absent)."""
+    """Route to Groq (primary) or Gemini (fallback). Falls back to Gemini if Groq is overloaded."""
     if settings.GROQ_API_KEY:
-        return await _call_groq(system_prompt, user_prompt)
+        try:
+            return await _call_groq(system_prompt, user_prompt)
+        except Exception as e:
+            err = str(e).lower()
+            # If Groq is overloaded or exhausted, try Gemini before giving up
+            if settings.GEMINI_API_KEY and ("unavailable" in err or "529" in err or "overload" in err):
+                print(f"  Groq failed ({e}), falling back to Gemini...")
+                return await _call_gemini(system_prompt, user_prompt)
+            raise
     if settings.GEMINI_API_KEY:
         return await _call_gemini(system_prompt, user_prompt)
     raise ValueError("No LLM API key configured — set GROQ_API_KEY or GEMINI_API_KEY")
