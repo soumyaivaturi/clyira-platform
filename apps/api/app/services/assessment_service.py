@@ -107,8 +107,12 @@ class AssessmentService:
             logger.info(f"Assessment {assessment_id} completed: score={results['score']}")
 
         except Exception as e:
-            logger.error(f"Background assessment {assessment_id} failed: {e}")
+            import traceback
+            tb = traceback.format_exc()
+            logger.error(f"Background assessment {assessment_id} failed: {e}\n{tb}")
+            print(f"  ASSESSMENT FAILED [{assessment_id}]: {type(e).__name__}: {e}\n{tb}")
             assessment.status = "failed"
+            assessment.error_detail = f"{type(e).__name__}: {e}\n\n{tb}"
             await self.db.commit()
 
     async def _build_context(

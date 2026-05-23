@@ -271,6 +271,29 @@ async def _run_enforcement_seed(source: str, years: int) -> None:
         raise
 
 
+# Debug: show error detail for last N failed assessments (admin only)
+@app.get("/debug/assessment-errors")
+async def debug_assessment_errors(request: Request, n: int = 5):
+    import os
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from sqlalchemy import text
+    from app.core.database import engine
+    async with engine.connect() as conn:
+        result = await conn.execute(text(
+            "SELECT id, document_id, status, error_detail, processing_time_seconds, created_at "
+            "FROM assessments WHERE status='failed' ORDER BY created_at DESC LIMIT :n"
+        ), {"n": n})
+        rows = result.fetchall()
+    return [
+        {"id": r[0], "document_id": r[1], "status": r[2],
+         "error": r[3], "processing_time_s": r[4], "created_at": str(r[5])}
+        for r in rows
+    ]
+
+
 # Admin: reset stuck assessments (status=running → failed)
 @app.post("/admin/reset-stuck-assessments")
 async def reset_stuck_assessments(request: Request):

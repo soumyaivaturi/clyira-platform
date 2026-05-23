@@ -44,6 +44,7 @@ class Assessment(Base, TimestampMixin):
     processing_time_seconds = Column(Float)
     tokens_used = Column(Integer)
     model_version = Column(String(50))
+    error_detail = Column(Text)  # Stores traceback on failure for debugging
 
     # Relationships
     document = relationship("Document", back_populates="assessments")
