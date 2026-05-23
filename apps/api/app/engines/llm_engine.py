@@ -19,11 +19,11 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
 def _llm_available() -> bool:
-    return bool(settings.GEMINI_API_KEY or settings.GROQ_API_KEY)
+    return bool(settings.GROQ_API_KEY or settings.GEMINI_API_KEY)
 
 
 def _active_model() -> str:
-    return settings.GEMINI_MODEL if settings.GEMINI_API_KEY else settings.GROQ_MODEL
+    return settings.GROQ_MODEL if settings.GROQ_API_KEY else settings.GEMINI_MODEL
 
 
 async def _call_groq(system_prompt: str, user_prompt: str) -> str:
@@ -100,12 +100,12 @@ async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
 
 
 async def _call_llm(system_prompt: str, user_prompt: str) -> str:
-    """Route to Gemini (primary — large context, 1,500 RPD free) or Groq (fallback)."""
-    if settings.GEMINI_API_KEY:
-        return await _call_gemini(system_prompt, user_prompt)
+    """Route to Groq (primary — 14,400 RPD free, reliable) or Gemini (fallback when Groq key absent)."""
     if settings.GROQ_API_KEY:
         return await _call_groq(system_prompt, user_prompt)
-    raise ValueError("No LLM API key configured — set GEMINI_API_KEY or GROQ_API_KEY")
+    if settings.GEMINI_API_KEY:
+        return await _call_gemini(system_prompt, user_prompt)
+    raise ValueError("No LLM API key configured — set GROQ_API_KEY or GEMINI_API_KEY")
 
 
 class LLMEngine:
@@ -131,7 +131,7 @@ class LLMEngine:
             for check in checks:
                 prompt_parts.append(f"- {check.replace('_', ' ').title()}")
 
-        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:40000]}")
+        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:20000]}")
         prompt_parts.append(f"\nApplicable agencies: {', '.join(context.company_agencies)}")
         if context.regulatory_frameworks:
             prompt_parts.append(f"Regulatory frameworks: {', '.join(context.regulatory_frameworks)}")
@@ -189,7 +189,7 @@ Return ONLY a JSON array of findings with no preamble.
             for check in level_config.checks:
                 prompt_parts.append(f"- {check.replace('_', ' ').title()}")
 
-        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:40000]}")
+        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:20000]}")
 
         if "L8" in levels and context.regulatory_context:
             prompt_parts.append("\n### Regulatory Requirements (for L8):")
@@ -209,8 +209,9 @@ Return ONLY a JSON array of findings with no preamble.
         prompt_parts.append("""
 ### Critical Output Instructions:
 Each finding MUST include the correct "level" field (e.g., "L3", "L6", "L8", "L10").
-Aim for 5-8 findings per level. Flag the most significant gaps per level.
-Return ALL findings for ALL levels in a single JSON array. No preamble.
+Be THOROUGH — aim for 8-12 findings per level. Do NOT self-censor. A pharmaceutical document assessed by an FDA inspector should yield many observations.
+Include critical/high severity findings for major gaps AND medium/low for minor ones.
+Return ALL findings for ALL levels in a single JSON array. No preamble or explanation.
 """)
 
         system_prompt = f"""You are a senior FDA/EMA regulatory assessor performing a MULTI-LEVEL assessment of a pharmaceutical quality document.
@@ -291,7 +292,7 @@ Each finding: {{"level": "...", "severity": "...", "category": "...", "title": "
             prompt_parts.append(f"- {check.replace('_', ' ').title()}")
 
         prompt_parts.append(f"\n### Document Content:")
-        prompt_parts.append(context.document_text[:40000])
+        prompt_parts.append(context.document_text[:20000])
 
         if context.regulatory_context and level == "L8":
             prompt_parts.append("\n### Relevant Regulatory Requirements:")

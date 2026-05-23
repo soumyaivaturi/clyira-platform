@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
     DTAPRegistry.initialize()
 
     from app.engines.llm_engine import _active_model, _llm_available
-    provider = "gemini" if settings.GEMINI_API_KEY else ("groq" if settings.GROQ_API_KEY else "none")
+    provider = "groq" if settings.GROQ_API_KEY else ("gemini" if settings.GEMINI_API_KEY else "none")
     print(f"Clyira API v{settings.APP_VERSION} starting...")
     print(f"  Environment : {settings.ENVIRONMENT}")
     print(f"  LLM Provider: {provider.upper()} — model: {_active_model() if _llm_available() else 'N/A'}")
@@ -93,7 +93,7 @@ app.add_middleware(
 async def debug_config():
     from app.engines.llm_engine import _active_model, _llm_available
     return {
-        "LLM_PROVIDER": "gemini" if settings.GEMINI_API_KEY else ("groq" if settings.GROQ_API_KEY else "NONE"),
+        "LLM_PROVIDER": "groq" if settings.GROQ_API_KEY else ("gemini" if settings.GEMINI_API_KEY else "NONE"),
         "LLM_MODEL": _active_model() if _llm_available() else "NONE",
         "GROQ_API_KEY": "set" if settings.GROQ_API_KEY else "not set",
         "GEMINI_API_KEY": "set" if settings.GEMINI_API_KEY else "not set",
