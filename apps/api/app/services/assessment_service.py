@@ -97,7 +97,8 @@ class AssessmentService:
             assessment.enforcement_matches = results["enforcement_matches"]
             assessment.processing_time_seconds = results["processing_time_seconds"]
             assessment.levels_run = results["levels_run"]
-            assessment.model_version = settings.GEMINI_MODEL
+            from app.engines.llm_engine import _active_model
+            assessment.model_version = _active_model()
 
             document.latest_score = results["score"]
             document.latest_assessment_id = assessment.id

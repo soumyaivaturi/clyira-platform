@@ -59,11 +59,12 @@ async def lifespan(app: FastAPI):
     from app.dtap import DTAPRegistry
     DTAPRegistry.initialize()
 
-    has_key = bool(settings.GEMINI_API_KEY)
+    from app.engines.llm_engine import _active_model, _llm_available
+    provider = "groq" if settings.GROQ_API_KEY else ("gemini" if settings.GEMINI_API_KEY else "none")
     print(f"Clyira API v{settings.APP_VERSION} starting...")
     print(f"  Environment : {settings.ENVIRONMENT}")
-    print(f"  Gemini Model: {settings.GEMINI_MODEL}")
-    print(f"  LLM Engine  : {'enabled' if has_key else 'DISABLED (no API key)'}")
+    print(f"  LLM Provider: {provider.upper()} — model: {_active_model() if _llm_available() else 'N/A'}")
+    print(f"  LLM Engine  : {'enabled' if _llm_available() else 'DISABLED (no API key)'}")
     print(f"  DTAP Profiles: {len(DTAPRegistry.list_all())} loaded")
     yield
     print("Clyira API shutting down...")
@@ -90,10 +91,12 @@ app.add_middleware(
 # Config diagnostics — shows which keys are present (never reveals values)
 @app.get("/debug/config")
 async def debug_config():
-    import os
+    from app.engines.llm_engine import _active_model, _llm_available
     return {
-        "GEMINI_API_KEY": "set" if settings.GEMINI_API_KEY else "MISSING",
-        "GEMINI_MODEL": settings.GEMINI_MODEL,
+        "LLM_PROVIDER": "groq" if settings.GROQ_API_KEY else ("gemini" if settings.GEMINI_API_KEY else "NONE"),
+        "LLM_MODEL": _active_model() if _llm_available() else "NONE",
+        "GROQ_API_KEY": "set" if settings.GROQ_API_KEY else "not set",
+        "GEMINI_API_KEY": "set" if settings.GEMINI_API_KEY else "not set",
         "DATABASE_URL": "set" if settings.DATABASE_URL else "MISSING",
         "ENVIRONMENT": settings.ENVIRONMENT,
     }

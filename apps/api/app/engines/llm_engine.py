@@ -1,6 +1,7 @@
 """
-LLM Engine — Gemini-powered semantic analysis.
-Calls the Gemini v1 REST API directly via httpx to avoid SDK v1beta routing issues.
+LLM Engine — multi-provider semantic analysis.
+Primary: Groq (LLaMA 3.3 70B) — 14,400 req/day free, 30 RPM.
+Fallback: Gemini — used when no Groq key is set.
 Handles: L3 (Content Quality), L6 (Cross-Doc Consistency), L8 (Regulatory Gap),
          L10 (Longitudinal Intelligence), and remediation generation.
 """
@@ -14,10 +15,41 @@ from app.engines.types import AssessmentContext, FindingResult
 logger = logging.getLogger(__name__)
 
 GEMINI_V1_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+
+def _llm_available() -> bool:
+    return bool(settings.GROQ_API_KEY or settings.GEMINI_API_KEY)
+
+
+def _active_model() -> str:
+    return settings.GROQ_MODEL if settings.GROQ_API_KEY else settings.GEMINI_MODEL
+
+
+async def _call_groq(system_prompt: str, user_prompt: str) -> str:
+    """Call Groq (LLaMA) via OpenAI-compatible API. No retry needed — 30 RPM / 14,400 RPD free."""
+    payload = {
+        "model": settings.GROQ_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.3,
+        "max_tokens": settings.GEMINI_MAX_TOKENS,
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            GROQ_URL,
+            headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
 
 
 async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
-    """Make a single Gemini v1 REST call. Retries on RPM rate limits; fails fast on daily quota exhaustion."""
+    """Call Gemini REST API. Retries on RPM limits; fails fast on daily quota exhaustion."""
     import asyncio
     url = GEMINI_V1_URL.format(model=settings.GEMINI_MODEL)
     payload = {
@@ -37,10 +69,8 @@ async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
             )
             if resp.status_code == 429:
                 body = resp.text.lower()
-                # Daily quota exhausted — retrying won't help, fail immediately
                 if "quota" in body or "daily" in body or "exceeded" in body:
-                    raise Exception(f"Gemini daily quota exhausted — assessment will complete with rule-only findings")
-                # RPM rate limit — short wait and retry
+                    raise Exception("Gemini daily quota exhausted — assessment will complete with rule-only findings")
                 wait = 5 * (2 ** attempt)  # 5s, 10s, 20s
                 print(f"  Gemini 429 RPM limit (attempt {attempt+1}/3), waiting {wait}s...")
                 await asyncio.sleep(wait)
@@ -58,6 +88,15 @@ async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
     raise Exception("Gemini RPM rate limit: failed after 3 attempts")
 
 
+async def _call_llm(system_prompt: str, user_prompt: str) -> str:
+    """Route to Groq (preferred) or Gemini (fallback) based on which key is configured."""
+    if settings.GROQ_API_KEY:
+        return await _call_groq(system_prompt, user_prompt)
+    if settings.GEMINI_API_KEY:
+        return await _call_gemini(system_prompt, user_prompt)
+    raise ValueError("No LLM API key configured — set GROQ_API_KEY or GEMINI_API_KEY")
+
+
 class LLMEngine:
     """
     Semantic analysis engine powered by Gemini v1 REST API.
@@ -66,7 +105,7 @@ class LLMEngine:
 
     async def run_checks_batched(self, checks_by_level: dict[str, list[str]], context: AssessmentContext) -> list[FindingResult]:
         """Evaluate ALL unimplemented rule checks across multiple levels in ONE LLM call."""
-        if not settings.GEMINI_API_KEY:
+        if not _llm_available():
             return []
         profile = context.dtap_profile
 
@@ -94,9 +133,9 @@ Return ONLY a JSON array of findings with no preamble.
 
         system = self._get_system_prompt("Multi-Level")
         total_checks = sum(len(v) for v in checks_by_level.values())
-        print(f"  LLM: batched rule fallback for {list(checks_by_level.keys())} ({total_checks} checks)...")
+        print(f"  LLM [{_active_model()}]: batched rule fallback for {list(checks_by_level.keys())} ({total_checks} checks)...")
         try:
-            text = await _call_gemini(system, "\n".join(prompt_parts))
+            text = await _call_llm(system, "\n".join(prompt_parts))
             findings = self._parse_findings_response(text, list(checks_by_level.keys())[0])
             print(f"  LLM: batched rule fallback → {len(findings)} findings")
             return findings
@@ -122,8 +161,8 @@ Return ONLY a JSON array of findings with no preamble.
         return findings
 
     async def _assess_levels_batched(self, levels: list[str], context: AssessmentContext) -> list[FindingResult]:
-        """Assess all LLM/hybrid levels in a SINGLE Gemini call."""
-        if not settings.GEMINI_API_KEY:
+        """Assess all LLM/hybrid levels in a SINGLE LLM call."""
+        if not _llm_available():
             return []
         profile = context.dtap_profile
 
@@ -173,8 +212,9 @@ TAG every finding with its correct level (L3, L5, L6, L8, L9, L10, or L11).
 
 OUTPUT: Single JSON array. Each item: {{"level":"...","severity":"...","category":"...","title":"...","description":"...","evidence":"...","regulatory_citation":"...","citation_type":"...","agency":"...","suggestion_draft":"...","confidence_score":0.0}}"""
 
+        print(f"  LLM [{_active_model()}]: batched assessment for {levels}...")
         try:
-            text = await _call_gemini(system_prompt, "\n".join(prompt_parts))
+            text = await _call_llm(system_prompt, "\n".join(prompt_parts))
             findings = self._parse_findings_response(text, levels[0] if len(levels) == 1 else "?")
             return findings
         except Exception as e:
@@ -183,16 +223,16 @@ OUTPUT: Single JSON array. Each item: {{"level":"...","severity":"...","category
             return []
 
     async def _assess_level(self, level: str, context: AssessmentContext) -> list[FindingResult]:
-        """Run LLM assessment for a single level"""
-        if not settings.GEMINI_API_KEY:
-            logger.warning(f"Skipping LLM assessment for {level} — no Gemini API key configured")
+        """Run LLM assessment for a single level (used by legacy per-level path)."""
+        if not _llm_available():
+            logger.warning(f"Skipping LLM assessment for {level} — no LLM key configured")
             return []
 
         system_prompt = self._get_system_prompt(level)
         user_prompt = self._build_assessment_prompt(level, context)
 
         try:
-            text = await _call_gemini(system_prompt, user_prompt)
+            text = await _call_llm(system_prompt, user_prompt)
             return self._parse_findings_response(text, level)
         except Exception as e:
             logger.error(f"LLM assessment failed for {level}: {type(e).__name__}: {e}")
@@ -284,7 +324,7 @@ Return ONLY the JSON array with no preamble or explanation.
 
         prompt = self._build_remediation_prompt(findings_needing_remediation, context)
         try:
-            text = await _call_gemini(
+            text = await _call_llm(
                 "You are Clyira's Remediation Engine. Generate specific, actionable remediation "
                 "suggestions for quality document findings. Be practical and reference industry standards.",
                 prompt,
