@@ -1220,3 +1220,414 @@ class RuleEngine:
                 "4. Initiate OOS investigation per SOP-QC-OOS-001 within 24 hours."
             ),
         )]
+
+    # ========== L1/L3/L4/L7/L8: Deviation Report Checks ==========
+
+    def _check_l1_deviation_required_fields(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Check mandatory Deviation Report fields — deviation ID, product, batch, root cause, impact, QA."""
+        findings: list[FindingResult] = []
+        text = ctx.document_text
+        text_lower = text.lower()
+
+        required = [
+            (r'deviation\s*(?:id|no|number|#|ref)', "Deviation ID", "high", "21 CFR 211.192"),
+            (r'product\s*name|material\s*name', "Product/Material Name", "critical", "21 CFR 211.192"),
+            (r'batch\s*(?:no|number|lot)', "Batch/Lot Number", "critical", "21 CFR 211.192"),
+            (r'root\s*cause', "Root Cause Analysis", "critical", "21 CFR 211.192"),
+            (r'impact\s*assessment|assessment\s*impact', "Impact Assessment", "critical", "21 CFR 211.192"),
+            (r'QA\s*(?:approv|review|sign)|(?:approv|review|sign)\w*\s*QA', "QA Approval", "high", "21 CFR 211.22"),
+        ]
+        for pattern, label, severity, citation in required:
+            if not re.search(pattern, text_lower):
+                findings.append(FindingResult(
+                    level="L1",
+                    severity=severity,
+                    category="missing_required_field",
+                    title=f"Mandatory field missing: {label}",
+                    description=(
+                        f"No '{label}' field was found in the document. "
+                        f"This is a mandatory element of a GMP Deviation Report. "
+                        f"Every deviation report must document {label} to satisfy traceability "
+                        f"and investigation requirements per 21 CFR 211.192."
+                    ),
+                    evidence="",
+                    regulatory_citation=citation,
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.74,
+                    validated=True,
+                    suggestion_draft=f"Add a '{label}' field with specific, documented content.",
+                ))
+        return findings
+
+    def _check_l4_impact_without_data(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """'No impact' claim without citing analytical data or scientific rationale — Critical."""
+        text = ctx.document_text
+        no_impact_patterns = [
+            r'no\s+impact\s+(?:on|to)\s+(?:product\s+)?quality',
+            r'no\s+(?:product\s+)?quality\s+impact',
+            r'product\s+quality\s+(?:not|is\s+not)\s+(?:affected|impacted|compromised)',
+            r'no\s+(?:patient\s+)?safety\s+(?:impact|concern|risk)',
+            r'does\s+not\s+(?:affect|impact)\s+(?:product\s+quality|patient\s+safety)',
+        ]
+        for pat in no_impact_patterns:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                context_after = text[m.end():m.end() + 500]
+                has_evidence = re.search(
+                    r'(?:stability|analytical|test\s+result|specification|batch\s+record|'
+                    r'data|analysis|result\s+shows?|confirmed\s+by|based\s+on)',
+                    context_after, re.IGNORECASE
+                )
+                if has_evidence:
+                    return []
+                sentence_start = max(0, text.rfind('\n', 0, m.start()) + 1)
+                sentence = text[sentence_start:sentence_start + 300].strip()
+                return [FindingResult(
+                    level="L4",
+                    severity="critical",
+                    category="impact_without_data",
+                    title="Impact claim made without citing analytical data or scientific basis",
+                    description=(
+                        f"The impact assessment states '{sentence[:200]}' but does not cite "
+                        f"analytical data, stability modeling, test results, or a scientific "
+                        f"rationale to support this conclusion. An assertion of no quality or "
+                        f"safety impact without documentary evidence cannot be verified during "
+                        f"an inspection and cannot justify batch disposition decisions."
+                    ),
+                    evidence=sentence[:250],
+                    location=_nearest_section(text, m.start()),
+                    regulatory_citation="21 CFR 211.192",
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.88,
+                    validated=True,
+                    suggestion_draft=(
+                        "Replace the unsupported claim with a referenced scientific justification: "
+                        "cite specific analytical results, stability model, or test data with document IDs."
+                    ),
+                )]
+        return []
+
+    def _check_l7_deviation_timeliness(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Check Critical deviation timeliness — initiation within 24hrs required."""
+        findings: list[FindingResult] = []
+        text = ctx.document_text
+        text_lower = text.lower()
+
+        is_critical_deviation = bool(re.search(
+            r'(?:severity|classification|deviation\s+type)\s*[:\-]?\s*critical',
+            text_lower
+        ))
+        if not is_critical_deviation:
+            return []
+
+        # Look for detection/occurrence date and initiation date
+        detection = re.search(r'(?:date\s+of\s+(?:detection|occurrence)|detected\s+(?:on|date))[:\s]*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', text, re.IGNORECASE)
+        initiation = re.search(r'(?:initiation|initiated|opened)\s*(?:date|on)[:\s]*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', text, re.IGNORECASE)
+
+        if detection and initiation:
+            from datetime import datetime
+            date_formats = ["%m/%d/%Y", "%d/%m/%Y", "%m-%d-%Y", "%d-%m-%Y", "%Y-%m-%d"]
+            det_date = ini_date = None
+            for fmt in date_formats:
+                try:
+                    det_date = datetime.strptime(detection.group(1), fmt)
+                    break
+                except ValueError:
+                    pass
+            for fmt in date_formats:
+                try:
+                    ini_date = datetime.strptime(initiation.group(1), fmt)
+                    break
+                except ValueError:
+                    pass
+            if det_date and ini_date and (ini_date - det_date).days > 1:
+                findings.append(FindingResult(
+                    level="L7",
+                    severity="critical",
+                    category="deviation_timeliness",
+                    title=f"Critical deviation initiated {(ini_date - det_date).days} days after detection — exceeds 24-hour requirement",
+                    description=(
+                        f"This Critical deviation was detected on {detection.group(1)} and initiated "
+                        f"on {initiation.group(1)} — a gap of {(ini_date - det_date).days} day(s). "
+                        f"GMP requirements mandate that Critical deviations be formally initiated within "
+                        f"24 hours of detection. Delayed initiation risks batch release before investigation "
+                        f"completion, destruction of contemporaneous evidence, and compromises QA oversight."
+                    ),
+                    evidence=f"Detection date: {detection.group(1)}; Initiation date: {initiation.group(1)}",
+                    regulatory_citation="21 CFR 211.192",
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.90,
+                    validated=True,
+                ))
+
+        # Flag open investigations beyond 120 days
+        if re.search(r'(?:investigation\s+(?:status|open|ongoing)|status\s*[:\-]\s*(?:open|in\s*progress|ongoing))', text_lower):
+            if re.search(r'(?:120|180|365)\s*(?:day|calendar\s+day)', text_lower) or \
+               re.search(r'(?:more\s+than|over|exceeding)\s+\d{3}\s*days?', text_lower):
+                findings.append(FindingResult(
+                    level="L7",
+                    severity="critical",
+                    category="deviation_investigation_open_too_long",
+                    title="Deviation investigation open beyond 120 calendar days",
+                    description=(
+                        "The deviation investigation appears to have been open for more than 120 calendar "
+                        "days. An investigation open beyond this threshold is considered unreasonably "
+                        "extended by FDA standards — no deviation can require more than 120 days of "
+                        "investigation without documented extraordinary justification approved by senior QA management."
+                    ),
+                    evidence="",
+                    regulatory_citation="21 CFR 211.192",
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.75,
+                    validated=True,
+                ))
+
+        return findings
+
+    def _check_l8_far_assessment(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Field Alert Report (FAR) assessment must be present in every deviation — even if 'not required'."""
+        text = ctx.document_text
+        has_far = re.search(
+            r'(?:field\s+alert|FAR\s+(?:assessment|required|not\s+required)|'
+            r'15.day|regulatory\s+reporting\s+assessment)',
+            text, re.IGNORECASE
+        )
+        if has_far:
+            return []
+        return [FindingResult(
+            level="L8",
+            severity="critical",
+            category="far_assessment_absent",
+            title="Field Alert Report (FAR) assessment absent from deviation",
+            description=(
+                "No Field Alert Report (FAR) assessment was found in the document. "
+                "FDA requires that every deviation involving a drug product be assessed "
+                "for FAR reportability, even if the conclusion is 'not required.' "
+                "The assessment must be documented with the stated basis for the conclusion. "
+                "The absence of a FAR assessment — regardless of whether one was required — "
+                "is a direct regulatory reporting gap per 21 CFR 314.81(b)(1)."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 314.81(b)(1)",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.80,
+            validated=True,
+            suggestion_draft=(
+                "REGULATORY REPORTING ASSESSMENT\n"
+                "Field Alert Report (FAR): [Required / Not Required]\n"
+                "Basis: [e.g., 'Batch not distributed to US market; no FAR required per 21 CFR 314.81(b)(1)']\n"
+                "15-Day Safety Report: [Applicable / Not Applicable] — Basis: [state reason]\n"
+                "Annual Product Review: [Will be included in APR for Product X, Year XXXX]\n"
+                "Assessed by: [QA signature / date]"
+            ),
+        )]
+
+    # ========== L1/L3/L4/L8: LIR (Lab Investigation Report) Checks ==========
+
+    def _check_l1_phase_structure(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Phase I structure mandatory for all OOS investigations; Phase II when Phase I finds no assignable cause."""
+        findings: list[FindingResult] = []
+        text = ctx.document_text
+        text_lower = text.lower()
+
+        has_phase1 = re.search(r'phase\s*[i1]\b|phase\s+one\b', text_lower)
+        if not has_phase1:
+            findings.append(FindingResult(
+                level="L1",
+                severity="critical",
+                category="phase_structure_absent",
+                title="Phase I / Phase II investigation structure absent from Lab Investigation Report",
+                description=(
+                    "No Phase I investigation structure was found in this Lab Investigation Report. "
+                    "FDA OOS Guidance 2006 mandates a two-phase investigation structure for all OOS "
+                    "results: Phase I (laboratory investigation) must be completed before any retesting "
+                    "begins, and its conclusion documented before Phase II can be initiated. An LIR "
+                    "without Phase I structure cannot demonstrate a compliant OOS investigation process."
+                ),
+                evidence="",
+                regulatory_citation="FDA OOS Guidance 2006",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.88,
+                validated=True,
+            ))
+        else:
+            # Phase I found — check for explicit conclusion
+            phase1_conclusion = re.search(
+                r'phase\s*[i1][^\n]{0,200}(?:conclusion|result|finding)[:\s]',
+                text_lower
+            )
+            if not phase1_conclusion:
+                findings.append(FindingResult(
+                    level="L1",
+                    severity="critical",
+                    category="phase1_conclusion_absent",
+                    title="Phase I referenced but no explicit Phase I conclusion statement found",
+                    description=(
+                        "Phase I is referenced but no explicit Phase I conclusion statement was found. "
+                        "FDA OOS Guidance 2006 requires the Phase I conclusion to be documented as one of: "
+                        "'Assignable cause found' (with named evidence) or 'No assignable cause found.' "
+                        "Without this explicit conclusion, Phase II trigger logic cannot be verified by "
+                        "an FDA investigator."
+                    ),
+                    evidence="",
+                    regulatory_citation="FDA OOS Guidance 2006 Section VI.B",
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.82,
+                    validated=True,
+                ))
+        return findings
+
+    def _check_l3_phase1_conclusion(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Phase I must conclude as 'Assignable cause found' or 'No assignable cause found' — with evidence."""
+        text = ctx.document_text
+        text_lower = text.lower()
+        # If explicit Phase I conclusion is already flagged by phase_structure check, skip
+        has_phase1 = re.search(r'phase\s*[i1]\b|phase\s+one\b', text_lower)
+        if not has_phase1:
+            return []
+        has_conclusion = re.search(
+            r'(?:assignable\s+cause|no\s+assignable\s+cause|no\s+laboratory\s+error|'
+            r'phase\s*[i1]\s*conclusion)[:\s]',
+            text_lower
+        )
+        if not has_conclusion:
+            return [FindingResult(
+                level="L3",
+                severity="critical",
+                category="phase1_no_conclusion",
+                title="Phase I lacks an explicit assignable-cause conclusion statement",
+                description=(
+                    "Phase I is present but does not contain an explicit conclusion statement. "
+                    "FDA OOS Guidance 2006 requires Phase I to conclude with either "
+                    "'Assignable cause found' (supported by specific named evidence) or "
+                    "'No assignable cause found' (triggering mandatory Phase II). Without this "
+                    "binary conclusion, the investigation pathway cannot be verified, and the "
+                    "Phase II trigger cannot be assessed."
+                ),
+                evidence="",
+                regulatory_citation="FDA OOS Guidance 2006 Section VI.B",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.82,
+                validated=True,
+            )]
+        return []
+
+    def _check_l4_selective_reporting(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Stated retest count does not match number of results reported — potential selective reporting."""
+        text = ctx.document_text
+        retest_count_m = re.search(
+            r'(\d+)\s+(?:re-?tests?|additional\s+tests?|repeat\s+tests?)\s+(?:were\s+)?(?:performed|conducted|completed)',
+            text, re.IGNORECASE
+        )
+        if not retest_count_m:
+            return []
+        stated_count = int(retest_count_m.group(1))
+        if stated_count < 2:
+            return []
+        result_block = text[retest_count_m.start():retest_count_m.start() + 800]
+        result_values = re.findall(r'\d+\.?\d*\s*%', result_block)
+        reported_count = len(result_values)
+        if not (0 < reported_count < stated_count):
+            return []
+        return [FindingResult(
+            level="L4",
+            severity="critical",
+            category="selective_retest_reporting",
+            title=f"Selective reporting risk: {stated_count} retests stated but only {reported_count} result(s) shown",
+            description=(
+                f"The document states '{stated_count} retests performed' but only "
+                f"{reported_count} result value(s) appear in the retest section. "
+                f"FDA OOS Guidance 2006 requires ALL retest results — passing and failing — "
+                f"to be reported. A discrepancy between the stated number of tests and the "
+                f"number of results reported is a potential selective reporting data integrity "
+                f"violation. This must be reconciled with documentation of all test results."
+            ),
+            evidence=result_block[:250].strip(),
+            location=_nearest_section(text, retest_count_m.start()),
+            regulatory_citation="FDA OOS Guidance 2006 Section VI.C.2",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.85,
+            validated=True,
+        )]
+
+    def _check_l8_passing_retest_assignable_cause(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Passing retest as the sole Phase I assignable cause — #1 cited OOS invalidation error."""
+        text = ctx.document_text
+        patterns = [
+            r'assignable\s+cause[:\s]+(?:passing\s+retest|retest\s+passed|retests?\s+(?:were\s+)?(?:all\s+)?(?:within|compliant|acceptable|passed))',
+            r'OOS\s+(?:result\s+)?invalidated[^\n]{0,200}retest\s+pass',
+            r'original\s+result[^\n]{0,100}invalidated[^\n]{0,200}retests?\s+(?:passed|compliant|within)',
+            r'assignable\s+cause[:\s]*(?:confirmed\s+)?(?:by\s+)?(?:the\s+)?(?:passing\s+)?retest',
+        ]
+        for pat in patterns:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                excerpt_start = max(0, text.rfind('\n', 0, m.start()) + 1)
+                excerpt = text[excerpt_start:excerpt_start + 400].strip()
+                return [FindingResult(
+                    level="L8",
+                    severity="critical",
+                    category="passing_retest_as_assignable_cause",
+                    title="OOS invalidated based solely on passing retests — not valid Phase I assignable cause",
+                    description=(
+                        f"The Phase I investigation invalidates the OOS result based on passing retests: "
+                        f"'{excerpt[:200]}'. "
+                        f"FDA OOS Guidance 2006, Section VI.C.1 explicitly states that a passing retest "
+                        f"result is not, by itself, acceptable as Phase I assignable cause evidence. "
+                        f"An assignable cause requires: (1) a specifically named laboratory error, "
+                        f"(2) corroborating documentary evidence, and (3) a causal link to the OOS result. "
+                        f"Without all three criteria, the OOS cannot be invalidated at Phase I, "
+                        f"and Phase II must be conducted."
+                    ),
+                    evidence=excerpt[:300],
+                    location=_nearest_section(text, m.start()),
+                    regulatory_citation="FDA OOS Guidance 2006 Section VI.C.1",
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.97,
+                    validated=True,
+                )]
+        return []
+
+    def _check_l8_disposition_consistency(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Confirmed OOS + Release disposition is an automatic Critical — contradictory and impermissible."""
+        text_lower = ctx.document_text.lower()
+        confirmed_oos = re.search(
+            r'(?:confirmed|conclusion)[:\s]*confirmed\s+oos|oos\s+confirmed|'
+            r'phase\s*[ii2]\s+conclusion[:\s]*confirmed\s+oos',
+            text_lower
+        )
+        released = re.search(
+            r'(?:disposition|batch\s+disposition)[:\s]*(?:released?|approved\s+for\s+release)',
+            text_lower
+        )
+        if not (confirmed_oos and released):
+            return []
+        return [FindingResult(
+            level="L8",
+            severity="critical",
+            category="confirmed_oos_released",
+            title="Confirmed OOS batch dispositioned as 'Released' — impermissible under GMP",
+            description=(
+                "The document indicates a 'Confirmed OOS' conclusion AND a batch disposition of "
+                "'Released.' A batch with a confirmed OOS result cannot be released under any "
+                "GMP-compliant disposition framework. This combination is an automatic Critical "
+                "finding — the disposition is inconsistent with the investigation outcome and "
+                "constitutes a potential patient safety violation per 21 CFR 211.192."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.93,
+            validated=True,
+        )]

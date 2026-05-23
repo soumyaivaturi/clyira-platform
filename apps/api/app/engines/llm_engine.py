@@ -156,7 +156,7 @@ Each finding MUST include the correct "level" field (matching the level heading 
 Return ONLY a JSON array of findings with no preamble.
 """)
 
-        system = self._get_system_prompt("Multi-Level")
+        system = self._get_system_prompt("Multi-Level", profile.document_category)
         total_checks = sum(len(v) for v in checks_by_level.values())
         print(f"  LLM [{_active_model()}]: batched rule fallback for {list(checks_by_level.keys())} ({total_checks} checks)...")
         try:
@@ -228,6 +228,7 @@ Include critical/high severity findings for major gaps AND medium/low for minor 
 Return ALL findings for ALL levels in a single JSON array. No preamble or explanation.
 """)
 
+        domain_block = self._get_domain_system_prompt(profile.document_category)
         system_prompt = f"""You are a senior FDA/EMA regulatory assessor performing a MULTI-LEVEL assessment of a pharmaceutical quality document.
 
 YOUR MANDATE: Find ALL issues — gaps, ambiguities, missing elements, weak language, non-conformances, data integrity risks.
@@ -235,7 +236,7 @@ YOUR MANDATE: Find ALL issues — gaps, ambiguities, missing elements, weak lang
 SEVERITY: critical (Warning Letter), high (483 obs), medium (internal audit), low (best practice), info (advisory).
 
 TAG every finding with its correct level (L3, L5, L6, L8, L9, L10, or L11).
-
+{domain_block}
 OUTPUT: Single JSON array. Each item: {{"level":"...","severity":"...","category":"...","title":"...","description":"...","evidence":"...","regulatory_citation":"...","citation_type":"...","agency":"...","suggestion_draft":"...","confidence_score":0.0}}"""
 
         print(f"  LLM [{_active_model()}]: batched assessment for {levels}...")
@@ -254,7 +255,7 @@ OUTPUT: Single JSON array. Each item: {{"level":"...","severity":"...","category
             logger.warning(f"Skipping LLM assessment for {level} — no LLM key configured")
             return []
 
-        system_prompt = self._get_system_prompt(level)
+        system_prompt = self._get_system_prompt(level, context.document_category)
         user_prompt = self._build_assessment_prompt(level, context)
 
         try:
@@ -265,7 +266,8 @@ OUTPUT: Single JSON array. Each item: {{"level":"...","severity":"...","category
             print(f"  LLM ERROR [{level}]: {type(e).__name__}: {e}")
             return []
 
-    def _get_system_prompt(self, level: str) -> str:
+    def _get_system_prompt(self, level: str, document_category: str = "") -> str:
+        domain_block = self._get_domain_system_prompt(document_category) if document_category else ""
         return f"""You are a senior FDA/EMA regulatory assessor and GMP compliance expert with 20+ years of experience conducting inspections. You are performing a Level {level} assessment of a pharmaceutical quality document.
 
 YOUR MANDATE: Be THOROUGH and COMPREHENSIVE. Find ALL issues — gaps, ambiguities, missing elements, weak language, incomplete procedures, data integrity risks, and regulatory non-conformances. An undetected finding that becomes an FDA 483 observation is worse than a false positive that gets reviewed and closed.
@@ -283,12 +285,101 @@ SEVERITY GUIDE:
 - medium: Would be flagged in an internal audit
 - low: Best practice gap or minor documentation weakness
 - info: Advisory observation for improvement
-
+{domain_block}
 OUTPUT FORMAT: Return a JSON array of ALL findings. Do not omit findings to save space.
 Each finding: {{"level": "...", "severity": "...", "category": "...", "title": "...",
 "description": "...", "evidence": "...", "location": "...",
 "regulatory_citation": "...", "citation_type": "...", "agency": "...",
 "suggestion_draft": "...", "confidence_score": 0.0}}"""
+
+    def _get_domain_system_prompt(self, document_category: str) -> str:
+        """Returns domain-specific assessment guidance appended to the base system prompt."""
+        cat = document_category.upper()
+
+        if cat == "DEVIATION":
+            return """
+DEVIATION REPORT — DOMAIN REQUIREMENTS (21 CFR 211.192, ICH Q10, EU GMP Ch 8):
+
+DIMENSION CHECKS YOU MUST PERFORM:
+1. Root Cause Quality: Is the stated root cause the actual systemic cause? Flag "human error" as root cause without systemic analysis — it is almost always a proximate, not root, cause.
+2. Impact Evidence: Are impact assessment claims ("no impact on quality") supported by analytical data? Flag unsupported impact conclusions as high/critical.
+3. Containment Documentation: Was immediate containment action documented with timing? Flag missing containment or containment documented days after the event.
+4. CAPA Adequacy: Do CAPAs address the root cause or only the symptom? Flag training-only CAPAs for systemic failures.
+5. Batch Disposition Justification: Is batch release/rejection justified with QA rationale and supporting data? A disposition without explicit justification is a 483 finding.
+6. FAR Assessment: Is Field Alert Report (FAR) requirement assessed (even if "not applicable")? The absence of this assessment is a 483 observation under 21 CFR 314.81.
+7. Timeliness: Was the deviation initiated within 24 hours for Critical deviations? Was the investigation closed within 30 days (Major) or 120 days (Critical)?
+8. ALCOA+ Data Integrity: Are all data entries attributable, legible, contemporaneous, original, accurate? Flag retrospective entries, whitened-out data, missing dates.
+9. Regulatory Reporting: Is regulatory reporting requirement assessed (e.g., Annual Report, field alert, supplement)?
+
+CRITICAL PATTERNS TO ALWAYS FLAG:
+- "No impact on product quality" without cited analytical test data → critical
+- "Human error" as root cause without systemic analysis → high
+- Training as the only CAPA action → high
+- FAR assessment section absent entirely → high
+- Disposition stated before investigation was complete → critical
+- Batch released with confirmed critical deviation → critical"""
+
+        if cat == "LIR":
+            return """
+LAB INVESTIGATION REPORT (OOS/OOT) — DOMAIN REQUIREMENTS (21 CFR 211.192, 211.194, FDA OOS Guidance 2006):
+
+DIMENSION CHECKS YOU MUST PERFORM:
+1. Phase I Structure: Phase I (laboratory investigation) MUST be present and documented BEFORE Phase II. Flag if Phase I is missing, incomplete, or its conclusion is absent.
+2. Phase I Conclusion: Phase I must end with an explicit conclusion: either an assignable laboratory cause was found (and therefore original result is invalidated) OR no assignable cause was found (and therefore Phase II is required). Flag absence of this conclusion.
+3. Phase II Adequacy: If Phase I found no assignable cause, Phase II (full-scale investigation) is MANDATORY. Flag if Phase II is absent when Phase I concluded no assignable cause.
+4. Retest Documentation: All retests must be fully documented — analyst, instrument, date, results. Flag retest results referenced without documentation.
+5. Assignable Cause Quality: An assignable cause MUST be a documented, demonstrated laboratory error (e.g., calculation error, instrument malfunction with records, analyst error witnessed). Flag "analyst error" or "instrument problem" without supporting evidence.
+6. Passing Retest ≠ Assignable Cause: Passing retest results alone are NOT a valid basis for invalidating an OOS result (FDA OOS Guidance 2006 §IV.C). This is the #1 Warning Letter pattern. Flag any LIR that uses passing retests to justify invalidation without a demonstrated laboratory error.
+7. Selective Reporting: If the LIR states N retests were performed but only M < N results are documented, flag as critical — selective reporting of test results.
+8. Disposition Consistency: A confirmed OOS result (Phase II confirmed) cannot result in batch release without explicit QA justification and regulatory notification. Flag confirmed OOS + release as critical.
+9. ALCOA+ Data Integrity: Flag missing analyst names on entries, undated results, retrospective completion, instrument logs not cross-referenced.
+
+CRITICAL PATTERNS TO ALWAYS FLAG:
+- Phase I missing entirely → critical
+- Phase I conclusion absent (no explicit assignable/no-assignable statement) → high
+- Passing retest used as sole invalidation justification → critical (21 CFR 211.192)
+- Stated retest count does not match documented results → critical
+- Phase II absent when Phase I found no assignable cause → critical
+- Confirmed OOS result with batch released → critical
+- Analyst error cited as assignable cause without witnessed/documented evidence → high"""
+
+        if cat == "CAPA":
+            return """
+CAPA — DOMAIN REQUIREMENTS (21 CFR 820.100, ICH Q10 §3.2, ISO 13485 §8.5):
+
+DIMENSION CHECKS YOU MUST PERFORM:
+1. Root Cause Depth: Is the root cause analysis rigorous (5-Why, fishbone, FMEA)? Flag shallow analyses that stop at the proximate cause.
+2. Human Error Analysis: "Human error" as root cause must be followed by analysis of WHY human error occurred (training gap, procedure clarity, workload, environment). Flag standalone human error conclusions.
+3. Training-Only CAPAs: Training as the sole corrective action for systemic failures is a recurring 483 pattern. Flag unless root cause is genuinely a training gap.
+4. Effectiveness Criteria: CAPA must include measurable effectiveness check criteria with a defined verification date. Flag absent or unmeasurable criteria.
+5. Retrospective CAPA: Flag CAPAs opened after the problem recurred — indicates the original CAPA was ineffective.
+6. OOS Invalidation Basis: If the CAPA references an OOS result, verify that the invalidation was based on a documented assignable cause, not merely passing retests.
+7. Scope: Does the CAPA address only the immediate instance or the systemic/horizontal extent of the problem?"""
+
+        if cat == "SOP":
+            return """
+SOP — DOMAIN REQUIREMENTS (21 CFR 211.68, 211.100, ICH Q10, EU GMP Ch 4):
+
+DIMENSION CHECKS YOU MUST PERFORM:
+1. Procedural Clarity: Are all steps numbered, unambiguous, and free of "as appropriate" / "if needed" without defined criteria?
+2. Responsibility Assignment: Is each step's responsible role clearly named (not just "operator" generically)?
+3. Critical Parameters: Are critical process parameters, acceptable ranges, and action limits explicitly stated?
+4. Deviation Handling: Is the procedure for handling out-of-specification or unexpected results included?
+5. Training Requirements: Are qualification requirements for personnel performing the procedure stated?
+6. Review Cycle: Is the review frequency stated and consistent with the criticality of the procedure?"""
+
+        if cat == "ATM":
+            return """
+ANALYTICAL TEST METHOD — DOMAIN REQUIREMENTS (21 CFR 211.194, ICH Q2(R1), USP <1225>):
+
+DIMENSION CHECKS YOU MUST PERFORM:
+1. System Suitability: Are system suitability criteria (resolution, tailing, RSD) defined with acceptance limits? Flag absent SST requirements.
+2. Validation Parameters: Are all required validation parameters present (specificity, linearity, range, accuracy, precision, LOD, LOQ, robustness)?
+3. Reference Standards: Are reference standard requirements (source, purity, storage, handling) documented?
+4. OOS/Aberrant Result Procedure: Is the procedure for handling aberrant results and failing system suitability defined?
+5. Instrument Qualification: Are instrument qualification requirements (IQ/OQ/PQ) referenced?"""
+
+        return ""
 
     def _build_assessment_prompt(self, level: str, context: AssessmentContext) -> str:
         profile = context.dtap_profile
@@ -408,21 +499,33 @@ Return ONLY the JSON array with no preamble or explanation.
 
         findings = []
         for item in data:
-            if not item.get("title") or not item.get("description"):
+            # Handle MVP legacy field names alongside current names
+            title = item.get("title") or item.get("finding_statement", "")
+            description = item.get("description") or item.get("finding_statement", "")
+            evidence = item.get("evidence") or item.get("text_excerpt", "")
+            location = item.get("location") or item.get("section_reference", "")
+            regulatory_citation = item.get("regulatory_citation") or item.get("primary_citation", "")
+
+            # MVP used integer assessment_level (1–11) mapped to string "L{n}"
+            raw_level = item.get("level") or item.get("assessment_level", level)
+            if isinstance(raw_level, int):
+                raw_level = f"L{raw_level}"
+
+            if not title or not description:
                 continue
             findings.append(FindingResult(
-                level=item.get("level", level),
+                level=str(raw_level),
                 severity=item.get("severity", "medium"),
                 category=item.get("category", ""),
-                title=item.get("title", ""),
-                description=item.get("description", ""),
-                evidence=item.get("evidence", ""),
-                location=item.get("location", ""),
-                regulatory_citation=item.get("regulatory_citation", ""),
+                title=title,
+                description=description,
+                evidence=evidence,
+                location=location,
+                regulatory_citation=regulatory_citation,
                 citation_type=item.get("citation_type", ""),
                 agency=item.get("agency", ""),
                 suggestion_draft=item.get("suggestion_draft", ""),
-                confidence_score=item.get("confidence_score", 0.7),
+                confidence_score=float(item.get("confidence_score", 0.7)),
                 validated=False,
             ))
         return findings

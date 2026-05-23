@@ -61,7 +61,7 @@ const FRAMEWORK_GROUPS = [
 
 const ALL_FRAMEWORK_CODES = FRAMEWORK_GROUPS.flatMap((g) => g.items.map((i) => i.code));
 
-const DOC_CATEGORIES = ["SOP", "CAPA", "ATM", "Deviation", "Validation", "Protocol", "Report", "Other"];
+const DOC_CATEGORIES = ["SOP", "CAPA", "ATM", "Deviation", "LIR", "Validation", "Protocol", "Report", "Other"];
 const DEPARTMENTS = ["Quality Assurance", "Quality Control", "Manufacturing", "Validation", "Regulatory Affairs", "Research & Development", "Clinical & Safety"];
 
 interface Document {

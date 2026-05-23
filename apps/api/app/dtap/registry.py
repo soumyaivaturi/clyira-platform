@@ -1,11 +1,13 @@
 """
 DTAP Registry — Holds all registered DTAPs and resolves which profile applies.
-V1 ships with: DTAP-001 (SOP), DTAP-002 (CAPA), DTAP-003 (ATM)
+V1 ships with: DTAP-001 (SOP), DTAP-002 (CAPA), DTAP-003 (ATM), DTAP-004 (Deviation), DTAP-005 (LIR)
 """
 from app.dtap.profile import DTAPProfile, LevelConfig
 from app.dtap.profiles.sop import SOP_DTAP
 from app.dtap.profiles.capa import CAPA_DTAP
 from app.dtap.profiles.atm import ATM_DTAP
+from app.dtap.profiles.deviation import DEVIATION_DTAP
+from app.dtap.profiles.lir import LIR_DTAP
 
 
 class DTAPRegistry:
@@ -19,6 +21,8 @@ class DTAPRegistry:
         cls.register(SOP_DTAP)
         cls.register(CAPA_DTAP)
         cls.register(ATM_DTAP)
+        cls.register(DEVIATION_DTAP)
+        cls.register(LIR_DTAP)
 
     @classmethod
     def register(cls, profile: DTAPProfile):
