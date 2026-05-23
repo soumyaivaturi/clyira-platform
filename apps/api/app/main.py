@@ -274,6 +274,71 @@ async def _run_enforcement_seed(source: str, years: int) -> None:
         raise
 
 
+# Debug: show last N assessments (any status) with finding counts (admin only)
+@app.get("/debug/recent-assessments")
+async def debug_recent_assessments(request: Request, n: int = 10):
+    import os
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from sqlalchemy import text
+    from app.core.database import engine
+    async with engine.connect() as conn:
+        result = await conn.execute(text(
+            "SELECT id, document_id, status, clyira_score, "
+            "findings_critical, findings_high, findings_medium, findings_low, findings_info, "
+            "model_version, processing_time_seconds, error_detail, created_at "
+            "FROM assessments ORDER BY created_at DESC LIMIT :n"
+        ), {"n": n})
+        rows = result.fetchall()
+    return [
+        {
+            "id": r[0], "document_id": r[1], "status": r[2], "score": r[3],
+            "findings": {"critical": r[4], "high": r[5], "medium": r[6], "low": r[7], "info": r[8]},
+            "model": r[9], "processing_s": r[10],
+            "error": r[11][:200] if r[11] else None,
+            "created_at": str(r[12]),
+        }
+        for r in rows
+    ]
+
+
+# Debug: test Groq API directly (admin only)
+@app.get("/debug/test-groq")
+async def debug_test_groq(request: Request):
+    import os, time
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not settings.GROQ_API_KEY:
+        return {"status": "error", "detail": "GROQ_API_KEY not set"}
+    try:
+        import httpx
+        t0 = time.time()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
+                json={
+                    "model": settings.GROQ_MODEL,
+                    "messages": [{"role": "user", "content": "Reply with exactly: GROQ_OK"}],
+                    "max_tokens": 10,
+                },
+            )
+        elapsed = round(time.time() - t0, 2)
+        if resp.status_code == 200:
+            content = resp.json()["choices"][0]["message"]["content"]
+            usage = resp.json().get("usage", {})
+            return {"status": "ok", "response": content, "elapsed_s": elapsed,
+                    "model": settings.GROQ_MODEL, "usage": usage}
+        else:
+            return {"status": "error", "http_status": resp.status_code, "body": resp.text[:300]}
+    except Exception as e:
+        return {"status": "error", "detail": f"{type(e).__name__}: {e}"}
+
+
 # Debug: show error detail for last N failed assessments (admin only)
 @app.get("/debug/assessment-errors")
 async def debug_assessment_errors(request: Request, n: int = 5):

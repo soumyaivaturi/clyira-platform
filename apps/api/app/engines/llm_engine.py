@@ -27,7 +27,8 @@ def _active_model() -> str:
 
 
 async def _call_groq(system_prompt: str, user_prompt: str) -> str:
-    """Call Groq (LLaMA) via OpenAI-compatible API. No retry needed — 30 RPM / 14,400 RPD free."""
+    """Call Groq (LLaMA) via OpenAI-compatible API. Retries on TPM 429; fails fast on daily quota."""
+    import asyncio
     payload = {
         "model": settings.GROQ_MODEL,
         "messages": [
@@ -37,15 +38,25 @@ async def _call_groq(system_prompt: str, user_prompt: str) -> str:
         "temperature": 0.3,
         "max_tokens": settings.GEMINI_MAX_TOKENS,
     }
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            GROQ_URL,
-            headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
-            json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+    for attempt in range(3):
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                GROQ_URL,
+                headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
+                json=payload,
+            )
+            if resp.status_code == 429:
+                body = resp.text.lower()
+                if "day" in body or "daily" in body or "quota" in body:
+                    raise Exception("Groq daily quota exhausted")
+                wait = 15 * (attempt + 1)  # 15s, 30s, 45s — TPM resets every minute
+                print(f"  Groq 429 TPM limit (attempt {attempt+1}/3), waiting {wait}s...")
+                await asyncio.sleep(wait)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+    raise Exception("Groq TPM rate limit: failed after 3 attempts")
 
 
 async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
@@ -120,7 +131,7 @@ class LLMEngine:
             for check in checks:
                 prompt_parts.append(f"- {check.replace('_', ' ').title()}")
 
-        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:40000]}")
+        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:15000]}")
         prompt_parts.append(f"\nApplicable agencies: {', '.join(context.company_agencies)}")
         if context.regulatory_frameworks:
             prompt_parts.append(f"Regulatory frameworks: {', '.join(context.regulatory_frameworks)}")
@@ -178,7 +189,7 @@ Return ONLY a JSON array of findings with no preamble.
             for check in level_config.checks:
                 prompt_parts.append(f"- {check.replace('_', ' ').title()}")
 
-        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:40000]}")
+        prompt_parts.append(f"\n### Document Content:\n{context.document_text[:15000]}")
 
         if "L8" in levels and context.regulatory_context:
             prompt_parts.append("\n### Regulatory Requirements (for L8):")
@@ -280,7 +291,7 @@ Each finding: {{"level": "...", "severity": "...", "category": "...", "title": "
             prompt_parts.append(f"- {check.replace('_', ' ').title()}")
 
         prompt_parts.append(f"\n### Document Content:")
-        prompt_parts.append(context.document_text[:50000])
+        prompt_parts.append(context.document_text[:15000])
 
         if context.regulatory_context and level == "L8":
             prompt_parts.append("\n### Relevant Regulatory Requirements:")

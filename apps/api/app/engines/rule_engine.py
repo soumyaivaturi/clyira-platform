@@ -64,9 +64,8 @@ class RuleEngine:
 
     async def _llm_fallback_batched(self, unimplemented_by_level: dict[str, list[str]], context: AssessmentContext) -> list[FindingResult]:
         """Send ALL unimplemented rule checks (across all levels) to LLM in ONE batched call."""
-        from app.engines.llm_engine import LLMEngine
-        from app.core.config import settings
-        if not settings.GEMINI_API_KEY:
+        from app.engines.llm_engine import LLMEngine, _llm_available
+        if not _llm_available():
             return []
         try:
             engine = LLMEngine()
