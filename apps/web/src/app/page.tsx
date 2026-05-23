@@ -199,9 +199,9 @@ export default function LandingPage() {
             </div>
 
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-tight mb-6">
-              Know Your Compliance Score.{" "}
+              Continuous Compliance Intelligence.{" "}
               <span className="text-transparent bg-clip-text" style={{ backgroundImage: "linear-gradient(135deg, #7cc8fb, #8C52FF)" }}>
-                Before the Auditor Arrives.
+                From First Draft to Final Audit.
               </span>
             </h1>
 
@@ -314,6 +314,31 @@ export default function LandingPage() {
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* ── IMPACT METRICS ──────────────────────────────────────────────────── */}
+      <section className="bg-white border-b border-gray-100 py-12 px-6">
+        <div className="max-w-7xl mx-auto">
+          <p className="text-center text-xs font-semibold uppercase tracking-widest text-gray-400 mb-8">
+            The cost of the problem Clyira solves
+          </p>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 text-center">
+            {[
+              { stat: "74%", label: "of FDA Complete Response Letters cite documentation deficiencies" },
+              { stat: "65%", label: "of first-cycle FDA submissions require rework before approval" },
+              { stat: "$2–5M", label: "per site per year lost to compliance labor and rework costs" },
+              { stat: "6–12 mo", label: "approval delays caused by documentation gaps — delaying patient access" },
+            ].map(({ stat, label }) => (
+              <div key={stat} className="px-4">
+                <div className="text-3xl sm:text-4xl font-bold text-clyira-600 mb-2">{stat}</div>
+                <p className="text-xs text-gray-500 leading-relaxed">{label}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-center text-sm text-gray-400 mt-8 font-medium">
+            Clyira replaces reactive compliance fire drills with continuous, AI-validated quality intelligence.
+          </p>
         </div>
       </section>
 
