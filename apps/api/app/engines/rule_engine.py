@@ -1971,6 +1971,544 @@ class RuleEngine:
             ),
         )]
 
+    # ========== L1/L2/L4/L7: ATM-Specific Checks ==========
+
+    def _check_l1_method_number_format(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Analytical method must carry a formal method number."""
+        text = ctx.document_text[:2000]
+        has_method_no = re.search(
+            r'(?:method\s*(?:no|number|#|id|ref)|ATM[-\s]*\d|AM[-\s]*\d{3}|'
+            r'TM[-\s]*\d{3}|QCM[-\s]*\d{3}|STP[-\s]*\d{3}|'
+            r'test\s+method\s*(?:no|number|#)[:\s]*[A-Z0-9-]+)',
+            text, re.IGNORECASE
+        )
+        if has_method_no:
+            return []
+        return [FindingResult(
+            level="L1",
+            severity="high",
+            category="method_number_missing",
+            title="Analytical method number not found in document header",
+            description=(
+                "No method number was found in the document header. Every GMP analytical method "
+                "must carry a unique method number for traceability within the quality management "
+                "system. Without a method number, the correct version cannot be verified at the "
+                "bench, and the method cannot be linked to its validation report."
+            ),
+            evidence="",
+            location="Document Header",
+            regulatory_citation="21 CFR 211.194(a)",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.80,
+            validated=True,
+        )]
+
+    def _check_l1_effective_date(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """ATM must have an effective date — same as SOP."""
+        return self._check_l2_effective_date_present(ctx)
+
+    def _check_l1_pharmacopoeia_reference(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """If compendial method, pharmacopoeia reference must be in the title/scope section."""
+        text = ctx.document_text[:3000]
+        compendial = re.search(
+            r'\b(?:USP|NF|EP|BP|JP|IP|Ph\.Eur|Ph\s+Eur)\s*[<\[]?\d',
+            text, re.IGNORECASE
+        )
+        if compendial:
+            return []
+        non_compendial = re.search(
+            r'(?:in-house\s+method|proprietary\s+method|non[-\s]?compendial)',
+            text, re.IGNORECASE
+        )
+        if non_compendial:
+            return []
+        return [FindingResult(
+            level="L1",
+            severity="info",
+            category="pharmacopoeia_reference_absent",
+            title="No pharmacopoeia reference or non-compendial declaration found",
+            description=(
+                "The method does not reference a pharmacopoeia source (USP, EP, BP, JP) nor "
+                "explicitly state it is an in-house/non-compendial method. This distinction drives "
+                "the validation versus verification pathway — compendial methods require USP <1226> "
+                "verification; non-compendial methods require full ICH Q2(R2) validation."
+            ),
+            evidence="",
+            location="Title and Scope",
+            regulatory_citation="21 CFR 211.194(a)(2)",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.60,
+            validated=True,
+        )]
+
+    def _check_l1_equipment_list_completeness(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Equipment list must include instrument model, qualification status, and calibration requirements."""
+        text = ctx.document_text
+        equipment_section = re.search(
+            r'(?:equipment|apparatus|instrument|materials?\s+and\s+equipment)',
+            text, re.IGNORECASE
+        )
+        if not equipment_section:
+            return [FindingResult(
+                level="L1",
+                severity="high",
+                category="equipment_section_absent",
+                title="Equipment and Apparatus section not found",
+                description=(
+                    "No equipment or apparatus section was found. Every GMP analytical method must "
+                    "list all required instruments and equipment — including model/specification, "
+                    "calibration requirements, and qualification status — so that analysts can verify "
+                    "the appropriate equipment is being used."
+                ),
+                evidence="",
+                location="Equipment and Apparatus",
+                regulatory_citation="21 CFR 211.68",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.78,
+                validated=True,
+            )]
+        eq_window = text[equipment_section.start():equipment_section.start() + 1000]
+        has_qualification = re.search(
+            r'(?:qualified|IQ|OQ|PQ|calibrated|calibration|qualification\s+status)',
+            eq_window, re.IGNORECASE
+        )
+        if has_qualification:
+            return []
+        return [FindingResult(
+            level="L1",
+            severity="medium",
+            category="equipment_qualification_status_absent",
+            title="Equipment list does not reference qualification or calibration requirements",
+            description=(
+                "The equipment section does not reference qualification status (IQ/OQ/PQ) or "
+                "calibration requirements for listed instruments. FDA expects that analytical method "
+                "equipment listings include a statement that instruments must be qualified and "
+                "calibrated per approved procedures before use."
+            ),
+            evidence=eq_window[:200].strip(),
+            location=_nearest_section(text, equipment_section.start()) or "Equipment",
+            regulatory_citation="21 CFR 211.68",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.70,
+            validated=True,
+        )]
+
+    def _check_l1_reagent_grade_specifications(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Reagents must include grade specifications (ACS, HPLC grade, reagent grade, USP)."""
+        text = ctx.document_text
+        reagent_section = re.search(
+            r'(?:reagent|chemical|solvent|mobile\s+phase|buffer)',
+            text, re.IGNORECASE
+        )
+        if not reagent_section:
+            return []
+        eq_window = text[reagent_section.start():reagent_section.start() + 1200]
+        has_grade = re.search(
+            r'(?:HPLC\s+grade|ACS\s+grade|analytical\s+grade|reagent\s+grade|'
+            r'USP\s+grade|LC-MS\s+grade|optima|trace\s+metal)',
+            eq_window, re.IGNORECASE
+        )
+        if has_grade:
+            return []
+        return [FindingResult(
+            level="L1",
+            severity="medium",
+            category="reagent_grade_not_specified",
+            title="Reagent/solvent purity grades not specified",
+            description=(
+                "The reagent/solvent section does not specify purity grades (HPLC grade, ACS grade, "
+                "reagent grade). Using an incorrect solvent grade in an analytical method can introduce "
+                "impurities that interfere with the analysis or invalidate results. Grade specification "
+                "is required for GMP-compliant method documentation per 21 CFR 211.194(a)(1)."
+            ),
+            evidence=eq_window[:200].strip(),
+            location=_nearest_section(text, reagent_section.start()) or "Reagents",
+            regulatory_citation="21 CFR 211.194(a)(1)",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.72,
+            validated=True,
+        )]
+
+    def _check_l2_method_validation_reference(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """ATM must cross-reference its validation or verification report."""
+        text = ctx.document_text
+        has_val_ref = re.search(
+            r'(?:validation\s+report[:\s]*[A-Z0-9-]+|'
+            r'VAL[-\s]?\d|VER[-\s]?\d|'
+            r'verification\s+report[:\s]*[A-Z0-9-]+|'
+            r'ICH\s+Q2.*validation)',
+            text, re.IGNORECASE
+        )
+        if has_val_ref:
+            return []
+        return [FindingResult(
+            level="L2",
+            severity="critical",
+            category="validation_report_not_referenced",
+            title="Method does not cross-reference a validation or verification report",
+            description=(
+                "The method does not cross-reference a validation report or suitability verification "
+                "report by document number. Every GMP analytical method must be traceable to the "
+                "validation study that establishes its fitness for purpose. Without this reference, "
+                "it is impossible to verify the method is used within its validated parameters "
+                "(concentration range, matrix, instrument configuration)."
+            ),
+            evidence="",
+            location="References / Document Header",
+            regulatory_citation="21 CFR 211.194(a)(2)",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.82,
+            validated=True,
+        )]
+
+    def _check_l2_change_history(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """ATM must include a change/revision history documenting what changed and why."""
+        text = ctx.document_text
+        has_change_history = re.search(
+            r'(?:change\s+history|revision\s+history|version\s+history|'
+            r'amendment\s+(?:log|history)|change\s+log)',
+            text, re.IGNORECASE
+        )
+        if has_change_history:
+            return []
+        return [FindingResult(
+            level="L2",
+            severity="medium",
+            category="change_history_absent",
+            title="Change history / revision history section absent",
+            description=(
+                "No change history or revision history section was found. Analytical methods are "
+                "controlled documents — any change to the method (mobile phase composition, column "
+                "change, temperature modification) must be captured in a documented change record "
+                "that includes: what changed, who authorised it, and the supporting rationale. "
+                "Without this, the audit trail for method modifications is broken."
+            ),
+            evidence="",
+            location="Document Footer / Revision Section",
+            regulatory_citation="21 CFR 211.68",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.68,
+            validated=True,
+        )]
+
+    def _check_l2_training_requirements(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """ATM should specify analyst training/qualification requirements."""
+        return self._check_l7_training_requirements_defined(ctx)
+
+    def _check_l4_raw_data_requirements(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Method must specify what raw data must be retained and where."""
+        text = ctx.document_text
+        has_raw_data = re.search(
+            r'(?:raw\s+data|original\s+data|chromatogram\s+(?:shall|must|should)|'
+            r'data\s+(?:shall\s+be\s+)?retain|record\s+(?:shall\s+be\s+)?retain|'
+            r'original\s+records)',
+            text, re.IGNORECASE
+        )
+        if has_raw_data:
+            return []
+        return [FindingResult(
+            level="L4",
+            severity="critical",
+            category="raw_data_requirements_absent",
+            title="Method does not specify raw data retention requirements",
+            description=(
+                "The method does not specify what raw data must be retained or how. For analytical "
+                "methods, raw data includes original chromatograms, weighing records, preparation "
+                "worksheets, and instrument printouts. ALCOA+ principles require that original "
+                "records be preserved in their original form. The absence of raw data retention "
+                "instructions in the method creates a data integrity vulnerability."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 211.194(a)",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.85,
+            validated=True,
+            suggestion_draft=(
+                "RAW DATA REQUIREMENTS\n"
+                "The following original records must be retained with the analytical worksheet:\n"
+                "• Original chromatograms (unmodified, with injection sequence and integration parameters)\n"
+                "• Weighing records for all reference standards and samples\n"
+                "• Preparation records and reagent lot numbers\n"
+                "• Instrument audit trail printout\n"
+                "Retain per SOP-QC-RECORDS-001 retention schedule."
+            ),
+        )]
+
+    def _check_l4_chromatogram_retention(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Chromatographic methods must specify chromatogram retention and print requirements."""
+        text = ctx.document_text
+        if not re.search(r'(?:HPLC|UHPLC|LC-MS|GC\b|chromatograph|column)', text, re.IGNORECASE):
+            return []
+        has_chromatogram_req = re.search(
+            r'(?:chromatogram\s+(?:shall|must|should|be\s+print|be\s+retain|be\s+attach)|'
+            r'print(?:out)?\s+chromatogram|attach\s+chromatogram|'
+            r'include\s+chromatogram|chromatogram\s+report)',
+            text, re.IGNORECASE
+        )
+        if has_chromatogram_req:
+            return []
+        return [FindingResult(
+            level="L4",
+            severity="high",
+            category="chromatogram_retention_not_specified",
+            title="Chromatographic method does not specify chromatogram retention requirements",
+            description=(
+                "This chromatographic method does not specify whether chromatograms must be printed "
+                "and attached to the analytical worksheet. In a GMP laboratory, every chromatographic "
+                "run must produce a retained, unmodified chromatogram that can be reviewed by QA. "
+                "The absence of this instruction creates ambiguity about which data must be preserved."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 211.194(a)",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.80,
+            validated=True,
+        )]
+
+    def _check_l4_integration_parameters(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Chromatographic methods must define integration parameters (peak width, threshold, baseline)."""
+        text = ctx.document_text
+        if not re.search(r'(?:HPLC|UHPLC|LC-MS|GC\b|chromatograph)', text, re.IGNORECASE):
+            return []
+        has_integration = re.search(
+            r'(?:integration\s+(?:parameter|setting|threshold|window|event)|'
+            r'peak\s+(?:width|threshold)|baseline\s+(?:correction|setting)|'
+            r'minimum\s+peak\s+area|integration\s+method)',
+            text, re.IGNORECASE
+        )
+        if has_integration:
+            return []
+        return [FindingResult(
+            level="L4",
+            severity="high",
+            category="integration_parameters_absent",
+            title="Chromatographic method does not define integration parameters",
+            description=(
+                "No chromatographic peak integration parameters (peak width threshold, baseline "
+                "correction method, minimum area) were found. Without defined integration parameters, "
+                "analysts may integrate peaks inconsistently between runs, introducing analyst-dependent "
+                "variability that undermines method reproducibility. FDA has cited methods that leave "
+                "integration decisions to analyst discretion as data integrity vulnerabilities."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 211.194(a)",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.75,
+            validated=True,
+        )]
+
+    def _check_l4_rounding_rules(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Method must specify rounding rules for results and intermediate calculations."""
+        text = ctx.document_text
+        has_rounding = re.search(
+            r'(?:round(?:ing)?(?:\s+to)?\s+\d|round\s+(?:up|down|to)|'
+            r'report(?:ed)?\s+to\s+\d\s+decimal|significant\s+figure|'
+            r'USP\s+rounding\s+rule|nearest\s+0\.\d)',
+            text, re.IGNORECASE
+        )
+        if has_rounding:
+            return []
+        return [FindingResult(
+            level="L4",
+            severity="medium",
+            category="rounding_rules_absent",
+            title="Rounding rules for result reporting not specified",
+            description=(
+                "No rounding rules for result calculation or reporting were found. Without defined "
+                "rounding rules (USP <1010> or method-specific), different analysts may report the "
+                "same result to different decimal places, creating inconsistency in the data. "
+                "This is particularly important near specification limits where rounding can determine "
+                "pass/fail outcome."
+            ),
+            evidence="",
+            location="Calculations / Reporting",
+            regulatory_citation="USP <1010>",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.65,
+            validated=True,
+        )]
+
+    def _check_l4_significant_figures(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Results reporting section must define significant figures for each reported parameter."""
+        text = ctx.document_text
+        has_sf = re.search(
+            r'(?:significant\s+figure|report\s+to\s+\d\s+(?:significant|decimal)|'
+            r'\d\s+significant\s+figure|report\s+(?:as|to)\s+x\.\d)',
+            text, re.IGNORECASE
+        )
+        if has_sf:
+            return []
+        reporting_section = re.search(r'(?:reporting|result\s+calculation|report\s+result)', text, re.IGNORECASE)
+        if not reporting_section:
+            return []
+        return [FindingResult(
+            level="L4",
+            severity="low",
+            category="significant_figures_not_defined",
+            title="Significant figures for result reporting not defined",
+            description=(
+                "The reporting section does not define the number of significant figures or decimal "
+                "places for reported results. Consistent significant figures are required for both "
+                "compliance (reproducibility between analysts) and data integrity (preventing "
+                "post-acquisition result manipulation via selective rounding)."
+            ),
+            evidence="",
+            location="Reporting / Calculations",
+            regulatory_citation="21 CFR 211.194(a)",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.60,
+            validated=True,
+        )]
+
+    def _check_l4_data_backup_requirements(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Electronic data backup and system audit trail requirements must be referenced."""
+        text = ctx.document_text
+        has_backup = re.search(
+            r'(?:data\s+backup|audit\s+trail|CDS\s+(?:audit|backup)|'
+            r'electronic\s+data\s+(?:retention|backup|backup)|'
+            r'Empower|ChemStation|OpenLAB|CDS)',
+            text, re.IGNORECASE
+        )
+        if has_backup:
+            return []
+        if not re.search(r'(?:HPLC|UHPLC|LC-MS|GC\b|chromatograph|CDS)', text, re.IGNORECASE):
+            return []
+        return [FindingResult(
+            level="L4",
+            severity="high",
+            category="electronic_data_backup_absent",
+            title="Electronic data backup and audit trail requirements not referenced",
+            description=(
+                "The method does not reference electronic data backup requirements or audit trail "
+                "maintenance for the CDS (Chromatography Data System). FDA and MHRA data integrity "
+                "guidance require that all electronic data be backed up, that audit trails are enabled "
+                "and cannot be disabled, and that backup procedures are defined. Methods that do not "
+                "reference these requirements leave analysts without documented basis for data management."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 211.68",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.75,
+            validated=True,
+        )]
+
+    def _check_l7_revalidation_triggers_defined(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """ATM must define triggers for method revalidation (column change, reagent change, etc.)."""
+        text = ctx.document_text
+        has_revalidation = re.search(
+            r'(?:re-?validat|requalif|change\s+control\s+trigger|'
+            r'requires?\s+re-?validat|trigger\s+(?:for\s+)?re-?validat)',
+            text, re.IGNORECASE
+        )
+        if has_revalidation:
+            return []
+        return [FindingResult(
+            level="L7",
+            severity="high",
+            category="revalidation_triggers_absent",
+            title="Method revalidation triggers not defined",
+            description=(
+                "The method does not define events that would trigger revalidation or re-qualification. "
+                "Per ICH Q2(R2) and FDA process validation guidance, analytical methods must include "
+                "criteria for when changes require formal revalidation — e.g., column manufacturer change, "
+                "reagent lot-to-lot variation, CDS software upgrade, or significant method modification. "
+                "Without defined triggers, revalidation decisions are made ad hoc rather than systematically."
+            ),
+            evidence="",
+            location="Method Validation Summary / Lifecycle Section",
+            regulatory_citation="ICH Q2(R2)",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.72,
+            validated=True,
+        )]
+
+    def _check_l7_periodic_review_schedule(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """ATM — same as SOP review cycle compliance check."""
+        return self._check_l7_review_cycle_compliance(ctx)
+
+    def _check_l7_instrument_qualification_linkage(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """ATM must reference the instrument qualification SOP or IQ/OQ/PQ programme."""
+        text = ctx.document_text
+        has_qual_link = re.search(
+            r'(?:IQ\b|OQ\b|PQ\b|qualification\s+(?:report|SOP|procedure)|'
+            r'instrument\s+qualification|equipment\s+qualification|'
+            r'calibration\s+SOP|SOP[-\s]*(?:EQ|EQUIP|CAL|IQ|OQ))',
+            text, re.IGNORECASE
+        )
+        if has_qual_link:
+            return []
+        return [FindingResult(
+            level="L7",
+            severity="medium",
+            category="instrument_qualification_not_referenced",
+            title="Instrument qualification SOP or programme not referenced in method",
+            description=(
+                "The method does not reference the instrument qualification programme (IQ/OQ/PQ) "
+                "or calibration SOP. Every GMP analytical method must specify that instruments "
+                "must be qualified per an approved programme before use — otherwise analysts lack "
+                "documented basis for confirming the instrument is in a qualified state."
+            ),
+            evidence="",
+            location="Equipment / Prerequisites",
+            regulatory_citation="21 CFR 211.68",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.68,
+            validated=True,
+        )]
+
+    def _check_l7_standard_expiry_tracking(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Reference standards and reagents must have expiry/retest date tracking requirements."""
+        text = ctx.document_text
+        has_expiry = re.search(
+            r'(?:expiry|expiration|expir\w+\s+date|use\s+before|retest\s+date|'
+            r'valid(?:ity)?\s+(?:period|date)|do\s+not\s+use\s+after)',
+            text, re.IGNORECASE
+        )
+        if has_expiry:
+            return []
+        has_standards = re.search(
+            r'(?:reference\s+standard|working\s+standard|primary\s+standard|'
+            r'secondary\s+standard|control\s+standard)',
+            text, re.IGNORECASE
+        )
+        if not has_standards:
+            return []
+        return [FindingResult(
+            level="L7",
+            severity="high",
+            category="standard_expiry_tracking_absent",
+            title="Reference standard expiry date tracking not required in method",
+            description=(
+                "The method references reference standards but does not require verification of "
+                "their expiry or retest date before use. Using expired or retest-date-exceeded "
+                "reference standards invalidates all analytical results obtained with them. "
+                "Methods must explicitly require analysts to verify standard expiry/retest dates "
+                "and document this check on the analytical worksheet."
+            ),
+            evidence="",
+            location="Reagents and Reference Standards",
+            regulatory_citation="USP <11>",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.80,
+            validated=True,
+        )]
+
     # ========== L1/L3/L4/L7/L8: Deviation Report Checks ==========
 
     def _check_l1_deviation_required_fields(self, ctx: AssessmentContext) -> list[FindingResult]:
