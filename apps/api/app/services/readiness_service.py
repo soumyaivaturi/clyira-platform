@@ -116,20 +116,50 @@ class ReadinessService:
             "enforcement_matches_total": enforcement_match_count,
         }
 
+    # Review cycle thresholds by document category (days since last assessment)
+    REVIEW_CYCLE_DAYS = {
+        "SOP": 730,        # 2 years
+        "CAPA": 365,       # 1 year (active CAPAs need annual review)
+        "ATM": 730,        # 2 years
+        "Deviation": 365,  # 1 year
+        "LIR": 365,        # 1 year
+        "Validation": 730, # 2 years
+    }
+    DEFAULT_REVIEW_DAYS = 730
+
     async def get_gap_analysis(self, company_id: str, department: Optional[str] = None) -> dict:
         """
         Identify gaps in the document corpus:
         - Missing document types
         - Documents not yet assessed
         - Documents with poor scores
-        - Expired/overdue for review
+        - Expired/overdue for review (based on last assessment age vs. category cycle)
         """
+        from datetime import datetime, timezone, timedelta
+        from app.models.assessment import Assessment
+        from sqlalchemy import desc as sa_desc
+
         query = select(Document).where(Document.company_id == company_id)
         if department:
             query = query.where(Document.department_owner == department)
 
         result = await self.db.execute(query)
         documents = result.scalars().all()
+
+        # Load latest assessment date per assessed document
+        doc_ids = [d.id for d in documents if d.status == "assessed"]
+        last_assessed_map: dict[str, datetime] = {}
+        if doc_ids:
+            a_result = await self.db.execute(
+                select(Assessment.document_id, Assessment.created_at)
+                .where(Assessment.document_id.in_(doc_ids), Assessment.status == "completed")
+                .order_by(sa_desc(Assessment.created_at))
+            )
+            for doc_id, created_at in a_result.all():
+                if doc_id not in last_assessed_map and created_at:
+                    last_assessed_map[doc_id] = created_at
+
+        now = datetime.now(timezone.utc)
 
         gaps = {
             "missing_assessments": [],
@@ -146,13 +176,32 @@ class ReadinessService:
                     "category": doc.document_category,
                     "status": doc.status,
                 })
-            elif doc.latest_score and doc.latest_score < 65.0:
-                gaps["poor_scores"].append({
-                    "document_id": doc.id,
-                    "title": doc.title,
-                    "score": doc.latest_score,
-                    "category": doc.document_category,
-                })
+            else:
+                if doc.latest_score and doc.latest_score < 65.0:
+                    gaps["poor_scores"].append({
+                        "document_id": doc.id,
+                        "title": doc.title,
+                        "score": doc.latest_score,
+                        "category": doc.document_category,
+                    })
+
+                # Check review cycle
+                last_assessed = last_assessed_map.get(doc.id)
+                if last_assessed:
+                    cycle_days = self.REVIEW_CYCLE_DAYS.get(
+                        doc.document_category or "", self.DEFAULT_REVIEW_DAYS
+                    )
+                    last_assessed_tz = last_assessed.replace(tzinfo=timezone.utc) if last_assessed.tzinfo is None else last_assessed
+                    age_days = (now - last_assessed_tz).days
+                    if age_days > cycle_days:
+                        gaps["overdue_review"].append({
+                            "document_id": doc.id,
+                            "title": doc.title,
+                            "category": doc.document_category,
+                            "last_assessed_days_ago": age_days,
+                            "review_cycle_days": cycle_days,
+                            "overdue_by_days": age_days - cycle_days,
+                        })
 
         return {
             "company_id": company_id,

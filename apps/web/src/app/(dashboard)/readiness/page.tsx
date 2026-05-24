@@ -47,8 +47,21 @@ interface EnforcementAlert {
   source: string;
 }
 
+interface FullGapAnalysis {
+  gaps: {
+    missing_assessments: any[];
+    poor_scores: any[];
+    overdue_review: any[];
+    critical_findings: any[];
+  };
+  total_documents: number;
+  assessed_count: number;
+  gap_count: number;
+}
+
 export default function ReadinessPage() {
   const [readiness, setReadiness] = useState<ReadinessDashboard | null>(null);
+  const [fullGaps, setFullGaps] = useState<FullGapAnalysis | null>(null);
   const [mockResult, setMockResult] = useState<MockResult | null>(null);
   const [enforcementAlerts, setEnforcementAlerts] = useState<EnforcementAlert[]>([]);
   const [alertsLoading, setAlertsLoading] = useState(false);
@@ -62,8 +75,12 @@ export default function ReadinessPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await readinessApi.dashboard();
-      setReadiness(res.data);
+      const [dashRes, gapsRes] = await Promise.all([
+        readinessApi.dashboard(),
+        readinessApi.gaps(),
+      ]);
+      setReadiness(dashRes.data);
+      setFullGaps(gapsRes.data);
     } catch {
       setError("Could not load readiness data. Please refresh.");
     } finally {
@@ -253,7 +270,7 @@ export default function ReadinessPage() {
             <div className="h-48 bg-muted animate-pulse rounded-xl" />
           ) : (
             <>
-              {readiness?.top_gaps.poor_scores.length ? (
+              {(fullGaps?.gaps.poor_scores.length ?? readiness?.top_gaps.poor_scores.length ?? 0) > 0 ? (
                 <div className="bg-card border rounded-xl overflow-hidden">
                   <div className="px-5 py-3.5 border-b bg-red-50">
                     <h2 className="font-semibold text-sm text-red-800 flex items-center gap-2">
@@ -262,7 +279,7 @@ export default function ReadinessPage() {
                     <p className="text-xs text-red-700 mt-0.5">Scores below 65 — require immediate attention</p>
                   </div>
                   <div className="divide-y">
-                    {readiness.top_gaps.poor_scores.map((g: any) => (
+                    {(fullGaps?.gaps.poor_scores ?? readiness?.top_gaps.poor_scores ?? []).map((g: any) => (
                       <Link key={g.document_id} href={`/documents/${g.document_id}`}
                         className="flex items-center gap-4 px-5 py-3 hover:bg-muted/30 transition-colors">
                         <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
@@ -278,7 +295,7 @@ export default function ReadinessPage() {
                 </div>
               ) : null}
 
-              {readiness?.top_gaps.missing_assessments.length ? (
+              {(fullGaps?.gaps.missing_assessments.length ?? readiness?.top_gaps.missing_assessments.length ?? 0) > 0 ? (
                 <div className="bg-card border rounded-xl overflow-hidden">
                   <div className="px-5 py-3.5 border-b bg-amber-50">
                     <h2 className="font-semibold text-sm text-amber-800 flex items-center gap-2">
@@ -287,7 +304,7 @@ export default function ReadinessPage() {
                     <p className="text-xs text-amber-700 mt-0.5">Documents uploaded but not yet assessed</p>
                   </div>
                   <div className="divide-y">
-                    {readiness.top_gaps.missing_assessments.map((g: any) => (
+                    {(fullGaps?.gaps.missing_assessments ?? readiness?.top_gaps.missing_assessments ?? []).map((g: any) => (
                       <Link key={g.document_id} href={`/documents/${g.document_id}`}
                         className="flex items-center gap-4 px-5 py-3 hover:bg-muted/30 transition-colors">
                         <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
@@ -303,11 +320,41 @@ export default function ReadinessPage() {
                 </div>
               ) : null}
 
-              {!readiness?.top_gaps.poor_scores.length && !readiness?.top_gaps.missing_assessments.length && (
+              {(fullGaps?.gaps.overdue_review.length ?? 0) > 0 && (
+                <div className="bg-card border rounded-xl overflow-hidden">
+                  <div className="px-5 py-3.5 border-b bg-purple-50">
+                    <h2 className="font-semibold text-sm text-purple-800 flex items-center gap-2">
+                      <RefreshCw className="w-4 h-4" /> Overdue for Re-Assessment
+                    </h2>
+                    <p className="text-xs text-purple-700 mt-0.5">Documents past their review cycle — re-assess to confirm ongoing compliance</p>
+                  </div>
+                  <div className="divide-y">
+                    {fullGaps!.gaps.overdue_review.map((g: any) => (
+                      <Link key={g.document_id} href={`/documents/${g.document_id}`}
+                        className="flex items-center gap-4 px-5 py-3 hover:bg-muted/30 transition-colors">
+                        <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{g.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {g.category} · Last assessed {g.last_assessed_days_ago} days ago
+                          </p>
+                        </div>
+                        <span className="text-[10px] font-medium text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded flex-shrink-0">
+                          {g.overdue_by_days}d overdue
+                        </span>
+                        <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!fullGaps?.gaps.poor_scores.length && !fullGaps?.gaps.missing_assessments.length && !fullGaps?.gaps.overdue_review.length &&
+               !readiness?.top_gaps.poor_scores.length && !readiness?.top_gaps.missing_assessments.length && (
                 <div className="bg-green-50 border border-green-200 rounded-xl px-8 py-12 text-center">
                   <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto mb-3" />
                   <h3 className="font-semibold text-green-800">No gaps identified</h3>
-                  <p className="text-sm text-green-700 mt-1">All assessed documents are above threshold.</p>
+                  <p className="text-sm text-green-700 mt-1">All assessed documents are above threshold and current.</p>
                 </div>
               )}
             </>
