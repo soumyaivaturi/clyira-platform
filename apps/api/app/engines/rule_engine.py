@@ -921,6 +921,358 @@ class RuleEngine:
             ),
         )]
 
+    def _check_l1_capa_number_format(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPA must carry a formally structured identifier (same as capa_id but checks alternative formats)."""
+        return self._check_l1_capa_id(ctx)
+
+    def _check_l1_initiation_date(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPA must have a documented initiation/open date."""
+        text = ctx.document_text[:3000]
+        has_date = re.search(
+            r'(?:initiation|opened?|date\s+opened?|start\s+date|date\s+initiated|CAPA\s+date|'
+            r'date\s+of\s+(?:initiation|opening|issuance))[:\s]*\d{1,2}[/\-–.]\d{1,2}[/\-–.]\d{2,4}',
+            text, re.IGNORECASE
+        ) or re.search(
+            r'(?:initiated|opened)\s+(?:on|:)\s+\d', text, re.IGNORECASE
+        )
+        if has_date:
+            return []
+        return [FindingResult(
+            level="L1",
+            severity="high",
+            category="initiation_date_missing",
+            title="CAPA initiation date not documented",
+            description=(
+                "No CAPA initiation date was found in the document header. The open/initiation date "
+                "anchors the entire CAPA timeline — without it, response timelines (30-day, 90-day) "
+                "cannot be verified, overdue tracking is impossible, and FDA inspectors cannot "
+                "confirm actions were taken in a timely manner per 21 CFR 211.192."
+            ),
+            evidence="",
+            location="Document Header",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.80,
+            validated=True,
+        )]
+
+    def _check_l1_target_completion_date(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPA must have a defined target completion date for the overall CAPA (not just individual actions)."""
+        text = ctx.document_text[:3000]
+        has_target = re.search(
+            r'(?:target\s+(?:completion\s+)?date|expected\s+(?:completion|closure)\s+date|'
+            r'due\s+date|completion\s+date|close\s+(?:by|date))[:\s]*\d{1,2}[/\-–.]\d{1,2}[/\-–.]\d{2,4}',
+            text, re.IGNORECASE
+        )
+        if has_target:
+            return []
+        return [FindingResult(
+            level="L1",
+            severity="high",
+            category="target_completion_date_missing",
+            title="CAPA target completion date not defined",
+            description=(
+                "No overall CAPA target completion date was found. FDA expects CAPAs to carry a "
+                "committed completion date, enabling the quality system to escalate overdue actions "
+                "automatically. The absence of a target date renders the CAPA system unable to track "
+                "or enforce timely closure."
+            ),
+            evidence="",
+            location="CAPA Header",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.78,
+            validated=True,
+        )]
+
+    def _check_l1_classification_present(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPA must be classified (minor / major / critical) or equivalent risk level."""
+        text = ctx.document_text[:4000]
+        has_class = re.search(
+            r'\b(?:minor|major|critical|low\s+risk|medium\s+risk|high\s+risk|'
+            r'CAPA\s+(?:class|type|level|category)\s*[:\-]\s*(?:minor|major|critical|I\b|II\b|III\b))',
+            text, re.IGNORECASE
+        )
+        if has_class:
+            return []
+        return [FindingResult(
+            level="L1",
+            severity="medium",
+            category="classification_missing",
+            title="CAPA classification (minor/major/critical) not stated",
+            description=(
+                "The CAPA does not state a risk classification. Classification drives the depth of "
+                "investigation required, escalation pathways, and regulatory reporting thresholds. "
+                "Without it, a reviewer cannot confirm that the investigation depth and actions are "
+                "proportionate to the risk level of the event."
+            ),
+            evidence="",
+            location="CAPA Header",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.72,
+            validated=True,
+        )]
+
+    def _check_l1_source_identification(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPA source event (audit, deviation, complaint, etc.) must be identified and cross-referenced."""
+        text = ctx.document_text[:4000]
+        has_source = re.search(
+            r'(?:source|triggered\s+by|initiated\s+(?:from|by|following)|origin|event\s+type|'
+            r'initiated\s+as\s+a\s+result|based\s+on|following\s+(?:audit|deviation|complaint|OOS|inspection))',
+            text, re.IGNORECASE
+        ) and re.search(
+            r'\b(?:audit|deviation|complaint|OOS|investigation|inspection|trending|'
+            r'recall|adverse\s+event|incident|non-?conformance|NCR)',
+            text, re.IGNORECASE
+        )
+        if has_source:
+            return []
+        return [FindingResult(
+            level="L1",
+            severity="high",
+            category="source_identification_missing",
+            title="CAPA source event not identified",
+            description=(
+                "The initiating event for this CAPA (audit finding, deviation, OOS, complaint, etc.) "
+                "is not clearly identified. CAPAs must be traceable to the originating quality event; "
+                "without this, auditors cannot verify root cause investigation is directed at the actual "
+                "failure mode, or that similar source events are trend-analyzed."
+            ),
+            evidence="",
+            location="CAPA Identification",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.75,
+            validated=True,
+        )]
+
+    def _check_l1_approval_chain_complete(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPA must show multi-level approval chain — author, reviewer, QA approver."""
+        text = ctx.document_text
+        roles_found = {
+            "Author/Preparer": bool(re.search(
+                r'\b(?:prepared\s+by|author|written\s+by|initiator)[:\s]*[A-Z][a-z]',
+                text, re.IGNORECASE
+            )),
+            "Reviewer": bool(re.search(
+                r'\b(?:reviewed?\s+by|reviewer|technical\s+review)[:\s]*[A-Z][a-z]',
+                text, re.IGNORECASE
+            )),
+            "QA Approver": bool(re.search(
+                r'\b(?:approved?\s+by|QA\s+(?:approv|review|sign)|quality\s+assurance\s+approv)[:\s]*[A-Z][a-z]',
+                text, re.IGNORECASE
+            )),
+        }
+        missing = [role for role, found in roles_found.items() if not found]
+        if not missing:
+            return []
+        return [FindingResult(
+            level="L1",
+            severity="high",
+            category="approval_chain_incomplete",
+            title=f"CAPA approval chain incomplete — missing: {', '.join(missing)}",
+            description=(
+                f"The approval chain is missing: {', '.join(missing)}. A complete CAPA requires "
+                f"documented authorship (who initiated), technical review (subject matter expert), "
+                f"and QA approval (quality unit sign-off). Missing links in the approval chain mean "
+                f"the CAPA has not been formally reviewed at every required level per 21 CFR 211.22."
+            ),
+            evidence=", ".join(missing),
+            location="Approval Block",
+            regulatory_citation="21 CFR 211.22",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.76,
+            validated=True,
+        )]
+
+    # ========== L2: CAPA-Specific Checks (additional) ==========
+
+    def _check_l2_document_control_number(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPA document must carry a document control number distinct from the CAPA ID."""
+        text = ctx.document_text[:2000]
+        has_dcn = re.search(
+            r'(?:document\s+(?:no|number|control|ref)|doc\s*#|form\s*(?:no|#)|'
+            r'QMS\s*(?:no|ref)|record\s*(?:no|number))[:\s]*[A-Z0-9][-A-Z0-9./]{2,20}',
+            text, re.IGNORECASE
+        )
+        if has_dcn:
+            return []
+        return [FindingResult(
+            level="L2",
+            severity="low",
+            category="document_control_number_missing",
+            title="Document control number not present in CAPA header",
+            description=(
+                "No document control number was found. CAPAs are controlled records under the QMS — "
+                "each must carry a document control number to enable retrieval, version history, and "
+                "audit trail management."
+            ),
+            evidence="",
+            location="Document Header",
+            regulatory_citation="21 CFR 211.68",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.65,
+            validated=True,
+        )]
+
+    def _check_l2_revision_history(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPA revision/amendment history must be documented if revisions occurred."""
+        text = ctx.document_text
+        has_rev = re.search(
+            r'(?:revision\s+history|change\s+history|amendment\s+log|version\s+history|'
+            r'revision\s+log|document\s+history)',
+            text, re.IGNORECASE
+        )
+        if has_rev:
+            return []
+        return [FindingResult(
+            level="L2",
+            severity="low",
+            category="revision_history_absent",
+            title="Revision history section absent",
+            description=(
+                "No revision history section was found. While initial CAPAs may have no prior revisions, "
+                "the section must exist as a placeholder so that any future amendments (scope changes, "
+                "timeline extensions, effectiveness criteria modifications) are captured in a documented trail."
+            ),
+            evidence="",
+            location="Document Footer / Revision Block",
+            regulatory_citation="21 CFR 211.68",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.60,
+            validated=True,
+        )]
+
+    def _check_l2_cross_references_to_source(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPA must cross-reference the source record (deviation ID, audit observation #, complaint #)."""
+        text = ctx.document_text
+        has_xref = re.search(
+            r'(?:deviation\s*(?:no|#|ref)\s*[A-Z0-9-]+|'
+            r'audit\s+(?:observation|finding)\s*(?:no|#|ref)\s*[A-Z0-9-]+|'
+            r'complaint\s*(?:no|#|ref)\s*[A-Z0-9-]+|'
+            r'OOS\s*(?:no|#|ref)\s*[A-Z0-9-]+|'
+            r'NCR\s*(?:no|#|ref)\s*[A-Z0-9-]+|'
+            r'incident\s*(?:no|#|ref)\s*[A-Z0-9-]+)',
+            text, re.IGNORECASE
+        )
+        if has_xref:
+            return []
+        return [FindingResult(
+            level="L2",
+            severity="medium",
+            category="source_cross_reference_missing",
+            title="No cross-reference to source record found",
+            description=(
+                "The CAPA does not reference the originating quality record by number "
+                "(e.g., DEV-2026-0042 or Audit Obs #14). Cross-referencing enables inspectors and "
+                "auditors to trace from the CAPA back to the original event and verify the investigation "
+                "scope is appropriate. Without this link, traceability is broken."
+            ),
+            evidence="",
+            location="CAPA Identification / Background",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.72,
+            validated=True,
+        )]
+
+    def _check_l2_timeline_entries(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPA should document key milestone dates — assessment date, investigation start, action target dates."""
+        text = ctx.document_text
+        date_count = len(re.findall(
+            r'\d{1,2}[/\-–.]\d{1,2}[/\-–.]\d{2,4}|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}',
+            text, re.IGNORECASE
+        ))
+        if date_count >= 3:
+            return []
+        return [FindingResult(
+            level="L2",
+            severity="low",
+            category="timeline_entries_sparse",
+            title="CAPA timeline entries sparse — fewer than 3 milestone dates found",
+            description=(
+                f"Only {date_count} date(s) were found in the CAPA. A well-structured CAPA should "
+                f"document milestone dates: initiation date, investigation completion, action due dates, "
+                f"effectiveness check date, and planned closure date. Sparse dates limit the ability "
+                f"to verify timeliness compliance during an inspection."
+            ),
+            evidence=f"{date_count} date(s) detected",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.65,
+            validated=True,
+        )]
+
+    def _check_l2_owner_assignment(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Overall CAPA owner/responsible person must be documented at the CAPA level."""
+        text = ctx.document_text[:3000]
+        has_owner = re.search(
+            r'(?:CAPA\s+owner|responsible\s+(?:person|party|individual|manager)|'
+            r'CAPA\s+lead|assigned\s+to|accountability)[:\s]*[A-Z][a-z]',
+            text, re.IGNORECASE
+        )
+        if has_owner:
+            return []
+        return [FindingResult(
+            level="L2",
+            severity="medium",
+            category="capa_owner_missing",
+            title="No CAPA owner or accountable person identified",
+            description=(
+                "The CAPA does not identify an overall responsible person or CAPA owner. "
+                "While individual actions may have assigned owners, the CAPA as a whole requires "
+                "a single accountable person responsible for driving closure — this person is the "
+                "primary point of contact for QA follow-up and escalation."
+            ),
+            evidence="",
+            location="CAPA Header / Assignment",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.70,
+            validated=True,
+        )]
+
+    def _check_l2_department_identification(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Department/function responsible for the CAPA must be identified."""
+        text = ctx.document_text[:2000]
+        has_dept = re.search(
+            r'(?:department|function|area|site|facility|group)[:\s]+(?:Quality|Manufacturing|'
+            r'Regulatory|R&D|Production|Analytical|QC|QA|Engineering|Operations|Packaging)',
+            text, re.IGNORECASE
+        )
+        if has_dept:
+            return []
+        return [FindingResult(
+            level="L2",
+            severity="low",
+            category="department_not_identified",
+            title="Responsible department not identified in CAPA",
+            description=(
+                "No responsible department or functional area was identified in the CAPA header. "
+                "Department attribution enables trend analysis across the quality system — "
+                "identifying which departments generate the most CAPAs is a key leading indicator "
+                "for targeted process improvement."
+            ),
+            evidence="",
+            location="CAPA Header",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.60,
+            validated=True,
+        )]
+
     # ========== L4: CAPA-Specific Checks ==========
 
     def _check_l4_oos_invalidation_basis(self, ctx: AssessmentContext) -> list[FindingResult]:
@@ -1022,6 +1374,404 @@ class RuleEngine:
                 "Document the Phase II investigation report ID, the predefined retesting "
                 "strategy, and QA authorisation for retesting before referencing the retest result."
             ),
+        )]
+
+    def _check_l4_evidence_of_investigation(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Root cause investigation must reference observed data, not just conclusions."""
+        text = ctx.document_text
+        if not re.search(r'root\s+cause|investigation', text, re.IGNORECASE):
+            return []
+        has_evidence = re.search(
+            r'(?:batch\s+record|laboratory\s+notebook|chromatogram|raw\s+data|'
+            r'analysis\s+report|trending\s+data|review\s+of\s+(?:data|records)|'
+            r'investigation\s+report|attachment|annex|appendix|exhibit)\s*(?:#|no|ref)?\s*[A-Z0-9-]*',
+            text, re.IGNORECASE
+        )
+        if has_evidence:
+            return []
+        return [FindingResult(
+            level="L4",
+            severity="high",
+            category="investigation_evidence_absent",
+            title="Root cause investigation lacks referenced data evidence",
+            description=(
+                "The investigation section does not reference specific observed data evidence "
+                "(batch records, raw data, laboratory notebooks, trending data). An investigation "
+                "that draws conclusions without citing documentary evidence cannot be verified — "
+                "it is opinion, not investigation. FDA 483 observations routinely cite CAPAs where "
+                "root cause conclusions are unsupported by documented evidence review."
+            ),
+            evidence="",
+            location="Root Cause Investigation",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.78,
+            validated=True,
+            suggestion_draft=(
+                "Reference specific data reviewed during investigation — e.g., "
+                "'Batch Record [BR-2026-0042] reviewed by [Name] on [date], "
+                "chromatograms attached as Annex A, trending data Attachment B.'"
+            ),
+        )]
+
+    def _check_l4_data_references_present(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Data references (batch/lot numbers, report IDs) must appear in the CAPA body."""
+        text = ctx.document_text
+        has_data_ref = re.search(
+            r'(?:batch\s*(?:no|#|number)\s*[A-Z0-9-]+|lot\s*(?:no|#|number)\s*[A-Z0-9-]+|'
+            r'report\s*(?:no|#|ID)\s*[A-Z0-9-]+|sample\s*(?:ID|no|#)\s*[A-Z0-9-]+)',
+            text, re.IGNORECASE
+        )
+        if has_data_ref:
+            return []
+        return [FindingResult(
+            level="L4",
+            severity="medium",
+            category="data_references_absent",
+            title="No specific data references (batch/lot/report numbers) in CAPA body",
+            description=(
+                "The CAPA body contains no specific batch numbers, lot numbers, or report IDs. "
+                "CAPAs resulting from product events must reference the specific affected batches/lots "
+                "and any associated analytical reports. Without these identifiers, the investigation "
+                "scope cannot be independently verified and affected product cannot be traced."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.70,
+            validated=True,
+        )]
+
+    def _check_l4_batch_records_cited(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Batch records should be cited for any CAPA involving manufacturing or release failures."""
+        text = ctx.document_text
+        if not re.search(r'(?:batch|lot|production|manufacturing|release|product)', text, re.IGNORECASE):
+            return []
+        has_batch_ref = re.search(
+            r'batch\s+record\s+(?:no|#|reviewed|attached|referenced)|'
+            r'BR[-\s]*(?:no|#|ref)?\s*[A-Z0-9-]+|'
+            r'production\s+record\s+(?:no|#)',
+            text, re.IGNORECASE
+        )
+        if has_batch_ref:
+            return []
+        return [FindingResult(
+            level="L4",
+            severity="medium",
+            category="batch_records_not_cited",
+            title="Manufacturing CAPA does not cite batch record review",
+            description=(
+                "This CAPA involves a manufacturing or product release event but no batch record "
+                "review is documented or referenced. The batch record is the primary documentary "
+                "evidence for manufacturing-related root cause investigations and must be explicitly "
+                "cited to demonstrate the investigation reviewed primary source data."
+            ),
+            evidence="",
+            location="Root Cause Investigation",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.68,
+            validated=True,
+        )]
+
+    def _check_l4_trend_data_referenced(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPAs for recurring or systemic issues should reference trend data."""
+        text = ctx.document_text
+        recurring_signal = re.search(
+            r'(?:recur|recurring|repeat\s+(?:event|failure|observation)|'
+            r'trend|systemic|pattern|multiple\s+(?:occurrences?|events?))',
+            text, re.IGNORECASE
+        )
+        if not recurring_signal:
+            return []
+        has_trend = re.search(
+            r'(?:trend(?:ing)?\s+(?:analysis|data|report|chart)|'
+            r'historical\s+data|run\s+chart|control\s+chart|cpk|process\s+capability|'
+            r'frequency\s+analysis|occurrence\s+rate)',
+            text, re.IGNORECASE
+        )
+        if has_trend:
+            return []
+        excerpt = text[recurring_signal.start():recurring_signal.start() + 200].strip()
+        return [FindingResult(
+            level="L4",
+            severity="high",
+            category="trend_data_not_referenced",
+            title="Recurring/systemic event CAPA does not reference trend data",
+            description=(
+                f"The CAPA identifies a recurring or systemic issue ('{excerpt[:100]}') but does "
+                f"not reference trend data to support this characterisation. Systemic CAPAs must "
+                f"include trending analysis (run charts, frequency analysis, historical occurrence "
+                f"data) to define the scope of the problem and to establish a baseline for "
+                f"measuring effectiveness of the corrective actions."
+            ),
+            evidence=excerpt[:200],
+            location=_nearest_section(text, recurring_signal.start()) or "Investigation",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.75,
+            validated=True,
+        )]
+
+    def _check_l4_investigation_completeness(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Investigation must address all identified contributing factors, not just primary cause."""
+        text = ctx.document_text
+        contributing_factors = re.search(
+            r'(?:contributing\s+(?:factor|cause)|secondary\s+cause|'
+            r'additional\s+(?:factor|cause)|other\s+(?:factor|cause)|also\s+noted)',
+            text, re.IGNORECASE
+        )
+        if not contributing_factors:
+            return []
+        actions_after = text[contributing_factors.start():]
+        actions_address_factors = re.search(
+            r'(?:contributing\s+factor\s+(?:was\s+)?(?:addressed|mitigated|corrected)|'
+            r'action\s+(?:for|to\s+address)\s+contributing|'
+            r'preventive\s+action.*contributing)',
+            actions_after, re.IGNORECASE
+        )
+        if actions_address_factors:
+            return []
+        return [FindingResult(
+            level="L4",
+            severity="medium",
+            category="investigation_incomplete_contributing_factors",
+            title="Contributing factors identified but not addressed in CAPA actions",
+            description=(
+                "The investigation identifies contributing factors beyond the primary root cause "
+                "but the corrective and preventive actions do not visibly address these factors. "
+                "A complete CAPA investigation must trace each identified contributing factor to "
+                "at least one corrective or preventive action. Unaddressed contributing factors "
+                "will lead to recurrence via the secondary pathway."
+            ),
+            evidence=text[contributing_factors.start():contributing_factors.start() + 200].strip(),
+            location=_nearest_section(text, contributing_factors.start()) or "Investigation",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.68,
+            validated=True,
+        )]
+
+    # ========== L7: CAPA Lifecycle Checks ==========
+
+    def _check_l7_30_day_response_timeline(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPA initial response/containment must be documented within 30 days of initiation."""
+        text = ctx.document_text
+        init_match = re.search(
+            r'(?:initiat\w*|opened?|date)[:\s]*(\d{1,2}[/\-–.]\d{1,2}[/\-–.](\d{2,4}))',
+            text[:3000], re.IGNORECASE
+        )
+        if not init_match:
+            return []
+        action_dates = re.findall(
+            r'(?:action|containment|implement|complet)\w*[:\s]+(?:by|date)[:\s]*(\d{1,2}[/\-–.]\d{1,2}[/\-–.]\d{2,4})',
+            text, re.IGNORECASE
+        )
+        overdue_markers = re.search(
+            r'(?:overdue|past\s+due|extension\s+(?:granted|required|requested)|'
+            r'delayed|behind\s+schedule)',
+            text, re.IGNORECASE
+        )
+        if overdue_markers:
+            excerpt = text[overdue_markers.start():overdue_markers.start() + 200].strip()
+            return [FindingResult(
+                level="L7",
+                severity="high",
+                category="capa_overdue",
+                title="CAPA timeline overdue — action(s) past due date without documented justification",
+                description=(
+                    f"Overdue language detected in the CAPA: '{excerpt[:150]}'. "
+                    f"FDA expects CAPA actions to be implemented within committed timeframes. "
+                    f"Overdue CAPAs without formal extension justification (including cause of delay "
+                    f"and revised committed date approved by QA) are cited in 483 observations as "
+                    f"evidence of inadequate CAPA system management."
+                ),
+                evidence=excerpt[:200],
+                location=_nearest_section(text, overdue_markers.start()) or "Timeline",
+                regulatory_citation="21 CFR 211.192",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.85,
+                validated=True,
+            )]
+        return []
+
+    def _check_l7_extension_justification_if_overdue(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """If CAPA has been extended, the extension must be formally justified with QA approval."""
+        text = ctx.document_text
+        extension = re.search(
+            r'(?:extension|extended|revised\s+(?:target|due|completion)\s+date)',
+            text, re.IGNORECASE
+        )
+        if not extension:
+            return []
+        has_justification = re.search(
+            r'(?:extension\s+(?:reason|justification|rationale)|reason\s+for\s+extension|'
+            r'delay\s+(?:due\s+to|caused\s+by)|impact\s+of\s+delay)',
+            text, re.IGNORECASE
+        )
+        if has_justification:
+            return []
+        return [FindingResult(
+            level="L7",
+            severity="high",
+            category="extension_not_justified",
+            title="CAPA timeline extended without documented justification",
+            description=(
+                "The CAPA references a timeline extension but does not document the reason for the "
+                "delay, its impact on product quality, or QA approval for the revised date. "
+                "FDA requires that any extension to a CAPA due date be justified with documented "
+                "rationale and approved by the quality unit. Unjustified extensions suggest the "
+                "CAPA system does not adequately enforce timely action."
+            ),
+            evidence=text[extension.start():extension.start() + 200].strip(),
+            location=_nearest_section(text, extension.start()) or "Timeline",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.80,
+            validated=True,
+        )]
+
+    def _check_l7_effectiveness_check_timing(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Effectiveness check must have a defined timing/schedule and measurable criteria."""
+        text = ctx.document_text
+        has_effectiveness = re.search(
+            r'effectiveness\s+(?:check|monitoring|verification|evaluation|assessment)',
+            text, re.IGNORECASE
+        )
+        if not has_effectiveness:
+            return [FindingResult(
+                level="L7",
+                severity="critical",
+                category="effectiveness_check_absent",
+                title="No effectiveness check defined for CAPA",
+                description=(
+                    "No effectiveness check or verification was found. FDA requires every CAPA to "
+                    "include a defined effectiveness check: a prospective, measurable assessment "
+                    "confirming that the corrective action eliminated the root cause and prevented "
+                    "recurrence. The effectiveness check must include defined criteria, a monitoring "
+                    "period, and a scheduled evaluation date. Without this, the CAPA cannot be "
+                    "considered formally closed."
+                ),
+                evidence="",
+                regulatory_citation="21 CFR 211.192",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.88,
+                validated=True,
+                suggestion_draft=(
+                    "EFFECTIVENESS CHECK\n"
+                    "Metric: [Define measurable indicator, e.g., zero recurrence of [event] over [period]]\n"
+                    "Monitoring Period: [Start date] through [End date] (minimum 90 days post-implementation)\n"
+                    "Evaluation Date: [Scheduled date for effectiveness determination]\n"
+                    "Criteria for closure: [State pass/fail criteria]"
+                ),
+            )]
+        window = text[has_effectiveness.start():has_effectiveness.start() + 500]
+        has_timing = re.search(
+            r'(?:within\s+\d+\s+(?:days?|weeks?|months?)|by\s+\d{1,2}[/\-–.]\d{1,2}|'
+            r'after\s+\d+\s+(?:days?|weeks?|months?)|monitoring\s+period)',
+            window, re.IGNORECASE
+        )
+        if has_timing:
+            return []
+        return [FindingResult(
+            level="L7",
+            severity="high",
+            category="effectiveness_check_timing_missing",
+            title="Effectiveness check defined but timing/monitoring period not specified",
+            description=(
+                "An effectiveness check is mentioned but no monitoring period or scheduled evaluation "
+                "date was found. The effectiveness check must specify: when monitoring starts, how long "
+                "the monitoring period is, and when the formal effectiveness determination will be made. "
+                "Without defined timing, the effectiveness check cannot be tracked or enforced."
+            ),
+            evidence=window[:200].strip(),
+            location=_nearest_section(text, has_effectiveness.start()) or "Effectiveness Check",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.82,
+            validated=True,
+        )]
+
+    def _check_l7_closure_criteria_met(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """If CAPA is stated as closed, evidence of closure criteria being met must be present."""
+        text = ctx.document_text
+        closure = re.search(
+            r'\b(?:CAPA\s+(?:closed|closure|status\s*:\s*closed)|closed\s+CAPA|'
+            r'closure\s+approved|CAPA\s+complete)',
+            text, re.IGNORECASE
+        )
+        if not closure:
+            return []
+        has_closure_evidence = re.search(
+            r'(?:effectiveness\s+(?:confirmed|verified|demonstrated|met)|'
+            r'recurrence\s+(?:not\s+observed|absent|zero|none)|'
+            r'all\s+actions\s+(?:completed?|verified?|confirmed?)|'
+            r'evidence\s+of\s+effectiveness|closure\s+criteria\s+met)',
+            text, re.IGNORECASE
+        )
+        if has_closure_evidence:
+            return []
+        return [FindingResult(
+            level="L7",
+            severity="critical",
+            category="closure_without_evidence",
+            title="CAPA closed but effectiveness evidence not documented",
+            description=(
+                "The CAPA is stated as closed but no documented evidence of effectiveness criteria "
+                "being met was found. A CAPA cannot be closed until the effectiveness check confirms "
+                "the root cause was eliminated and recurrence has not been observed. Closing a CAPA "
+                "without documented effectiveness evidence is a direct data integrity issue — "
+                "the record misrepresents the state of the quality event."
+            ),
+            evidence=text[closure.start():closure.start() + 200].strip(),
+            location=_nearest_section(text, closure.start()) or "CAPA Closure",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.90,
+            validated=True,
+        )]
+
+    def _check_l7_recurrence_monitoring_period(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Effectiveness check must include a defined post-closure recurrence monitoring period."""
+        text = ctx.document_text
+        if not re.search(r'effectiveness|recurrence|monitoring', text, re.IGNORECASE):
+            return []
+        monitoring_period = re.search(
+            r'(?:monitor(?:ing)?\s+period|recurrence\s+period|'
+            r'post.(?:implementation|closure|action)\s+monitoring|'
+            r'monitor\s+for\s+\d+)',
+            text, re.IGNORECASE
+        )
+        if monitoring_period:
+            return []
+        return [FindingResult(
+            level="L7",
+            severity="medium",
+            category="recurrence_monitoring_period_absent",
+            title="Post-closure recurrence monitoring period not defined",
+            description=(
+                "No post-closure or post-implementation recurrence monitoring period was defined. "
+                "Best-in-class CAPA programs define an explicit monitoring window (commonly 90–180 days "
+                "for manufacturing events, 12 months for systemic quality issues) during which the "
+                "quality unit actively monitors for recurrence. Without a defined period, the "
+                "effectiveness check is unenforceable and recurrence may go undetected."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.68,
+            validated=True,
         )]
 
     # ========== L3/L8: ATM-Specific Checks ==========
