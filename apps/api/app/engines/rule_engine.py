@@ -2057,3 +2057,471 @@ class RuleEngine:
                 validated=True,
             )]
         return []
+
+    # ========== L2: SOP Document Control Checks ==========
+
+    def _check_l2_supersedes_reference(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Document must declare what it supersedes — essential for version traceability."""
+        text_lower = ctx.document_text.lower()
+        has_supersedes = re.search(
+            r'(?:supersede[sd]?|replaces?|obsoletes?|previous\s+(?:version|revision|document))\s*[:\-]?\s*\S',
+            text_lower
+        )
+        if has_supersedes:
+            return None
+        return FindingResult(
+            level="L2",
+            severity="medium",
+            category="supersedes_reference_absent",
+            title="Supersedes/Replaces reference absent — version traceability gap",
+            description=(
+                "No 'Supersedes' or 'Replaces' field was found. Every revision must reference "
+                "the document version it supersedes to maintain a continuous, auditable version "
+                "history per 21 CFR 211.68 and EU GMP Part I Ch. 4. Without this link, "
+                "an inspector cannot verify that obsolete versions were withdrawn."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 211.68",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.73,
+            validated=True,
+        )
+
+    def _check_l2_change_control_entries(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Revision history table must be present and contain at least one entry."""
+        text_lower = ctx.document_text.lower()
+        has_history = re.search(
+            r'(?:revision\s+history|change\s+(?:history|log|control\s+(?:history|log|table))|'
+            r'document\s+history)',
+            text_lower
+        )
+        if not has_history:
+            return FindingResult(
+                level="L2",
+                severity="medium",
+                category="revision_history_absent",
+                title="Revision history / change log not present in document",
+                description=(
+                    "No revision history or change control table was detected. GMP documents must "
+                    "contain a section documenting all revisions — including revision number, "
+                    "date, description of change, and approver — to demonstrate a traceable "
+                    "change history per 21 CFR 211.68."
+                ),
+                evidence="",
+                regulatory_citation="21 CFR 211.68",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.78,
+                validated=True,
+            )
+        return None
+
+    def _check_l2_author_reviewer_approver(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Three-tier authorship (Prepared / Reviewed / Approved) is required for independence."""
+        text_lower = ctx.document_text.lower()
+        has_prepared = bool(re.search(r'prepared\s*by|authored\s*by|written\s*by', text_lower))
+        has_reviewed = bool(re.search(r'reviewed\s*by|review\s*(?:and\s+)?(?:approved|signature)', text_lower))
+        has_approved = bool(re.search(r'approved\s*by|final\s+approv|qa\s+(?:approv|sign)', text_lower))
+        if has_prepared and has_reviewed and has_approved:
+            return None
+        missing = [
+            role for role, present in [("Prepared By", has_prepared), ("Reviewed By", has_reviewed), ("Approved By", has_approved)]
+            if not present
+        ]
+        return FindingResult(
+            level="L2",
+            severity="medium",
+            category="authorship_roles_incomplete",
+            title=f"Authorship roles incomplete: missing {', '.join(missing)}",
+            description=(
+                f"The document is missing the following authorship role(s): {', '.join(missing)}. "
+                f"A three-tier authorship model (Prepared By / Reviewed By / Approved By) is required "
+                f"to demonstrate independent review and QA approval per 21 CFR 211.22(a). "
+                f"Documents with a single signer cannot demonstrate independent oversight."
+            ),
+            evidence=f"Detected roles: {'Prepared By' if has_prepared else ''} {'Reviewed By' if has_reviewed else ''} {'Approved By' if has_approved else ''}.".strip(),
+            regulatory_citation="21 CFR 211.22(a)",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.74,
+            validated=True,
+        )
+
+    def _check_l2_distribution_list(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Controlled copy distribution list or 'controlled copy' statement required."""
+        text_lower = ctx.document_text.lower()
+        has_distribution = re.search(
+            r'(?:distribution\s+list|controlled\s+copy|copy\s+no|'
+            r'issued\s+to|controlled\s+distribution|copy\s+holder)',
+            text_lower
+        )
+        if has_distribution:
+            return None
+        return FindingResult(
+            level="L2",
+            severity="low",
+            category="distribution_list_absent",
+            title="Controlled copy distribution list or designation not found",
+            description=(
+                "No distribution list, controlled copy designation, or copy number was found. "
+                "GMP document control requires that controlled copies be tracked — knowing which "
+                "personnel hold current controlled copies is essential to ensure obsolete versions "
+                "can be recalled and replaced during a revision per 21 CFR 211.68."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 211.68",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.65,
+            validated=True,
+        )
+
+    # ========== L4: Additional ALCOA+ Checks ==========
+
+    def _check_l4_alcoa_legible(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """ALCOA Legible — check for indicators of scanned/low-quality content or unreadable sections."""
+        text = ctx.document_text
+        # Very short text for a multi-page document suggests poor OCR / scan
+        words = len(text.split())
+        if words < 50:
+            return FindingResult(
+                level="L4",
+                severity="high",
+                category="alcoa_legibility_concern",
+                title="Document text is extremely sparse — possible scan/OCR quality issue",
+                description=(
+                    f"Only {words} words were extracted from this document. Extremely sparse text "
+                    f"may indicate a poor-quality scan, OCR failure, or that the document is "
+                    f"primarily image-based with no text layer. GMP ALCOA+ requires records to be "
+                    f"legible and accessible — image-only records do not meet the 'legible and "
+                    f"reconstructable' requirement per 21 CFR 211.68."
+                ),
+                evidence=f"Extracted text word count: {words}",
+                regulatory_citation="21 CFR 211.68",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.80,
+                validated=True,
+            )
+        # Check for patterns indicating unreadable content
+        unreadable = re.findall(r'[■-◿☀-➿]{3,}|_{10,}|[?]{5,}|\[image\]|\[figure\]', text, re.IGNORECASE)
+        if len(unreadable) > 5:
+            return FindingResult(
+                level="L4",
+                severity="medium",
+                category="alcoa_legibility_concern",
+                title="Multiple unreadable/corrupted sections detected in extracted text",
+                description=(
+                    f"{len(unreadable)} sections with garbled or unreadable content were found. "
+                    f"ALCOA+ Legible requires that all GMP records be readable and fully recoverable. "
+                    f"If any section of a GMP record is illegible, the entire record may be deemed "
+                    f"inadequate during inspection per 21 CFR 211.68."
+                ),
+                evidence="",
+                regulatory_citation="21 CFR 211.68",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.70,
+                validated=True,
+            )
+        return None
+
+    def _check_l4_alcoa_original(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """ALCOA Original — check for copy-without-certification language."""
+        text_lower = ctx.document_text.lower()
+        # Certified true copy is OK; uncertified copy flag is bad
+        uncertified_copy = re.search(
+            r'(?:(?:this\s+is\s+a|being\s+a)\s+copy|'
+            r'copy\s+of\s+original|photocopy|scanned\s+copy)',
+            text_lower
+        )
+        certified = re.search(
+            r'certified\s+(?:true\s+)?copy|true\s+(?:and\s+accurate\s+)?copy',
+            text_lower
+        )
+        if uncertified_copy and not certified:
+            m = uncertified_copy
+            excerpt = ctx.document_text[m.start():m.start() + 200].strip()
+            return FindingResult(
+                level="L4",
+                severity="medium",
+                category="alcoa_original_concern",
+                title="Document references being a copy but lacks certified true copy statement",
+                description=(
+                    f"The document references a copy ({excerpt[:120]}) but no 'Certified True Copy' "
+                    f"statement was found. GMP ALCOA+ Original requires that copies used as GMP "
+                    f"records be explicitly certified as true and accurate copies of the original, "
+                    f"with the certifier identified and dated per 21 CFR 211.68."
+                ),
+                evidence=excerpt[:200],
+                location=_nearest_section(ctx.document_text, m.start()),
+                regulatory_citation="21 CFR 211.68",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.72,
+                validated=True,
+            )
+        return None
+
+    def _check_l4_alcoa_accurate(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """ALCOA Accurate — check for uncorrected corrections (no initial/date on corrections)."""
+        text = ctx.document_text
+        # Look for correction indicators without proper documentation
+        raw_correction = re.search(
+            r'(?:see\s+correction|correction\s*[:\-]|erratum|corrig(?:endum)?)',
+            text, re.IGNORECASE
+        )
+        if not raw_correction:
+            return None
+        context_after = text[raw_correction.end():raw_correction.end() + 300]
+        has_initials = re.search(r'[A-Z]{2,3}\s*/\s*\d|initials?\s*[:]\s*[A-Z]', context_after)
+        has_date = re.search(r'\d{1,2}[-/]\d{1,2}[-/]\d{2,4}', context_after)
+        if not (has_initials and has_date):
+            excerpt = text[raw_correction.start():raw_correction.start() + 250].strip()
+            return FindingResult(
+                level="L4",
+                severity="medium",
+                category="alcoa_accurate_correction",
+                title="Correction/erratum referenced without documented initials and date",
+                description=(
+                    f"A correction is referenced ({excerpt[:120]}) but no initials and date were "
+                    f"found in the surrounding text. ALCOA+ Accurate requires that all corrections "
+                    f"to GMP records be documented with the corrector's initials, date, and reason "
+                    f"for correction. A single-line strikethrough with initials/date is the minimum; "
+                    f"white-out or obscured original entries are never acceptable per 21 CFR 211.68."
+                ),
+                evidence=excerpt,
+                location=_nearest_section(text, raw_correction.start()),
+                regulatory_citation="21 CFR 211.68",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.73,
+                validated=True,
+            )
+        return None
+
+    def _check_l4_data_recording_instructions(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Data recording instructions must be present when forms/data fields are referenced."""
+        text_lower = ctx.document_text.lower()
+        has_form_ref = re.search(
+            r'(?:complete\s+(?:the\s+)?form|fill\s+in|record\s+(?:in|on)\s+form|'
+            r'enter\s+(?:data|result)|document\s+(?:in|on)\s+(?:form|worksheet|logbook))',
+            text_lower
+        )
+        if not has_form_ref:
+            return None
+        has_instructions = re.search(
+            r'(?:instructions?\s+for\s+(?:completion|recording)|'
+            r'how\s+to\s+(?:complete|record|fill)|'
+            r'data\s+(?:entry|recording)\s+(?:instructions?|guidance))',
+            text_lower
+        )
+        if not has_instructions:
+            return FindingResult(
+                level="L4",
+                severity="low",
+                category="data_recording_instructions_absent",
+                title="Forms referenced but data recording instructions not provided",
+                description=(
+                    "The document references forms or data fields to be completed but does not "
+                    "include instructions for data recording. ALCOA+ requires that records be "
+                    "completed accurately and completely — personnel completing forms must have "
+                    "written instructions on how to record data, handling of out-of-range values, "
+                    "and error correction procedures per 21 CFR 211.68."
+                ),
+                evidence="",
+                regulatory_citation="21 CFR 211.68",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.68,
+                validated=True,
+            )
+        return None
+
+    def _check_l4_form_attachment_references(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """All form/attachment references in body text should have corresponding attachment entries."""
+        text = ctx.document_text
+        findings = []
+        # Find all form references in body
+        form_refs = re.findall(
+            r'(?:form|attachment|exhibit|appendix|annex)\s*[:\-]?\s*([A-Z0-9\-]+)',
+            text, re.IGNORECASE
+        )
+        if not form_refs:
+            return []
+        # Check if there's a corresponding attachment/appendix section
+        has_attachment_section = bool(re.search(
+            r'(?:attachments?|appendix|appendices|exhibits?|annexes?)\s*\n',
+            text, re.IGNORECASE
+        ))
+        unique_refs = set(form_refs[:10])  # Check first 10 unique form refs
+        if unique_refs and not has_attachment_section:
+            findings.append(FindingResult(
+                level="L4",
+                severity="low",
+                category="form_attachment_section_absent",
+                title=f"{len(unique_refs)} form/attachment reference(s) in body but no Attachments section found",
+                description=(
+                    f"The document references {len(unique_refs)} form(s)/attachment(s) "
+                    f"({', '.join(list(unique_refs)[:5])}) but no corresponding Attachments or "
+                    f"Appendices section was found. GMP SOPs should include all referenced forms "
+                    f"as controlled attachments, or reference the form number in the document "
+                    f"control system. Unreferenced form numbers cannot be verified during inspection."
+                ),
+                evidence=f"Form references found: {', '.join(list(unique_refs)[:5])}",
+                regulatory_citation="21 CFR 211.68",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.65,
+                validated=True,
+            ))
+        return findings
+
+    # ========== L5: Data Intelligence Checks ==========
+
+    def _check_l5_critical_parameters_identified(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Critical Quality Attributes (CQAs) and Critical Process Parameters (CPPs) must be called out."""
+        text_lower = ctx.document_text.lower()
+        is_process_doc = re.search(
+            r'(?:manufacturing|production|process|batch\s+record|synthesis|filling|'
+            r'blending|granulation|coating|lyophili)',
+            text_lower
+        )
+        if not is_process_doc:
+            return None  # Only applicable to process/manufacturing documents
+        has_cqa_cpp = re.search(
+            r'(?:critical\s+(?:quality\s+attribute|process\s+parameter|control\s+parameter)|'
+            r'cqa|cpp\b|key\s+parameter|critical\s+attribute)',
+            text_lower
+        )
+        if has_cqa_cpp:
+            return None
+        return FindingResult(
+            level="L5",
+            severity="medium",
+            category="critical_parameters_not_identified",
+            title="Critical Quality Attributes (CQAs) or Critical Process Parameters (CPPs) not identified",
+            description=(
+                "This appears to be a process/manufacturing document but no Critical Quality "
+                "Attributes (CQAs) or Critical Process Parameters (CPPs) were identified. "
+                "ICH Q8(R2) and ICH Q9 require that critical parameters be explicitly identified "
+                "to support risk-based process control and to define the acceptance criteria for "
+                "process monitoring. Without these identifications, the link between process "
+                "control and product quality cannot be demonstrated."
+            ),
+            evidence="",
+            regulatory_citation="ICH Q8(R2) / ICH Q9",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.70,
+            validated=True,
+        )
+
+    def _check_l5_acceptance_criteria_defined(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Acceptance criteria must be numerically specified — not just referenced to specs."""
+        text_lower = ctx.document_text.lower()
+        # Only applies if there are measurable parameters
+        has_measurement = re.search(
+            r'(?:measure|test|check|inspect|verify|record\s+(?:value|reading|result))',
+            text_lower
+        )
+        if not has_measurement:
+            return None
+        has_criteria = re.search(
+            r'(?:acceptance\s+criteri[ao]|specification|limit[:\s]\d|'
+            r'pass\s+(?:if|when)|fail\s+(?:if|when)|nlt\s+\d|nmt\s+\d|'
+            r'\d+\s*(?:%|mg|kg|ppm|°C|rpm)\s*(?:to|–|-)\s*\d+\s*(?:%|mg|kg|ppm|°C|rpm))',
+            text_lower
+        )
+        if not has_criteria:
+            return FindingResult(
+                level="L5",
+                severity="medium",
+                category="acceptance_criteria_absent",
+                title="Measurable parameters referenced but acceptance criteria not defined",
+                description=(
+                    "The document references measurable parameters (test, check, measure) but "
+                    "no numerical acceptance criteria were found. GMP requires that all "
+                    "in-process checks and final tests have defined acceptance criteria — "
+                    "pass/fail ranges expressed as specific numerical limits (e.g., '98.0–102.0%', "
+                    "'NLT 0.5 mg', 'NMT 500 ppm'). Vague criteria cannot be objectively assessed "
+                    "during inspection per 21 CFR 211.192."
+                ),
+                evidence="",
+                regulatory_citation="21 CFR 211.192",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.71,
+                validated=True,
+            )
+        return None
+
+    def _check_l5_measurement_units_specified(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Numerical values must have units — unitless numbers in a GMP document are ambiguous."""
+        text = ctx.document_text
+        findings = []
+        # Find numerical ranges/limits without units
+        unitless_numbers = re.findall(
+            r'(?:limit|criteria|specification|spec)\s*[:\-]?\s*(\d+\.?\d*)\s*(?:to|–|-)\s*(\d+\.?\d*)(?!\s*(?:%|mg|kg|g|ml|l|ppm|ppb|°|rpm|bar|psi|nm|μm|mm|cm|m\b|s\b|min\b|h\b|d\b|°C|°F|K\b|mol|mmol|μmol|IU|cfu|mEq))',
+            text, re.IGNORECASE
+        )
+        if len(unitless_numbers) > 2:
+            findings.append(FindingResult(
+                level="L5",
+                severity="low",
+                category="measurement_units_absent",
+                title=f"{len(unitless_numbers)} numerical acceptance criteria found without units",
+                description=(
+                    f"{len(unitless_numbers)} numerical criteria appear to lack measurement units. "
+                    f"All numerical acceptance limits in a GMP document must be expressed with "
+                    f"appropriate units (e.g., %, mg/mL, °C, ppm). Unitless numbers are ambiguous "
+                    f"and cannot be objectively interpreted during testing or inspection per 21 CFR 211.68."
+                ),
+                evidence="",
+                regulatory_citation="21 CFR 211.68",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.67,
+                validated=True,
+            ))
+        return findings
+
+    def _check_l5_statistical_methods_referenced(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Statistical methods must be cited when statistical acceptance criteria are used."""
+        text_lower = ctx.document_text.lower()
+        has_statistical = re.search(
+            r'(?:rsd|relative\s+standard\s+deviation|coefficient\s+of\s+variation|cv\s*%|'
+            r'confidence\s+interval|statistical\s+(?:limit|method|test|analysis)|'
+            r'standard\s+deviation\s+limit|z-score|t-test|anova)',
+            text_lower
+        )
+        if not has_statistical:
+            return None
+        has_method_ref = re.search(
+            r'(?:per\s+usp|per\s+ep|per\s+ich|per\s+21\s+cfr|'
+            r'usp\s*<\d+>|statistical\s+method\s+(?:as|per|in|described)|'
+            r'annex\s+\d+|chapter\s+\d+)',
+            text_lower
+        )
+        if not has_method_ref:
+            return FindingResult(
+                level="L5",
+                severity="low",
+                category="statistical_method_unreferenced",
+                title="Statistical acceptance criteria present but underlying method not cited",
+                description=(
+                    "Statistical acceptance criteria (RSD, CV%, confidence interval, etc.) are "
+                    "referenced in this document but the underlying statistical method or regulatory "
+                    "chapter is not cited. Statistical methods used for GMP acceptance decisions "
+                    "must reference a validated statistical procedure (e.g., USP <1010>, ICH Q2(R1), "
+                    "or a company-specific validated SOP) to be reproducible and auditable."
+                ),
+                evidence="",
+                regulatory_citation="ICH Q2(R1)",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.67,
+                validated=True,
+            )
+        return None
