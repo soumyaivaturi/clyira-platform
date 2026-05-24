@@ -192,6 +192,40 @@ class AssessmentService:
                 for r in records
             ]
 
+        # Load historical assessments for this document (for L10 longitudinal analysis)
+        historical_assessments = []
+        hist_result = await self.db.execute(
+            select(Assessment)
+            .where(
+                Assessment.document_id == document.id,
+                Assessment.status == "completed",
+                Assessment.id != assessment.id,
+            )
+            .order_by(Assessment.created_at.desc())
+            .limit(5)
+        )
+        for hist in hist_result.scalars().all():
+            findings_result = await self.db.execute(
+                select(Finding).where(Finding.assessment_id == hist.id)
+            )
+            hist_findings = findings_result.scalars().all()
+            historical_assessments.append({
+                "assessment_id": hist.id,
+                "score": hist.clyira_score,
+                "score_band": hist.score_band,
+                "created_at": hist.created_at.isoformat() if hist.created_at else None,
+                "findings": [
+                    {
+                        "level": f.level,
+                        "severity": f.severity,
+                        "category": f.category,
+                        "title": f.title,
+                        "status": f.status,
+                    }
+                    for f in hist_findings
+                ],
+            })
+
         return AssessmentContext(
             document_id=document.id,
             company_id=company.id,
@@ -205,6 +239,7 @@ class AssessmentService:
             regulatory_frameworks=regulatory_frameworks if regulatory_frameworks is not None else (document.regulatory_frameworks or []),
             user_references=user_references,
             enforcement_records=enforcement_records,
+            historical_assessments=historical_assessments,
         )
 
     async def _store_findings(self, assessment_id: str, findings: list[FindingResult]):

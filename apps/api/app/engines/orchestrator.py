@@ -10,6 +10,7 @@ from app.engines.types import AssessmentContext, FindingResult
 from app.engines.rule_engine import RuleEngine
 from app.engines.llm_engine import LLMEngine
 from app.engines.enforcement_engine import EnforcementEngine
+from app.engines.longitudinal_engine import LongitudinalEngine
 from app.engines.scoring import ScoringEngine
 from app.engines.validator import AntiHallucinationGate
 
@@ -37,6 +38,7 @@ class AssessmentOrchestrator:
         self.rule_engine = RuleEngine()
         self.llm_engine = LLMEngine()
         self.enforcement_engine = EnforcementEngine()
+        self.longitudinal_engine = LongitudinalEngine()
         self.scoring_engine = ScoringEngine()
         self.validator = AntiHallucinationGate()
 
@@ -91,6 +93,15 @@ class AssessmentOrchestrator:
             all_findings = self.enforcement_engine.elevate_severities(
                 all_findings, context.enforcement_records
             )
+
+        # Phase 3b: Longitudinal analysis (L10) — runs after enforcement so it can see all findings
+        if context.historical_assessments:
+            logger.info(f"Phase 3b: Longitudinal analysis ({len(context.historical_assessments)} prior assessments)")
+            # Elevate severity of recurring unresolved findings
+            all_findings = self.longitudinal_engine.elevate_recurring(all_findings, context)
+            # Generate L10 meta-findings
+            l10_findings = await self.longitudinal_engine.run(context, all_findings)
+            all_findings.extend(l10_findings)
 
         # Phase 4: Anti-hallucination validation
         logger.info("Phase 4: Anti-hallucination gate")
