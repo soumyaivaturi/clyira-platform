@@ -35,10 +35,14 @@ class ReadinessService:
     async def calculate_company_readiness(self, company_id: str) -> dict:
         """
         Calculate full readiness hierarchy:
-        1. Per-document scores (from assessments)
+        1. Per-document scores (adjusted_score preferred over latest_score)
         2. Per-department aggregate
         3. Company-level aggregate
+        Also counts data integrity holds and enforcement matches.
         """
+        from app.models.assessment import Assessment
+        from sqlalchemy import desc
+
         # Load all assessed documents for this company
         result = await self.db.execute(
             select(Document).where(
@@ -48,13 +52,39 @@ class ReadinessService:
         )
         documents = result.scalars().all()
 
-        # Group by department
+        # Load the latest assessment per document to get adjusted scores and hold flags
+        assessment_map: dict[str, Assessment] = {}
+        doc_ids = [d.id for d in documents]
+        if doc_ids:
+            a_result = await self.db.execute(
+                select(Assessment)
+                .where(
+                    Assessment.document_id.in_(doc_ids),
+                    Assessment.status == "completed",
+                )
+                .order_by(desc(Assessment.created_at))
+            )
+            for a in a_result.scalars().all():
+                if a.document_id not in assessment_map:
+                    assessment_map[a.document_id] = a
+
+        # Group by department — prefer adjusted_score
         dept_documents: dict[str, list] = {}
+        data_integrity_holds = 0
+        enforcement_match_count = 0
+
         for doc in documents:
             dept = doc.department_owner or "Unassigned"
+            a = assessment_map.get(doc.id)
+            score = (a.adjusted_score if a and a.adjusted_score is not None else doc.latest_score) or 0.0
+            if a and a.data_integrity_hold:
+                data_integrity_holds += 1
+            if a and a.enforcement_matches:
+                enforcement_match_count += a.enforcement_matches
+
             if dept not in dept_documents:
                 dept_documents[dept] = []
-            dept_documents[dept].append({"score": doc.latest_score, "weight": 1.0})
+            dept_documents[dept].append({"score": score, "weight": 1.0})
 
         # Calculate department scores
         department_scores = []
@@ -82,6 +112,8 @@ class ReadinessService:
             "score_band": company_result["score_band"],
             "departments": department_scores,
             "total_documents": len(documents),
+            "data_integrity_holds": data_integrity_holds,
+            "enforcement_matches_total": enforcement_match_count,
         }
 
     async def get_gap_analysis(self, company_id: str, department: Optional[str] = None) -> dict:
