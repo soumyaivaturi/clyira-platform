@@ -672,6 +672,29 @@ function QAAssistantPanel({ documentId, assessmentId }: { documentId: string; as
 
 // ── Assessment History Panel ───────────────────────────────────────────────────
 
+function ScoreSparkline({ scores }: { scores: number[] }) {
+  if (scores.length < 2) return null;
+  const W = 80, H = 28, PAD = 2;
+  const minS = Math.min(...scores, 0);
+  const maxS = Math.max(...scores, 100);
+  const range = maxS - minS || 1;
+  const pts = scores.map((s, i) => {
+    const x = PAD + (i / (scores.length - 1)) * (W - PAD * 2);
+    const y = PAD + ((maxS - s) / range) * (H - PAD * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const latest = scores[0];
+  const oldest = scores[scores.length - 1];
+  const trend = latest - oldest;
+  const color = trend >= 0 ? "#10b981" : "#ef4444";
+  return (
+    <svg width={W} height={H} className="flex-shrink-0">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
+      <circle cx={pts.split(" ")[0].split(",")[0]} cy={pts.split(" ")[0].split(",")[1]} r="2.5" fill={color} />
+    </svg>
+  );
+}
+
 function AssessmentHistoryPanel({ documentId }: { documentId: string }) {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -688,6 +711,8 @@ function AssessmentHistoryPanel({ documentId }: { documentId: string }) {
     finally { setLoading(false); }
   };
 
+  const scores = history.map(h => h.adjusted_score ?? h.clyira_score ?? 0);
+
   return (
     <div className="bg-card border rounded-xl overflow-hidden">
       <button
@@ -703,32 +728,45 @@ function AssessmentHistoryPanel({ documentId }: { documentId: string }) {
             </span>
           )}
         </div>
-        {loading
-          ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-          : <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
-        }
+        <div className="flex items-center gap-3">
+          {scores.length >= 2 && <ScoreSparkline scores={scores} />}
+          {loading
+            ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+            : <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
+          }
+        </div>
       </button>
       {expanded && history.length > 0 && (
         <div className="border-t divide-y">
-          {history.map((h, i) => (
-            <div key={h.id} className="flex items-center gap-4 px-5 py-3">
-              <span className="text-xs text-muted-foreground w-4 text-right">{i + 1}</span>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs text-muted-foreground">{new Date(h.created_at).toLocaleString()}</p>
-                {h.dtap_id && <p className="text-[10px] text-muted-foreground/70 font-mono">{h.dtap_id}</p>}
+          {history.map((h, i) => {
+            const prevScore = i < history.length - 1 ? (history[i+1].adjusted_score ?? history[i+1].clyira_score) : null;
+            const currScore = h.adjusted_score ?? h.clyira_score;
+            const delta = prevScore != null && currScore != null ? currScore - prevScore : null;
+            return (
+              <div key={h.id} className="flex items-center gap-4 px-5 py-3">
+                <span className="text-xs text-muted-foreground w-4 text-right">{history.length - i}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-muted-foreground">{new Date(h.created_at).toLocaleString()}</p>
+                  {h.dtap_id && <p className="text-[10px] text-muted-foreground/70 font-mono">{h.dtap_id}</p>}
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-bold tabular-nums">{currScore?.toFixed(1) ?? "—"}</p>
+                  {h.adjusted_score !== h.clyira_score && h.adjusted_score != null && (
+                    <p className="text-[10px] text-amber-600 font-medium">was {h.clyira_score?.toFixed(1)}</p>
+                  )}
+                  {delta != null && Math.abs(delta) > 0.1 && (
+                    <p className={`text-[10px] font-medium ${delta >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                      {delta >= 0 ? "▲" : "▼"} {Math.abs(delta).toFixed(1)}
+                    </p>
+                  )}
+                  <p className="text-[10px] text-muted-foreground">{h.score_band}</p>
+                </div>
+                <div className="text-right text-xs text-red-600 font-semibold tabular-nums w-6">
+                  {h.findings_critical > 0 ? h.findings_critical : ""}
+                </div>
               </div>
-              <div className="text-right">
-                <p className="text-sm font-bold tabular-nums">{h.clyira_score?.toFixed(1) ?? "—"}</p>
-                {h.adjusted_score !== h.clyira_score && h.adjusted_score != null && (
-                  <p className="text-[10px] text-green-600 font-medium">→ {h.adjusted_score.toFixed(1)} adj.</p>
-                )}
-                <p className="text-[10px] text-muted-foreground">{h.score_band}</p>
-              </div>
-              <div className="text-right text-xs text-red-600 font-semibold tabular-nums w-6">
-                {h.findings_critical > 0 ? h.findings_critical : ""}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       {expanded && history.length === 0 && (

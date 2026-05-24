@@ -2,6 +2,7 @@
 Document Service — Handles document upload, extraction, classification, and AI creation.
 """
 import os
+import re
 import logging
 from typing import Optional
 
@@ -267,7 +268,19 @@ class DocumentService:
             or "oos investigation" in text_lower
         ):
             return "LIR"
-        elif "validation" in filename_lower:
+        elif (
+            "validation" in filename_lower
+            or "iq\b" in text_lower
+            or "oq\b" in text_lower
+            or "pq\b" in text_lower
+            or "installation qualification" in text_lower
+            or "operational qualification" in text_lower
+            or "performance qualification" in text_lower
+            or "process validation" in text_lower
+            or "cleaning validation" in text_lower
+            or "computer system validation" in text_lower
+            or re.search(r'\b(?:iq|oq|pq)\s*(?:protocol|report|validation)\b', text_lower)
+        ):
             return "Validation"
         else:
             return "Other"
