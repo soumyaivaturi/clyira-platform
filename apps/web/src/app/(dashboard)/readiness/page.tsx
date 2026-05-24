@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Shield, Target, AlertTriangle, PlayCircle, RefreshCw,
-  ChevronRight, TrendingUp, TrendingDown, FileText, CheckCircle2, Loader2,
+  ChevronRight, FileText, CheckCircle2, Loader2, Zap, Radio,
 } from "lucide-react";
 import { readinessApi } from "@/lib/api";
 import { ScoreRing, ScoreBar, ScoreBadge } from "@/components/shared/score-display";
@@ -17,21 +17,44 @@ interface ReadinessDashboard {
   total_documents: number;
   top_gaps: { missing_assessments: any[]; poor_scores: any[] };
   gap_count: number;
+  data_integrity_holds?: number;
+  enforcement_matches_total?: number;
 }
 
 interface MockResult {
   simulation_id: string;
   readiness_score: number;
-  questions: { category: string; question: string; criticality: string; related_document: string | null }[];
+  questions: {
+    category: string; question: string; criticality: string;
+    related_document: string | null; regulatory_basis?: string;
+    source?: string; observation_count?: number;
+  }[];
   departments_assessed: string[];
+  data_integrity_holds?: number;
+  question_count?: number;
+}
+
+interface EnforcementAlert {
+  id: string;
+  agency: string;
+  record_type: string;
+  title: string;
+  summary: string;
+  issue_date: string | null;
+  pattern_tags: string[];
+  trending: boolean;
+  observation_count?: number;
+  source: string;
 }
 
 export default function ReadinessPage() {
   const [readiness, setReadiness] = useState<ReadinessDashboard | null>(null);
   const [mockResult, setMockResult] = useState<MockResult | null>(null);
+  const [enforcementAlerts, setEnforcementAlerts] = useState<EnforcementAlert[]>([]);
+  const [alertsLoading, setAlertsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
-  const [tab, setTab] = useState<"overview" | "gaps" | "mock">("overview");
+  const [tab, setTab] = useState<"overview" | "gaps" | "mock" | "enforcement">("overview");
   const [error, setError] = useState("");
   const [mockError, setMockError] = useState("");
 
@@ -62,7 +85,19 @@ export default function ReadinessPage() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  const loadAlerts = async () => {
+    setAlertsLoading(true);
+    try {
+      const res = await readinessApi.enforcementAlerts();
+      setEnforcementAlerts(res.data.alerts ?? []);
+    } catch {
+      // silently fail — enforcement alerts are supplementary
+    } finally {
+      setAlertsLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); loadAlerts(); }, []);
 
   const score = readiness?.company_score;
 
@@ -144,6 +179,7 @@ export default function ReadinessPage() {
         {[
           { key: "overview", label: "Department Overview" },
           { key: "gaps", label: `Gaps & Issues${readiness ? ` (${readiness.gap_count})` : ""}` },
+          { key: "enforcement", label: `Enforcement Alerts${enforcementAlerts.length > 0 ? ` (${enforcementAlerts.length})` : ""}` },
           { key: "mock", label: "Mock Inspection" },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key as any)}
@@ -190,12 +226,15 @@ export default function ReadinessPage() {
           {/* Quick action cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[
-              { icon: Target, label: "Gap Analysis", desc: "Missing documents, expired items, and assessment gaps", onClick: () => setTab("gaps") },
-              { icon: AlertTriangle, label: "Enforcement Alerts", desc: "Trending observations and regulatory change alerts", onClick: () => {} },
-              { icon: Shield, label: "Readiness Checklists", desc: "Department-specific pre-audit checklists", onClick: () => {} },
-            ].map(({ icon: Icon, label, desc, onClick }) => (
+              { icon: Target, label: "Gap Analysis", desc: "Missing documents, expired items, and assessment gaps", onClick: () => setTab("gaps"), badge: readiness?.gap_count },
+              { icon: Zap, label: "Enforcement Alerts", desc: `${enforcementAlerts.length > 0 ? `${enforcementAlerts.length} active alerts` : "Trending observations and regulatory change alerts"}`, onClick: () => setTab("enforcement"), badge: enforcementAlerts.length || undefined },
+              { icon: Radio, label: "Mock Inspection", desc: "AI-powered mock FDA/EMA inspection questions", onClick: () => setTab("mock") },
+            ].map(({ icon: Icon, label, desc, onClick, badge }) => (
               <button key={label} onClick={onClick}
-                className="bg-card border rounded-xl p-5 text-left hover:border-primary/50 transition-colors">
+                className="bg-card border rounded-xl p-5 text-left hover:border-primary/50 transition-colors relative">
+                {badge != null && badge > 0 && (
+                  <span className="absolute top-3 right-3 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">{badge}</span>
+                )}
                 <div className="flex items-center gap-2 mb-2">
                   <Icon className="w-5 h-5 text-primary" />
                   <h3 className="font-semibold text-sm">{label}</h3>
@@ -276,6 +315,72 @@ export default function ReadinessPage() {
         </div>
       )}
 
+      {/* Enforcement Alerts Tab */}
+      {tab === "enforcement" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              FDA Warning Letter patterns from BM25 corpus analysis — ranked by observation frequency
+            </p>
+            <button onClick={loadAlerts} disabled={alertsLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs border rounded-lg hover:bg-accent disabled:opacity-50">
+              <RefreshCw className={`w-3 h-3 ${alertsLoading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
+
+          {alertsLoading ? (
+            <div className="space-y-3">
+              {[1,2,3,4].map(i => <div key={i} className="h-24 bg-muted animate-pulse rounded-xl" />)}
+            </div>
+          ) : enforcementAlerts.length === 0 ? (
+            <div className="bg-muted/30 border border-dashed rounded-xl px-8 py-12 text-center">
+              <Zap className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
+              <p className="text-sm text-muted-foreground">No enforcement alerts available.</p>
+              <p className="text-xs text-muted-foreground mt-1">Assess documents to generate enforcement pattern analysis.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {enforcementAlerts.map((alert) => (
+                <div key={alert.id} className={`bg-card border rounded-xl p-5 ${alert.source === "bm25_corpus" ? "border-amber-200" : "border-red-200"}`}>
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide ${
+                        alert.source === "bm25_corpus"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-red-100 text-red-800"
+                      }`}>
+                        {alert.agency}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground capitalize">{alert.record_type.replace(/_/g, " ")}</span>
+                      {alert.observation_count != null && (
+                        <span className="text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+                          {alert.observation_count} observations
+                        </span>
+                      )}
+                    </div>
+                    {alert.trending && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-50 text-red-600 border border-red-200 flex-shrink-0">
+                        Trending
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="font-semibold text-sm mb-1">{alert.title}</h3>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{alert.summary}</p>
+                  {alert.pattern_tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {alert.pattern_tags.map(tag => (
+                        <span key={tag} className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded">{tag}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Mock Inspection Tab */}
       {tab === "mock" && (
         <div className="space-y-4">
@@ -306,19 +411,34 @@ export default function ReadinessPage() {
               <div className="space-y-3">
                 {mockResult.questions.map((q, i) => (
                   <div key={i} className={`border rounded-xl p-5 ${CRITICALITY_STYLE[q.criticality] ?? "bg-card border-border"}`}>
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <span className="text-xs font-semibold uppercase tracking-wide">{q.category}</span>
+                    <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-semibold uppercase tracking-wide">{q.category}</span>
+                        {q.source === "ai_generated" && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">AI Generated</span>
+                        )}
+                        {q.source === "enforcement_pattern" && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
+                            {q.observation_count} WL observations
+                          </span>
+                        )}
+                      </div>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded capitalize border ${CRITICALITY_STYLE[q.criticality] ?? ""}`}>
                         {q.criticality}
                       </span>
                     </div>
                     <p className="text-sm font-medium leading-relaxed">{q.question}</p>
-                    {q.related_document && (
-                      <Link href={`/documents/${q.related_document}`}
-                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-2">
-                        <FileText className="w-3 h-3" /> View related document
-                      </Link>
-                    )}
+                    <div className="flex items-center gap-3 mt-2 flex-wrap">
+                      {q.regulatory_basis && (
+                        <span className="text-[10px] font-mono text-muted-foreground">{q.regulatory_basis}</span>
+                      )}
+                      {q.related_document && (
+                        <Link href={`/documents/${q.related_document}`}
+                          className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                          <FileText className="w-3 h-3" /> View related document
+                        </Link>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

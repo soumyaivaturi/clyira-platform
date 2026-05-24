@@ -1631,3 +1631,429 @@ class RuleEngine:
             confidence_score=0.93,
             validated=True,
         )]
+
+    # ========== Shared L2 Checks (Deviation + LIR) ==========
+
+    def _check_l2_approval_signatures(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """QA approval signature line — blank, 'TBD', or 'N/A' with no date is a critical structural gap."""
+        text = ctx.document_text
+        text_lower = text.lower()
+        # Look for QA-related signature/approval blocks
+        qa_blocks = list(re.finditer(
+            r'(?:qa|quality\s+assurance)\s*(?:approv|sign|authorized|reviewed)',
+            text_lower
+        ))
+        if not qa_blocks:
+            return [FindingResult(
+                level="L2",
+                severity="critical",
+                category="qa_approval_absent",
+                title="QA approval signature block not found in document",
+                description=(
+                    "No QA approval signature block was detected in the document. "
+                    "GMP requires that quality documents be formally approved by QA before use. "
+                    "The absence of a QA signature line represents a document control gap "
+                    "per 21 CFR 211.22(a)."
+                ),
+                evidence="",
+                regulatory_citation="21 CFR 211.22(a)",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.72,
+                validated=True,
+            )]
+        findings = []
+        for m in qa_blocks[:3]:
+            context_after = text[m.end():m.end() + 200]
+            blank_sig = re.search(r'(?:___|tbd|pending|n/?a|not\s+applicable|to\s+be\s+(?:determined|filled))', context_after, re.IGNORECASE)
+            if blank_sig:
+                excerpt = text[m.start():m.end() + 100].strip()
+                findings.append(FindingResult(
+                    level="L2",
+                    severity="critical",
+                    category="unsigned_qa_approval",
+                    title="QA approval signature line is blank or placeholder — document may be unapproved",
+                    description=(
+                        f"The QA approval block at '{excerpt[:120]}' appears unsigned (blank lines, 'TBD', "
+                        f"or 'N/A'). Distributing or using a GMP document without completed QA approval "
+                        f"constitutes a document control violation per 21 CFR 211.22(a). Every controlled "
+                        f"document must carry a wet or electronic QA signature with date before release."
+                    ),
+                    evidence=excerpt,
+                    location=_nearest_section(text, m.start()),
+                    regulatory_citation="21 CFR 211.22(a)",
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.85,
+                    validated=True,
+                ))
+                break
+        return findings
+
+    def _check_l2_qa_independence(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """QA reviewer and author must not be the same person — independence is a GMP control requirement."""
+        text = ctx.document_text
+        # Extract author/prepared-by name
+        author_m = re.search(
+            r'(?:prepared\s+by|authored\s+by|investigator|submitted\s+by)\s*[:\-]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+            text, re.IGNORECASE
+        )
+        # Extract QA approver name
+        approver_m = re.search(
+            r'(?:approved\s+by\s+(?:qa|quality)|qa\s+(?:approval|approver|reviewer))\s*[:\-]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+            text, re.IGNORECASE
+        )
+        if not (author_m and approver_m):
+            return []
+        author_name = author_m.group(1).strip().lower()
+        approver_name = approver_m.group(1).strip().lower()
+        if author_name == approver_name:
+            return [FindingResult(
+                level="L2",
+                severity="high",
+                category="qa_independence_violation",
+                title=f"QA approver and author are the same individual ({author_m.group(1)}) — independence not maintained",
+                description=(
+                    f"The document was prepared by and QA-approved by the same person: '{author_m.group(1)}'. "
+                    f"GMP requires that the author/investigator and QA approver be independent individuals. "
+                    f"A self-approved GMP document cannot demonstrate the independent QA oversight required by "
+                    f"21 CFR 211.22(a). This is a systemic control gap."
+                ),
+                evidence=f"Author: {author_m.group(1)} / QA Approver: {approver_m.group(1)}",
+                regulatory_citation="21 CFR 211.22(a)",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.87,
+                validated=True,
+            )]
+        return []
+
+    def _check_l2_version_control_block(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Version, effective date, and supersedes fields must be present and populated."""
+        text = ctx.document_text
+        text_lower = text.lower()
+        missing = []
+        if not re.search(r'(?:version|rev(?:ision)?\s*(?:no|#|:|\s))', text_lower):
+            missing.append("Version/Revision number")
+        if not re.search(r'(?:effective\s+date|eff\.?\s+date|date\s+effective)', text_lower):
+            missing.append("Effective date")
+        if not missing:
+            return []
+        return [FindingResult(
+            level="L2",
+            severity="high" if len(missing) > 1 else "medium",
+            category="version_control_incomplete",
+            title=f"Version control block incomplete: missing {', '.join(missing)}",
+            description=(
+                f"The document is missing required version control fields: {', '.join(missing)}. "
+                f"GMP document control requires every controlled document to carry a version number, "
+                f"effective date, and supersedes reference to maintain a traceable history and prevent "
+                f"use of obsolete versions per 21 CFR 211.68 and EU GMP Part I Ch. 4."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 211.68",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.76,
+            validated=True,
+        )]
+
+    def _check_l4_disposition_before_investigation(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Batch disposition date preceding investigation close date — chronological integrity violation."""
+        text = ctx.document_text
+        # Find disposition date
+        disp_m = re.search(
+            r'(?:disposition|released?\s+date|batch\s+released?)[:\s]*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
+            text, re.IGNORECASE
+        )
+        # Find investigation close/completion date
+        inv_m = re.search(
+            r'(?:investigation\s+(?:closed|completed|close\s+date)|closure\s+date|completed\s+(?:on|date))[:\s]*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
+            text, re.IGNORECASE
+        )
+        if not (disp_m and inv_m):
+            return []
+        from datetime import datetime
+        date_formats = ["%m/%d/%Y", "%d/%m/%Y", "%m-%d-%Y", "%d-%m-%Y", "%Y-%m-%d"]
+        disp_date = inv_date = None
+        for fmt in date_formats:
+            try:
+                disp_date = datetime.strptime(disp_m.group(1), fmt); break
+            except ValueError:
+                pass
+        for fmt in date_formats:
+            try:
+                inv_date = datetime.strptime(inv_m.group(1), fmt); break
+            except ValueError:
+                pass
+        if not (disp_date and inv_date):
+            return []
+        if disp_date < inv_date:
+            return [FindingResult(
+                level="L4",
+                severity="critical",
+                category="disposition_before_investigation",
+                title=f"Batch dispositioned ({disp_m.group(1)}) before investigation closed ({inv_m.group(1)}) — chronological integrity violation",
+                description=(
+                    f"The batch disposition date ({disp_m.group(1)}) precedes the investigation closure "
+                    f"date ({inv_m.group(1)}). A batch cannot be legally released before the deviation or "
+                    f"OOS investigation is formally closed and QA-approved. This is an automatic Critical "
+                    f"data integrity finding per 21 CFR 211.192 — it indicates either a records falsification "
+                    f"or a premature release decision that bypassed quality controls."
+                ),
+                evidence=f"Disposition: {disp_m.group(1)} | Investigation close: {inv_m.group(1)}",
+                regulatory_citation="21 CFR 211.192",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.92,
+                validated=True,
+            )]
+        return []
+
+    def _check_l1_containment_documented(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Immediate containment actions are mandatory in a Deviation Report."""
+        text_lower = ctx.document_text.lower()
+        has_containment = re.search(
+            r'(?:immediate\s+(?:action|containment|response)|containment\s+action|'
+            r'immediate\s+corrective|temporary\s+control|quarantine|hold)',
+            text_lower
+        )
+        if has_containment:
+            return []
+        return [FindingResult(
+            level="L1",
+            severity="high",
+            category="containment_actions_absent",
+            title="Immediate containment actions not documented in Deviation Report",
+            description=(
+                "No immediate containment actions were found in the document. "
+                "GMP Deviation Reports must document immediate actions taken at the time of deviation "
+                "discovery — such as quarantine, process hold, or temporary controls — even if "
+                "the conclusion is that no action was required. The absence of this field "
+                "creates an ambiguity about what was done at the time of the event per 21 CFR 211.192."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.73,
+            validated=True,
+        )]
+
+    def _check_l1_batch_info_present(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Batch/lot number and product name are mandatory traceability fields in a Deviation Report."""
+        text_lower = ctx.document_text.lower()
+        findings = []
+        if not re.search(r'batch\s*(?:no|number|#|lot)|lot\s*(?:no|number|#)', text_lower):
+            findings.append(FindingResult(
+                level="L1",
+                severity="critical",
+                category="batch_lot_number_absent",
+                title="Batch/Lot number not found in Deviation Report",
+                description=(
+                    "No batch or lot number was found in the Deviation Report. "
+                    "Every GMP deviation must be traceable to the specific batch(es) affected. "
+                    "Without this traceability, batch disposition decisions cannot be linked to the "
+                    "investigation outcome, and a recall or field correction cannot be properly scoped. "
+                    "Required per 21 CFR 211.192."
+                ),
+                evidence="",
+                regulatory_citation="21 CFR 211.192",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.80,
+                validated=True,
+            ))
+        if not re.search(r'product\s*(?:name|code|id)|material\s*(?:name|code)', text_lower):
+            findings.append(FindingResult(
+                level="L1",
+                severity="critical",
+                category="product_name_absent",
+                title="Product/Material name not identified in Deviation Report",
+                description=(
+                    "No product or material name was identified in the Deviation Report. "
+                    "Product identification is a mandatory traceability element — the investigation "
+                    "must be linked to the specific product affected to support batch disposition "
+                    "and potential regulatory reporting decisions per 21 CFR 211.192."
+                ),
+                evidence="",
+                regulatory_citation="21 CFR 211.192",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.78,
+                validated=True,
+            ))
+        return findings
+
+    def _check_l1_lir_required_fields(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """OOS result details, sample ID, method reference, and specification are mandatory LIR fields."""
+        text = ctx.document_text
+        text_lower = text.lower()
+        findings = []
+        required = [
+            (r'(?:oos|out.of.spec(?:ification)?)\s*(?:result|value|reading)', "OOS result value", "critical", "FDA OOS Guidance 2006 Section II"),
+            (r'(?:sample\s*(?:id|no|number|code)|lot\s*(?:no|number))', "Sample/Lot ID", "critical", "21 CFR 211.194"),
+            (r'(?:analytical\s+method|test\s+method|stp|method\s+(?:ref|no))', "Analytical Method reference", "high", "21 CFR 211.194"),
+            (r'(?:specification|spec\s+limit|acceptance\s+criteria|acceptance\s+limit)', "Specification/Acceptance limit", "critical", "21 CFR 211.194"),
+        ]
+        for pattern, label, severity, citation in required:
+            if not re.search(pattern, text_lower):
+                findings.append(FindingResult(
+                    level="L1",
+                    severity=severity,
+                    category="lir_required_field_absent",
+                    title=f"Required LIR field absent: {label}",
+                    description=(
+                        f"The mandatory field '{label}' was not found in this Lab Investigation Report. "
+                        f"FDA OOS Guidance 2006 requires all OOS investigations to fully document the "
+                        f"original result, sample identity, test method, and specification limit. "
+                        f"Without {label}, the investigation cannot be independently verified per {citation}."
+                    ),
+                    evidence="",
+                    regulatory_citation=citation,
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.74,
+                    validated=True,
+                ))
+        return findings
+
+    def _check_l4_root_cause_named_evidence(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Root cause must be a named, specific cause with documentary evidence — not 'unknown' or generic."""
+        text = ctx.document_text
+        text_lower = text.lower()
+        rc_m = re.search(
+            r'(?:root\s+cause|assignable\s+cause)[:\s]*(.{0,300}?)(?:\n\n|\Z)',
+            text_lower
+        )
+        if not rc_m:
+            return []
+        rc_text = rc_m.group(1).strip()
+        # Red-flag patterns — vague, deferrring, or unresolved root causes
+        vague_patterns = [
+            r'unknown', r'undetermined', r'tbd', r'to\s+be\s+determined',
+            r'under\s+investigation', r'not\s+identified', r'unclear',
+            r'(?:likely|probable|possible)\s+(?:cause|error)',
+        ]
+        for pat in vague_patterns:
+            if re.search(pat, rc_text):
+                excerpt = rc_m.group(0)[:300].strip()
+                return [FindingResult(
+                    level="L4",
+                    severity="critical",
+                    category="root_cause_not_identified",
+                    title=f"Root cause is vague or undetermined: '{rc_text[:80]}'",
+                    description=(
+                        f"The root cause statement is non-specific: '{rc_text[:200]}'. "
+                        f"FDA OOS Guidance 2006 requires that the root cause be a named, specific error "
+                        f"supported by documentary evidence (e.g., instrument calibration record, analyst "
+                        f"transcription log). A vague or 'unknown' root cause cannot justify OOS invalidation, "
+                        f"and cannot demonstrate that the CAPA addresses the actual cause of the failure. "
+                        f"An unidentified root cause requires Phase II investigation."
+                    ),
+                    evidence=excerpt,
+                    location=_nearest_section(text, rc_m.start()),
+                    regulatory_citation="FDA OOS Guidance 2006 Section VI.B",
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.86,
+                    validated=True,
+                )]
+        return []
+
+    def _check_l8_patient_safety_assessment(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Patient safety impact assessment must be present and explicitly documented."""
+        text_lower = ctx.document_text.lower()
+        has_safety = re.search(
+            r'(?:patient\s+safety|safety\s+(?:assessment|impact|evaluation)|'
+            r'risk\s+to\s+patient|clinical\s+(?:impact|significance)|'
+            r'adverse\s+(?:health|patient)\s+(?:impact|consequence))',
+            text_lower
+        )
+        if has_safety:
+            return []
+        return [FindingResult(
+            level="L8",
+            severity="high",
+            category="patient_safety_assessment_absent",
+            title="Patient safety impact assessment not documented",
+            description=(
+                "No patient safety impact assessment was found in the document. "
+                "All GMP deviations and OOS investigations must include an assessment of potential "
+                "patient safety impact — even if the conclusion is that no risk to patients exists. "
+                "This assessment is required to support batch disposition, field alert decisions, "
+                "and regulatory reporting determinations per ICH Q10 and 21 CFR 314.81."
+            ),
+            evidence="",
+            regulatory_citation="ICH Q10 / 21 CFR 314.81",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.77,
+            validated=True,
+        )]
+
+    def _check_l8_regulatory_reporting_documented(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Regulatory reporting assessment (FAR, 15-day, MDR) must be explicitly documented."""
+        text_lower = ctx.document_text.lower()
+        has_reporting = re.search(
+            r'(?:field\s+alert|far\s+(?:required|not\s+required|assessment)|'
+            r'15.?day\s+(?:report|safety)|mdr|medical\s+device\s+report|'
+            r'regulatory\s+reporting\s+(?:assessment|required|not\s+required))',
+            text_lower
+        )
+        if has_reporting:
+            return []
+        return [FindingResult(
+            level="L8",
+            severity="high",
+            category="regulatory_reporting_not_assessed",
+            title="Regulatory reporting assessment absent — FAR / 15-day reportability not documented",
+            description=(
+                "No regulatory reporting assessment was found. This document must contain an explicit "
+                "assessment of reportability for: (1) Field Alert Report (FAR) per 21 CFR 314.81, "
+                "(2) 15-day Expedited Safety Report if applicable, and (3) any applicable MedWatch / MDR "
+                "obligations. The conclusion may be 'Not required' but the assessment and rationale "
+                "must be documented — silence on reportability is not acceptable during an inspection."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 314.81",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.75,
+            validated=True,
+        )]
+
+    def _check_l8_confirmed_oos_release(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Confirmed OOS batch released without an approved exception — impermissible."""
+        text_lower = ctx.document_text.lower()
+        # Check for explicit confirmed OOS + release combination (same as disposition_consistency but at L8 for LIR profile)
+        confirmed_oos = re.search(
+            r'(?:phase\s*[ii2]|final)\s+conclusion[:\s]*confirmed\s+oos|'
+            r'oos\s+(?:result\s+)?(?:confirmed|conclusion\s*:\s*confirmed)',
+            text_lower
+        )
+        released = re.search(
+            r'(?:disposition|batch\s+disposition|final\s+disposition)[:\s]*(?:released?|approved)',
+            text_lower
+        )
+        if confirmed_oos and released:
+            return [FindingResult(
+                level="L8",
+                severity="critical",
+                category="confirmed_oos_released",
+                title="Confirmed OOS result followed by release disposition — impermissible GMP violation",
+                description=(
+                    "A 'Confirmed OOS' conclusion is present alongside a 'Released' batch disposition. "
+                    "Under no circumstances may a batch with a confirmed OOS result be released to market. "
+                    "This combination is an automatic Critical finding per 21 CFR 211.192 and constitutes "
+                    "a patient safety violation. Permissible dispositions for Confirmed OOS are: "
+                    "Reject/Destroy, or Exception Release with QP/NDA holder sign-off and regulatory notification."
+                ),
+                evidence="",
+                regulatory_citation="21 CFR 211.192",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.95,
+                validated=True,
+            )]
+        return []
