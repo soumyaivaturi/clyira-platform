@@ -8,6 +8,7 @@ from app.dtap.profiles.capa import CAPA_DTAP
 from app.dtap.profiles.atm import ATM_DTAP
 from app.dtap.profiles.deviation import DEVIATION_DTAP
 from app.dtap.profiles.lir import LIR_DTAP
+from app.dtap.profiles.validation import VALIDATION_DTAP
 
 
 class DTAPRegistry:
@@ -23,6 +24,7 @@ class DTAPRegistry:
         cls.register(ATM_DTAP)
         cls.register(DEVIATION_DTAP)
         cls.register(LIR_DTAP)
+        cls.register(VALIDATION_DTAP)
 
     @classmethod
     def register(cls, profile: DTAPProfile):

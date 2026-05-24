@@ -2525,3 +2525,287 @@ class RuleEngine:
                 validated=True,
             )
         return None
+
+    # ========== L1/L4/L5/L7: Validation Protocol/Report Checks ==========
+
+    def _check_l1_validation_type_declared(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Validation type (IQ/OQ/PQ, Process, Cleaning, Computer System) must be declared."""
+        text_lower = ctx.document_text.lower()
+        has_type = re.search(
+            r'(?:\biq\b|\boq\b|\bpq\b|installation\s+qualification|operational\s+qualification|'
+            r'performance\s+qualification|process\s+validation|cleaning\s+validation|'
+            r'computer\s+(?:system\s+)?validation|csv\b|analytical\s+method\s+validation|'
+            r'equipment\s+qualification)',
+            text_lower
+        )
+        if has_type:
+            return None
+        return FindingResult(
+            level="L1",
+            severity="high",
+            category="validation_type_not_declared",
+            title="Validation type (IQ/OQ/PQ, Process, Cleaning, CSV) not declared in document",
+            description=(
+                "The document does not declare its validation type (e.g., IQ, OQ, PQ, Process Validation, "
+                "Cleaning Validation, Computer System Validation). Every validation document must "
+                "explicitly identify the type of validation activity being performed to establish "
+                "the applicable regulatory requirements and acceptance criteria basis per "
+                "FDA Process Validation Guidance 2011 and EU GMP Annex 15."
+            ),
+            evidence="",
+            regulatory_citation="FDA PV Guidance 2011 / EU GMP Annex 15",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.80,
+            validated=True,
+        )
+
+    def _check_l1_protocol_report_distinction(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Document must be clearly identified as either a Protocol or a Report (not both)."""
+        text_lower = ctx.document_text.lower()
+        is_protocol = bool(re.search(r'\b(?:validation\s+)?protocol\b', text_lower))
+        is_report = bool(re.search(r'\b(?:validation\s+)?report\b', text_lower))
+        if is_protocol == is_report and is_protocol:
+            # Both found — check if they're clearly labelled as different docs or if this is a combined doc
+            combined = re.search(r'protocol(?:\s*and|\s*/)\s*report|report(?:\s*and|\s*/)\s*protocol', text_lower)
+            if not combined:
+                return FindingResult(
+                    level="L1",
+                    severity="medium",
+                    category="protocol_report_ambiguity",
+                    title="Document references both 'Protocol' and 'Report' without clear distinction",
+                    description=(
+                        "The document contains both 'Protocol' and 'Report' terminology without clearly "
+                        "distinguishing between them. A Validation Protocol is approved before execution "
+                        "and defines acceptance criteria; a Validation Report is written after execution "
+                        "and documents results. Combining or confusing these documents is a GMP document "
+                        "control concern — pre-execution approval of acceptance criteria could be "
+                        "compromised per FDA Process Validation Guidance 2011."
+                    ),
+                    evidence="",
+                    regulatory_citation="FDA PV Guidance 2011",
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.68,
+                    validated=True,
+                )
+        return None
+
+    def _check_l4_pre_execution_approval(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Protocol must be QA-approved before execution — detected when approval date is after first test date."""
+        text = ctx.document_text
+        findings = []
+        # Check for execution date before approval
+        exec_date_m = re.search(
+            r'(?:execution\s+(?:started?|date|commenced|initiated)|test\s+(?:start|date)|'
+            r'(?:performed|conducted|executed)\s+on|test\s+date)\s*[:\-]?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
+            text, re.IGNORECASE
+        )
+        approval_date_m = re.search(
+            r'(?:approved\s+(?:by|date)|qa\s+(?:approv|sign)(?:ature)?)\s+[^\n]{0,40}?(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
+            text, re.IGNORECASE
+        )
+        if exec_date_m and approval_date_m:
+            from datetime import datetime
+            date_formats = ["%m/%d/%Y", "%d/%m/%Y", "%m-%d-%Y", "%d-%m-%Y", "%Y-%m-%d"]
+            exec_date = approv_date = None
+            for fmt in date_formats:
+                try:
+                    exec_date = datetime.strptime(exec_date_m.group(1), fmt); break
+                except ValueError:
+                    pass
+            for fmt in date_formats:
+                try:
+                    approv_date = datetime.strptime(approval_date_m.group(1), fmt); break
+                except ValueError:
+                    pass
+            if exec_date and approv_date and exec_date < approv_date:
+                findings.append(FindingResult(
+                    level="L4",
+                    severity="critical",
+                    category="validation_executed_before_approval",
+                    title=f"Validation protocol executed ({exec_date_m.group(1)}) before QA approval ({approval_date_m.group(1)})",
+                    description=(
+                        f"The validation execution date ({exec_date_m.group(1)}) precedes the QA "
+                        f"approval date ({approval_date_m.group(1)}). A validation protocol must be "
+                        f"reviewed and approved by QA before execution begins. Executing before "
+                        f"approval invalidates the pre-defined acceptance criteria principle and "
+                        f"creates a data integrity exposure — the protocol could have been modified "
+                        f"after execution per FDA Process Validation Guidance 2011."
+                    ),
+                    evidence=f"Execution: {exec_date_m.group(1)} | Approval: {approval_date_m.group(1)}",
+                    regulatory_citation="FDA PV Guidance 2011",
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.91,
+                    validated=True,
+                ))
+        return findings
+
+    def _check_l4_results_vs_criteria_comparison(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Validation reports must explicitly compare actual results to pre-defined acceptance criteria."""
+        text_lower = ctx.document_text.lower()
+        is_report = re.search(r'validation\s+report|execution\s+(?:report|summary)|results?\s+summary', text_lower)
+        if not is_report:
+            return None  # Protocol only — results section not expected
+        has_results = re.search(r'(?:result|actual|obtained|measured)\s*[:\-]?\s*\d', text_lower)
+        has_criteria = re.search(r'(?:acceptance\s+criteri[ao]|specification|limit)\s*[:\-]?\s*\S', text_lower)
+        has_comparison = re.search(
+            r'(?:meets?\s+(?:acceptance\s+)?criteria|passes?|complies?|within\s+(?:spec|limit|criteria)|'
+            r'result\s+(?:is|are)\s+(?:acceptable|compliant|within)|pass(?:ed)?|fail(?:ed)?)',
+            text_lower
+        )
+        if has_results and has_criteria and not has_comparison:
+            return FindingResult(
+                level="L4",
+                severity="high",
+                category="results_criteria_comparison_absent",
+                title="Results and acceptance criteria present but no explicit pass/fail comparison statement",
+                description=(
+                    "The validation report contains both results and acceptance criteria but no "
+                    "explicit comparison statement ('Meets criteria', 'Pass', 'Fail', etc.) was found. "
+                    "FDA Process Validation Guidance 2011 requires that the validation conclusion "
+                    "explicitly state whether the results meet the pre-defined acceptance criteria. "
+                    "Inspectors will ask to see the direct link between result values and the "
+                    "acceptance criteria they were evaluated against."
+                ),
+                evidence="",
+                regulatory_citation="FDA PV Guidance 2011",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.78,
+                validated=True,
+            )
+        return None
+
+    def _check_l4_deviation_handling(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Validation reports must document all deviations and their impact on conclusions."""
+        text_lower = ctx.document_text.lower()
+        is_report = re.search(r'validation\s+report|execution|results?\s+summary', text_lower)
+        if not is_report:
+            return None
+        has_deviation_section = re.search(
+            r'(?:deviations?|discrepanc(?:y|ies)|non-?conformanc(?:y|e))\s*(?:during|observed|section)',
+            text_lower
+        )
+        if not has_deviation_section:
+            return FindingResult(
+                level="L4",
+                severity="medium",
+                category="validation_deviation_section_absent",
+                title="Validation report lacks a Deviations/Discrepancies section",
+                description=(
+                    "The validation report does not contain a Deviations or Discrepancies section. "
+                    "All validation reports must include a section documenting any deviations from "
+                    "the approved protocol — even if the conclusion is 'no deviations occurred.' "
+                    "An explicit 'No deviations' statement is required; omitting this section "
+                    "prevents an assessor from confirming whether the protocol was followed as written "
+                    "per FDA Process Validation Guidance 2011 and EU GMP Annex 15."
+                ),
+                evidence="",
+                regulatory_citation="FDA PV Guidance 2011 / EU GMP Annex 15",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.76,
+                validated=True,
+            )
+        return None
+
+    def _check_l5_validation_runs_count(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Process validation requires a minimum of 3 consecutive successful batches."""
+        text_lower = ctx.document_text.lower()
+        is_process_val = re.search(
+            r'process\s+validation|(?:manufacturing|production)\s+process\s+(?:validation|qualification)',
+            text_lower
+        )
+        if not is_process_val:
+            return None
+        # Count batch references
+        batch_nums = re.findall(
+            r'(?:batch|lot)\s*(?:no|number|#)?\s*[:\-]?\s*[A-Z0-9][A-Z0-9\-/]+',
+            text_lower
+        )
+        unique_batches = len(set(batch_nums))
+        if 0 < unique_batches < 3:
+            return FindingResult(
+                level="L5",
+                severity="high",
+                category="insufficient_validation_batches",
+                title=f"Process validation may have insufficient runs: {unique_batches} batch(es) identified (minimum 3 required)",
+                description=(
+                    f"Only {unique_batches} batch reference(s) were found in this process validation "
+                    f"document. FDA Process Validation Guidance 2011 (Process Performance Qualification "
+                    f"stage) requires a minimum of 3 consecutive batches demonstrating consistent "
+                    f"performance. A validation with fewer than 3 successful runs does not meet the "
+                    f"minimum statistical basis for demonstrating process consistency."
+                ),
+                evidence=f"Batch references found: {', '.join(set(batch_nums[:5]))}",
+                regulatory_citation="FDA PV Guidance 2011 Section IV.C",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.77,
+                validated=True,
+            )
+        return None
+
+    def _check_l7_requalification_schedule(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Validation documents must define when requalification/revalidation is required."""
+        text_lower = ctx.document_text.lower()
+        has_requalification = re.search(
+            r'(?:requalif|revalidat|periodic\s+review\s+of\s+validation|'
+            r'change\s+control\s+trigger|major\s+change|revalidation\s+trigger)',
+            text_lower
+        )
+        if has_requalification:
+            return None
+        return FindingResult(
+            level="L7",
+            severity="medium",
+            category="requalification_trigger_absent",
+            title="Requalification / revalidation triggers and schedule not defined",
+            description=(
+                "No requalification schedule or change control triggers were found. "
+                "Validated processes and systems must define the conditions under which "
+                "requalification or revalidation is required — typically including major equipment "
+                "changes, process changes, significant deviations, and periodic review intervals. "
+                "The absence of these triggers creates an open-ended validation that cannot be "
+                "demonstrated as 'maintained in a state of control' per FDA PV Guidance 2011."
+            ),
+            evidence="",
+            regulatory_citation="FDA PV Guidance 2011 / EU GMP Annex 15",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.73,
+            validated=True,
+        )
+
+    def _check_l7_change_control_trigger(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Impact assessment must describe which changes would invalidate the validation."""
+        text_lower = ctx.document_text.lower()
+        has_change_trigger = re.search(
+            r'(?:change\s+control|changes?\s+that\s+(?:may|would|require\s+revalid|impact\s+the\s+valid)|'
+            r'change\s+impact|major\s+change)',
+            text_lower
+        )
+        if has_change_trigger:
+            return None
+        return FindingResult(
+            level="L7",
+            severity="low",
+            category="change_control_trigger_absent",
+            title="Changes requiring revalidation not described in validation document",
+            description=(
+                "No description of changes that would require revalidation was found. "
+                "Best practice requires validation documents to specify which changes — "
+                "such as equipment upgrades, process modifications, facility changes, or "
+                "critical material changes — would trigger re-assessment of the validated state. "
+                "This information is necessary for ongoing change control decisions per "
+                "ICH Q10 and FDA Process Validation Guidance 2011."
+            ),
+            evidence="",
+            regulatory_citation="ICH Q10 / FDA PV Guidance 2011",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.67,
+            validated=True,
+        )
