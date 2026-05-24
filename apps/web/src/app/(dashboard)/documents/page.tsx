@@ -4,8 +4,8 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  FileText, Upload, Plus, Search, Filter, X, Loader2,
-  ChevronDown, FileUp, Sparkles, AlertCircle, ChevronRight, CheckSquare, Square,
+  FileText, Upload, Plus, Search, X, Loader2,
+  FileUp, Sparkles, AlertCircle, ChevronRight, CheckSquare, Square, TrendingDown,
 } from "lucide-react";
 import { documentsApi } from "@/lib/api";
 import { ScoreBadge } from "@/components/shared/score-display";
@@ -76,6 +76,7 @@ interface Document {
   file_size_bytes?: number;
   status: string;
   latest_score?: number | null;
+  adjusted_score?: number | null;
   created_at?: string;
 }
 
@@ -552,7 +553,16 @@ export default function DocumentsPage() {
                 </div>
                 <span className="text-xs font-medium text-muted-foreground">{doc.document_category ?? "—"}</span>
                 <span className="text-xs text-muted-foreground truncate">{doc.department_owner ?? "Unassigned"}</span>
-                <ScoreBadge score={doc.latest_score} />
+                <div className="flex flex-col gap-0.5">
+                  <ScoreBadge score={doc.adjusted_score ?? doc.latest_score} />
+                  {doc.adjusted_score != null && doc.latest_score != null &&
+                   Math.abs(doc.adjusted_score - doc.latest_score) > 0.1 && (
+                    <span className="flex items-center gap-0.5 text-[9px] text-amber-600 font-medium">
+                      <TrendingDown className="w-2.5 h-2.5" />
+                      was {doc.latest_score.toFixed(1)}
+                    </span>
+                  )}
+                </div>
                 <DocStatusBadge status={doc.status} />
                 <span className="text-xs text-muted-foreground">{formatDate(doc.created_at)}</span>
               </Link>

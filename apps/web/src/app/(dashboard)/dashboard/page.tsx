@@ -3,14 +3,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  FileText, Shield, Radio, TrendingUp, TrendingDown,
-  AlertTriangle, ChevronRight, Upload, Plus, RefreshCw,
+  FileText, Shield, Radio,
+  AlertTriangle, ChevronRight, Upload, Plus, RefreshCw, Lock, Zap,
 } from "lucide-react";
 import { readinessApi, documentsApi } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { ScoreRing, ScoreBar, ScoreBadge } from "@/components/shared/score-display";
-import { SeverityBadge, DocStatusBadge } from "@/components/shared/badges";
-import { formatDate, timeAgo } from "@/lib/utils";
+import { DocStatusBadge } from "@/components/shared/badges";
+import { timeAgo } from "@/lib/utils";
 
 interface ReadinessDashboard {
   company_score: number;
@@ -19,6 +19,8 @@ interface ReadinessDashboard {
   total_documents: number;
   top_gaps: { missing_assessments: any[]; poor_scores: any[] };
   gap_count: number;
+  data_integrity_holds: number;
+  enforcement_matches_total: number;
 }
 
 interface DocSummary {
@@ -80,6 +82,24 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* Data Integrity Hold Banner */}
+      {(readiness?.data_integrity_holds ?? 0) > 0 && (
+        <div className="bg-red-50 border border-red-300 rounded-lg px-4 py-3 flex items-start gap-3">
+          <Lock className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-red-800">
+              {readiness!.data_integrity_holds} Data Integrity Hold{readiness!.data_integrity_holds > 1 ? "s" : ""} Active
+            </p>
+            <p className="text-xs text-red-700 mt-0.5">
+              Documents with critical data integrity findings have capped scores. Review findings and resolve to lift holds.
+            </p>
+          </div>
+          <Link href="/readiness" className="ml-auto text-xs text-red-700 hover:underline flex-shrink-0">
+            View gaps →
+          </Link>
+        </div>
+      )}
+
       {/* KPI Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Clyira Score */}
@@ -106,7 +126,36 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        {/* Gap Count */}
+        {/* Data Integrity Holds */}
+        <div className={`bg-card border rounded-xl p-5 ${(readiness?.data_integrity_holds ?? 0) > 0 ? "border-red-200 bg-red-50/30" : ""}`}>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">DI Holds</p>
+            <Lock className={`w-4 h-4 ${(readiness?.data_integrity_holds ?? 0) > 0 ? "text-red-500" : "text-muted-foreground"}`} />
+          </div>
+          <p className={`text-2xl font-bold tabular-nums ${(readiness?.data_integrity_holds ?? 0) > 0 ? "text-red-600" : ""}`}>
+            {readiness?.data_integrity_holds ?? "—"}
+          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {(readiness?.data_integrity_holds ?? 0) > 0 ? "Score caps applied" : "No active holds"}
+          </p>
+        </div>
+
+        {/* Enforcement Matches */}
+        <div className={`bg-card border rounded-xl p-5 ${(readiness?.enforcement_matches_total ?? 0) > 0 ? "border-amber-200 bg-amber-50/30" : ""}`}>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Enforcement Hits</p>
+            <Zap className={`w-4 h-4 ${(readiness?.enforcement_matches_total ?? 0) > 0 ? "text-amber-500" : "text-muted-foreground"}`} />
+          </div>
+          <p className={`text-2xl font-bold tabular-nums ${(readiness?.enforcement_matches_total ?? 0) > 0 ? "text-amber-600" : ""}`}>
+            {readiness?.enforcement_matches_total ?? "—"}
+          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">FDA Warning Letter pattern matches</p>
+        </div>
+      </div>
+
+      {/* Gap Count row - secondary */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Compliance Gaps */}
         <div className="bg-card border rounded-xl p-5">
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Compliance Gaps</p>

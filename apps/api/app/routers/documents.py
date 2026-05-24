@@ -71,8 +71,30 @@ async def list_documents(
     result = await db.execute(query)
     documents = result.scalars().all()
 
+    # Batch-fetch latest adjusted_score for each assessed document
+    from app.models.assessment import Assessment
+    from sqlalchemy import desc as sa_desc
+    doc_ids = [d.id for d in documents]
+    adjusted_map: dict[str, float | None] = {}
+    if doc_ids:
+        a_result = await db.execute(
+            select(Assessment.document_id, Assessment.adjusted_score)
+            .where(Assessment.document_id.in_(doc_ids), Assessment.status == "completed")
+            .order_by(sa_desc(Assessment.created_at))
+        )
+        for doc_id, adj in a_result.all():
+            if doc_id not in adjusted_map:
+                adjusted_map[doc_id] = adj
+
+    rows = []
+    for d in documents:
+        row = DocumentOut.model_validate(d).model_dump()
+        adj = adjusted_map.get(d.id)
+        row["adjusted_score"] = adj
+        rows.append(row)
+
     return {
-        "documents": [DocumentOut.model_validate(d).model_dump() for d in documents],
+        "documents": rows,
         "total": total,
         "limit": limit,
         "offset": offset,

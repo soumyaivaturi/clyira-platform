@@ -43,6 +43,8 @@ export const companiesApi = {
   onboard: (data: { sub_sectors: string[]; agencies: string[]; markets: string[]; certifications?: string[] }) =>
     api.post("/companies/onboard", data),
   me: () => api.get("/companies/me"),
+  update: (data: { sub_sectors?: string[]; agencies?: string[]; markets?: string[]; certifications?: string[]; name?: string }) =>
+    api.patch("/companies/me", data),
 };
 
 // ── Documents ─────────────────────────────────────────────────────────────────

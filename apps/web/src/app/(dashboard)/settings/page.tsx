@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { Settings, User, Building2, Bell, Shield, Key } from "lucide-react";
+import { companiesApi } from "@/lib/api";
+import { Settings, User, Building2, Bell, Shield, Key, Save, Loader2, CheckCircle, X } from "lucide-react";
 
 const TABS = [
   { key: "profile", label: "Profile", icon: User },
@@ -11,6 +12,253 @@ const TABS = [
   { key: "security", label: "Security", icon: Shield },
   { key: "api", label: "API Keys", icon: Key },
 ];
+
+const SUB_SECTORS = [
+  "Small Molecule API",
+  "Biologics / mAb",
+  "Cell & Gene Therapy",
+  "Medical Devices",
+  "Combination Products",
+  "Contract Manufacturing (CMO)",
+  "Contract Testing (CRO/CDMO)",
+  "Nutraceuticals / Supplements",
+  "Veterinary Pharma",
+  "Diagnostics",
+];
+
+const AGENCIES = [
+  "FDA (US)",
+  "EMA (EU)",
+  "MHRA (UK)",
+  "Health Canada",
+  "TGA (Australia)",
+  "PMDA (Japan)",
+  "NMPA (China)",
+  "ANVISA (Brazil)",
+  "CDSCO (India)",
+];
+
+const MARKETS = [
+  "United States",
+  "European Union",
+  "United Kingdom",
+  "Canada",
+  "Australia",
+  "Japan",
+  "China",
+  "Brazil",
+  "India",
+  "Rest of World",
+];
+
+const CERTIFICATIONS = ["ISO 13485", "ISO 9001", "GMP", "GDP", "GCP", "GLP", "HACCP", "ISO 15378"];
+
+function TagSelector({
+  label,
+  options,
+  selected,
+  onChange,
+}: {
+  label: string;
+  options: string[];
+  selected: string[];
+  onChange: (v: string[]) => void;
+}) {
+  const toggle = (opt: string) =>
+    onChange(selected.includes(opt) ? selected.filter((s) => s !== opt) : [...selected, opt]);
+
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">{label}</label>
+      <div className="flex flex-wrap gap-2">
+        {options.map((opt) => {
+          const active = selected.includes(opt);
+          return (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => toggle(opt)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                active
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card text-muted-foreground border-border hover:border-primary/50 hover:text-foreground"
+              }`}
+            >
+              {opt}
+            </button>
+          );
+        })}
+      </div>
+      {selected.length === 0 && (
+        <p className="text-[11px] text-destructive mt-1.5">Select at least one option</p>
+      )}
+    </div>
+  );
+}
+
+function CompanyTab() {
+  const [company, setCompany] = useState<{
+    name: string;
+    sub_sectors: string[];
+    agencies: string[];
+    markets: string[];
+    certifications: string[];
+    id: string;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  // Editable state
+  const [name, setName] = useState("");
+  const [subSectors, setSubSectors] = useState<string[]>([]);
+  const [agencies, setAgencies] = useState<string[]>([]);
+  const [markets, setMarkets] = useState<string[]>([]);
+  const [certifications, setCertifications] = useState<string[]>([]);
+
+  useEffect(() => {
+    companiesApi.me().then((res) => {
+      const c = res.data;
+      setCompany(c);
+      setName(c.name);
+      setSubSectors(c.sub_sectors ?? []);
+      setAgencies(c.agencies ?? []);
+      setMarkets(c.markets ?? []);
+      setCertifications(c.certifications ?? []);
+    }).catch(() => setError("Could not load company settings."))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const isDirty =
+    name !== (company?.name ?? "") ||
+    JSON.stringify([...subSectors].sort()) !== JSON.stringify([...(company?.sub_sectors ?? [])].sort()) ||
+    JSON.stringify([...agencies].sort()) !== JSON.stringify([...(company?.agencies ?? [])].sort()) ||
+    JSON.stringify([...markets].sort()) !== JSON.stringify([...(company?.markets ?? [])].sort()) ||
+    JSON.stringify([...certifications].sort()) !== JSON.stringify([...(company?.certifications ?? [])].sort());
+
+  const canSave = isDirty && subSectors.length > 0 && agencies.length > 0 && markets.length > 0 && name.trim();
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await companiesApi.update({
+        name: name.trim(),
+        sub_sectors: subSectors,
+        agencies,
+        markets,
+        certifications,
+      });
+      setCompany(res.data);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? "Save failed. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-card border rounded-xl p-6 space-y-4 animate-pulse">
+        {[1, 2, 3].map((i) => <div key={i} className="h-20 bg-muted rounded-lg" />)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-card border rounded-xl p-6 space-y-5">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-sm">Company Profile</h2>
+          <div className="flex items-center gap-2">
+            {saved && (
+              <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                <CheckCircle className="w-3.5 h-3.5" /> Saved
+              </span>
+            )}
+            <button
+              onClick={handleSave}
+              disabled={!canSave || saving}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              Save Changes
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+            <X className="w-4 h-4 flex-shrink-0" />
+            {error}
+          </div>
+        )}
+
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Company Name</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 pt-1 text-xs text-muted-foreground border-t">
+          <div><span className="font-medium">Company ID</span><br /><span className="font-mono">{company?.id ?? "—"}</span></div>
+        </div>
+      </div>
+
+      <div className="bg-card border rounded-xl p-6 space-y-5">
+        <h2 className="font-semibold text-sm">Regulatory Configuration</h2>
+        <p className="text-xs text-muted-foreground -mt-2">
+          Clyira uses these settings to tailor assessments, enforcement alerts, and inspection simulations.
+        </p>
+
+        <TagSelector
+          label="Sub-Sectors *"
+          options={SUB_SECTORS}
+          selected={subSectors}
+          onChange={setSubSectors}
+        />
+
+        <TagSelector
+          label="Regulatory Agencies *"
+          options={AGENCIES}
+          selected={agencies}
+          onChange={setAgencies}
+        />
+
+        <TagSelector
+          label="Target Markets *"
+          options={MARKETS}
+          selected={markets}
+          onChange={setMarkets}
+        />
+
+        <TagSelector
+          label="Certifications"
+          options={CERTIFICATIONS}
+          selected={certifications}
+          onChange={setCertifications}
+        />
+
+        <div className="pt-2 flex justify-end">
+          <button
+            onClick={handleSave}
+            disabled={!canSave || saving}
+            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Changes
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -48,7 +296,7 @@ export default function SettingsPage() {
               <div className="flex items-center gap-4">
                 <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
                   <span className="text-xl font-bold text-primary">
-                    {user?.full_name?.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2) ?? "?"}
+                    {user?.full_name?.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2) ?? "?"}
                   </span>
                 </div>
                 <div>
@@ -81,20 +329,7 @@ export default function SettingsPage() {
             </div>
           )}
 
-          {tab === "company" && (
-            <div className="bg-card border rounded-xl p-6 space-y-4">
-              <h2 className="font-semibold text-sm">Company Settings</h2>
-              <p className="text-sm text-muted-foreground">
-                Company details are configured during onboarding. Contact your Clyira account manager to update company information.
-              </p>
-              <div className="bg-muted/30 rounded-lg px-4 py-3 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Company ID</span>
-                  <span className="font-mono text-xs">{user?.company_id ?? "—"}</span>
-                </div>
-              </div>
-            </div>
-          )}
+          {tab === "company" && <CompanyTab />}
 
           {tab === "notifications" && (
             <div className="bg-card border rounded-xl p-6 space-y-5">

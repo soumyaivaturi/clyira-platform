@@ -258,6 +258,15 @@ class DocumentService:
             return "ATM"
         elif "deviation" in filename_lower or "deviation report" in text_lower:
             return "Deviation"
+        elif (
+            "lir" in filename_lower
+            or "laboratory incident" in text_lower
+            or "lab incident" in text_lower
+            or "laboratory investigation report" in text_lower
+            or "out-of-specification" in text_lower
+            or "oos investigation" in text_lower
+        ):
+            return "LIR"
         elif "validation" in filename_lower:
             return "Validation"
         else:
