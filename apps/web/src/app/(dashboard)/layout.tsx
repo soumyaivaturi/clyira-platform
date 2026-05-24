@@ -11,6 +11,7 @@ import {
   Bell,
   LogOut,
   ChevronDown,
+  ClipboardList,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -37,6 +38,12 @@ const navigation = [
     href: "/inspections",
     icon: Radio,
     description: "Real-time audit support",
+  },
+  {
+    name: "Audit Trail",
+    href: "/audit",
+    icon: ClipboardList,
+    description: "GxP activity log",
   },
 ];
 
