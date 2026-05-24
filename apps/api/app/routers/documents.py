@@ -46,6 +46,72 @@ class DocumentOut(BaseModel):
         from_attributes = True
 
 
+@router.get("/search", response_model=dict)
+async def search_documents(
+    q: str,
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Full-text search across document titles, numbers, and extracted text.
+    Returns top matches with a short excerpt highlighting the match.
+    """
+    from sqlalchemy import or_, cast, String
+    q_stripped = q.strip()
+    if not q_stripped:
+        return {"results": [], "query": q}
+
+    pattern = f"%{q_stripped}%"
+    result = await db.execute(
+        select(Document)
+        .where(
+            Document.company_id == current_user.company_id,
+            or_(
+                Document.title.ilike(pattern),
+                Document.document_number.ilike(pattern),
+                Document.extracted_text.ilike(pattern),
+            ),
+        )
+        .order_by(Document.created_at.desc())
+        .limit(limit)
+    )
+    documents = result.scalars().all()
+
+    def _excerpt(text: str | None, query: str, window: int = 150) -> str:
+        if not text:
+            return ""
+        idx = text.lower().find(query.lower())
+        if idx == -1:
+            return text[:window]
+        start = max(0, idx - 60)
+        end = min(len(text), idx + window - 60)
+        snippet = text[start:end].replace("\n", " ").strip()
+        if start > 0:
+            snippet = "…" + snippet
+        if end < len(text):
+            snippet = snippet + "…"
+        return snippet
+
+    rows = []
+    for d in documents:
+        in_title = q_stripped.lower() in (d.title or "").lower()
+        in_number = q_stripped.lower() in (d.document_number or "").lower()
+        rows.append({
+            "id": d.id,
+            "title": d.title,
+            "document_number": d.document_number,
+            "document_category": d.document_category,
+            "department_owner": d.department_owner,
+            "status": d.status,
+            "latest_score": d.latest_score,
+            "match_in": "title" if in_title else ("number" if in_number else "content"),
+            "excerpt": _excerpt(d.extracted_text, q_stripped),
+        })
+
+    return {"results": rows, "query": q, "count": len(rows)}
+
+
 @router.get("/", response_model=dict)
 async def list_documents(
     document_category: Optional[str] = None,

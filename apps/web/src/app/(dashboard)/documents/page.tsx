@@ -423,6 +423,18 @@ function CreateModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
   );
 }
 
+interface SearchResult {
+  id: string;
+  title: string;
+  document_number?: string;
+  document_category?: string;
+  department_owner?: string;
+  status: string;
+  latest_score?: number | null;
+  match_in: string;
+  excerpt: string;
+}
+
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function DocumentsPage() {
@@ -430,11 +442,14 @@ export default function DocumentsPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [deptFilter, setDeptFilter] = useState("");
   const [showUpload, setShowUpload] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -454,10 +469,34 @@ export default function DocumentsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const filtered = documents.filter(d =>
-    !search || d.title.toLowerCase().includes(search.toLowerCase()) ||
-    (d.document_category ?? "").toLowerCase().includes(search.toLowerCase())
-  );
+  const handleSearchChange = (value: string) => {
+    setSearch(value);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (!value.trim() || value.trim().length < 3) {
+      setSearchResults(null);
+      return;
+    }
+    searchTimerRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await documentsApi.search(value.trim());
+        setSearchResults(res.data.results ?? []);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 400);
+  };
+
+  const isSearchMode = search.trim().length >= 3;
+  const filtered = isSearchMode
+    ? []
+    : documents.filter(d =>
+        !search ||
+        d.title.toLowerCase().includes(search.toLowerCase()) ||
+        (d.document_category ?? "").toLowerCase().includes(search.toLowerCase())
+      );
 
   return (
     <div className="space-y-5">
@@ -492,87 +531,155 @@ export default function DocumentsPage() {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search documents…"
+          <input value={search} onChange={(e) => handleSearchChange(e.target.value)}
+            placeholder="Search titles, numbers, or document content…"
             className="w-full pl-9 pr-4 py-2 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30" />
+          {searching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 animate-spin text-muted-foreground" />}
         </div>
-        <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}
-          className="px-3 py-2 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30">
-          <option value="">All types</option>
-          {DOC_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}
-          className="px-3 py-2 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30">
-          <option value="">All departments</option>
-          {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
-        </select>
+        {!isSearchMode && (
+          <>
+            <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30">
+              <option value="">All types</option>
+              {DOC_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30">
+              <option value="">All departments</option>
+              {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </>
+        )}
         {(categoryFilter || deptFilter || search) && (
-          <button onClick={() => { setCategoryFilter(""); setDeptFilter(""); setSearch(""); }}
+          <button onClick={() => { setCategoryFilter(""); setDeptFilter(""); setSearch(""); setSearchResults(null); }}
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
             <X className="w-3 h-3" /> Clear
           </button>
         )}
       </div>
 
-      {/* Document Table */}
-      <div className="bg-card border rounded-xl overflow-hidden">
-        {/* Table header */}
-        <div className="grid grid-cols-[1fr_100px_160px_80px_110px_80px] gap-4 px-5 py-3 border-b bg-muted/30">
-          {["Document", "Type", "Department", "Score", "Status", "Uploaded"].map(h => (
-            <span key={h} className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">{h}</span>
-          ))}
-        </div>
-
-        {loading ? (
-          <LoadingRows count={5} cols={6} />
-        ) : filtered.length === 0 ? (
-          <EmptyState
-            icon={FileText}
-            title={search || categoryFilter || deptFilter ? "No documents match your filters" : "No documents yet"}
-            description={search || categoryFilter || deptFilter ? "Try adjusting your search or filters." : "Upload a document or use AI Create to get started."}
-            action={!search && !categoryFilter && !deptFilter ? (
-              <button onClick={() => setShowUpload(true)} className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium">
-                <Upload className="w-4 h-4" /> Upload Document
-              </button>
-            ) : undefined}
-          />
-        ) : (
-          <div className="divide-y">
-            {filtered.map((doc) => (
-              <Link key={doc.id} href={`/documents/${doc.id}`}
-                className="grid grid-cols-[1fr_100px_160px_80px_110px_80px] gap-4 px-5 py-3.5 items-center hover:bg-muted/30 transition-colors cursor-pointer">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-8 h-8 rounded-lg bg-clyira-50 flex items-center justify-center flex-shrink-0">
+      {/* Full-text Search Results */}
+      {isSearchMode && (
+        <div className="bg-card border rounded-xl overflow-hidden">
+          <div className="px-5 py-3 border-b bg-muted/30 flex items-center justify-between">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Search Results
+            </span>
+            {searchResults && (
+              <span className="text-xs text-muted-foreground">{searchResults.length} match{searchResults.length !== 1 ? "es" : ""} for "{search}"</span>
+            )}
+          </div>
+          {searching ? (
+            <div className="flex items-center gap-2 px-5 py-8 text-sm text-muted-foreground justify-center">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Searching document content…
+            </div>
+          ) : !searchResults || searchResults.length === 0 ? (
+            <div className="px-5 py-8 text-center text-sm text-muted-foreground">
+              No documents found for "{search}"
+            </div>
+          ) : (
+            <div className="divide-y">
+              {searchResults.map((r) => (
+                <Link key={r.id} href={`/documents/${r.id}`}
+                  className="flex items-start gap-4 px-5 py-4 hover:bg-muted/30 transition-colors">
+                  <div className="w-8 h-8 rounded-lg bg-clyira-50 flex items-center justify-center flex-shrink-0 mt-0.5">
                     <FileText className="w-4 h-4 text-clyira-600" />
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{doc.title}</p>
-                    {doc.document_number && (
-                      <p className="text-[10px] font-mono text-muted-foreground">{doc.document_number} · v{doc.version ?? "1.0"}</p>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <p className="text-sm font-medium">{r.title}</p>
+                      {r.document_category && (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 bg-primary/10 text-primary rounded">
+                          {r.document_category}
+                        </span>
+                      )}
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                        r.match_in === "title" ? "bg-amber-50 text-amber-700 border-amber-200" :
+                        r.match_in === "number" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                        "bg-muted text-muted-foreground border-border"
+                      }`}>
+                        {r.match_in === "content" ? "in content" : `in ${r.match_in}`}
+                      </span>
+                    </div>
+                    {r.excerpt && r.match_in === "content" && (
+                      <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">{r.excerpt}</p>
                     )}
+                    <div className="flex items-center gap-3 mt-1.5">
+                      {r.department_owner && <span className="text-[10px] text-muted-foreground">{r.department_owner}</span>}
+                      <ScoreBadge score={r.latest_score} />
+                    </div>
                   </div>
-                </div>
-                <span className="text-xs font-medium text-muted-foreground">{doc.document_category ?? "—"}</span>
-                <span className="text-xs text-muted-foreground truncate">{doc.department_owner ?? "Unassigned"}</span>
-                <div className="flex flex-col gap-0.5">
-                  <ScoreBadge score={doc.adjusted_score ?? doc.latest_score} />
-                  {doc.adjusted_score != null && doc.latest_score != null &&
-                   Math.abs(doc.adjusted_score - doc.latest_score) > 0.1 && (
-                    <span className="flex items-center gap-0.5 text-[9px] text-amber-600 font-medium">
-                      <TrendingDown className="w-2.5 h-2.5" />
-                      was {doc.latest_score.toFixed(1)}
-                    </span>
-                  )}
-                </div>
-                <DocStatusBadge status={doc.status} />
-                <span className="text-xs text-muted-foreground">{formatDate(doc.created_at)}</span>
-              </Link>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-1" />
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Document Table (non-search mode) */}
+      {!isSearchMode && (
+        <div className="bg-card border rounded-xl overflow-hidden">
+          {/* Table header */}
+          <div className="grid grid-cols-[1fr_100px_160px_80px_110px_80px] gap-4 px-5 py-3 border-b bg-muted/30">
+            {["Document", "Type", "Department", "Score", "Status", "Uploaded"].map(h => (
+              <span key={h} className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">{h}</span>
             ))}
           </div>
-        )}
-      </div>
+
+          {loading ? (
+            <LoadingRows count={5} cols={6} />
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              icon={FileText}
+              title={search || categoryFilter || deptFilter ? "No documents match your filters" : "No documents yet"}
+              description={search || categoryFilter || deptFilter ? "Try adjusting your search or filters." : "Upload a document or use AI Create to get started."}
+              action={!search && !categoryFilter && !deptFilter ? (
+                <button onClick={() => setShowUpload(true)} className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium">
+                  <Upload className="w-4 h-4" /> Upload Document
+                </button>
+              ) : undefined}
+            />
+          ) : (
+            <div className="divide-y">
+              {filtered.map((doc) => (
+                <Link key={doc.id} href={`/documents/${doc.id}`}
+                  className="grid grid-cols-[1fr_100px_160px_80px_110px_80px] gap-4 px-5 py-3.5 items-center hover:bg-muted/30 transition-colors cursor-pointer">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-clyira-50 flex items-center justify-center flex-shrink-0">
+                      <FileText className="w-4 h-4 text-clyira-600" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{doc.title}</p>
+                      {doc.document_number && (
+                        <p className="text-[10px] font-mono text-muted-foreground">{doc.document_number} · v{doc.version ?? "1.0"}</p>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-xs font-medium text-muted-foreground">{doc.document_category ?? "—"}</span>
+                  <span className="text-xs text-muted-foreground truncate">{doc.department_owner ?? "Unassigned"}</span>
+                  <div className="flex flex-col gap-0.5">
+                    <ScoreBadge score={doc.adjusted_score ?? doc.latest_score} />
+                    {doc.adjusted_score != null && doc.latest_score != null &&
+                     Math.abs(doc.adjusted_score - doc.latest_score) > 0.1 && (
+                      <span className="flex items-center gap-0.5 text-[9px] text-amber-600 font-medium">
+                        <TrendingDown className="w-2.5 h-2.5" />
+                        was {doc.latest_score.toFixed(1)}
+                      </span>
+                    )}
+                  </div>
+                  <DocStatusBadge status={doc.status} />
+                  <span className="text-xs text-muted-foreground">{formatDate(doc.created_at)}</span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Footer count */}
-      {!loading && filtered.length > 0 && (
+      {!loading && !isSearchMode && filtered.length > 0 && (
         <p className="text-xs text-muted-foreground px-1">
           Showing {filtered.length} of {documents.length} document{documents.length !== 1 ? "s" : ""}
         </p>

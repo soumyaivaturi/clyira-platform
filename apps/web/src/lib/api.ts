@@ -49,6 +49,7 @@ export const companiesApi = {
 
 // ── Documents ─────────────────────────────────────────────────────────────────
 export const documentsApi = {
+  search: (q: string) => api.get("/documents/search", { params: { q } }),
   list: (params?: { document_category?: string; department_owner?: string; status_filter?: string }) =>
     api.get("/documents", { params }),
   get: (id: string) => api.get(`/documents/${id}`),
