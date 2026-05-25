@@ -8,6 +8,7 @@ from app.models.readiness import ReadinessScore
 from app.models.inspection import Inspection, InspectionRequest, InspectionLog
 from app.models.audit import AuditLog
 from app.models.api_key import APIKey
+from app.models.password_history import PasswordHistory
 
 __all__ = [
     "Base",
@@ -25,4 +26,5 @@ __all__ = [
     "InspectionLog",
     "AuditLog",
     "APIKey",
+    "PasswordHistory",
 ]

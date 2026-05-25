@@ -2,18 +2,22 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Shield, Eye, EyeOff, Loader2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Shield, Eye, EyeOff, Loader2, Clock } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { login, isLoading } = useAuth();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [locked, setLocked] = useState(false);
+
+  const idleTimeout = searchParams.get("reason") === "idle";
 
   useEffect(() => {
     fetch("/api/v1/auth/me").catch(() => {});
@@ -22,12 +26,17 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setLocked(false);
     try {
       await login(email, password);
       window.location.href = "/dashboard";
     } catch (err: any) {
-      const msg = err?.response?.data?.detail ?? "Invalid email or password";
-      setError(msg);
+      if (err?.response?.status === 423) {
+        setLocked(true);
+        setError(err.response.data.detail);
+      } else {
+        setError(err?.response?.data?.detail ?? "Invalid email or password");
+      }
     }
   };
 
@@ -43,6 +52,13 @@ export default function LoginPage() {
         </div>
 
         <div className="bg-card border rounded-xl p-8 shadow-sm">
+          {idleTimeout && (
+            <div className="mb-4 flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+              <Clock className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <span>You were signed out after 30 minutes of inactivity.</span>
+            </div>
+          )}
+
           <div className="mb-6">
             <h1 className="text-xl font-semibold">Sign in to your account</h1>
             <p className="text-sm text-muted-foreground mt-1">
@@ -98,14 +114,19 @@ export default function LoginPage() {
             </div>
 
             {error && (
-              <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+              <div className={`text-sm rounded-lg px-3 py-2 border ${
+                locked
+                  ? "text-amber-800 bg-amber-50 border-amber-200"
+                  : "text-destructive bg-destructive/10 border-destructive/20"
+              }`}>
+                {locked && <p className="font-medium mb-0.5">Account locked</p>}
                 {error}
               </div>
             )}
 
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || locked}
               className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground py-2.5 rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
             >
               {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}

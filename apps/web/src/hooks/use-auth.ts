@@ -7,8 +7,8 @@ import { authApi } from "@/lib/api";
 function _persistToken(token: string) {
   if (typeof window === "undefined") return;
   localStorage.setItem("clyira_token", token);
-  // Also set a cookie so Next.js middleware can read it server-side
-  document.cookie = `clyira_token=${token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
+  // Cookie for Next.js middleware — 8h to match JWT expiry
+  document.cookie = `clyira_token=${token}; path=/; max-age=${60 * 60 * 8}; SameSite=Lax`;
 }
 
 function _clearToken() {
@@ -25,6 +25,8 @@ interface AuthUser {
   company_id: string;
   department?: string;
   onboarding_complete: boolean;
+  terms_accepted_at: string | null;
+  force_password_change: boolean;
 }
 
 interface AuthState {
@@ -35,6 +37,7 @@ interface AuthState {
   register: (data: { email: string; password: string; full_name: string; company_name: string }) => Promise<void>;
   logout: () => void;
   refreshMe: () => Promise<void>;
+  acceptTerms: () => Promise<void>;
 }
 
 export const useAuth = create<AuthState>()(
@@ -82,6 +85,11 @@ export const useAuth = create<AuthState>()(
         } catch {
           get().logout();
         }
+      },
+
+      acceptTerms: async () => {
+        await authApi.acceptTerms();
+        await get().refreshMe();
       },
     }),
     {

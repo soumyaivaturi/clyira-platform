@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -14,6 +15,9 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { NotificationBell } from "@/components/shared/notification-bell";
+import { TermsModal } from "@/components/shared/terms-modal";
+
+const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes — Part 11 §11.300
 
 const navigation = [
   {
@@ -61,12 +65,33 @@ export default function DashboardLayout({
     router.push("/auth/login");
   };
 
+  // 30-minute idle auto-logout (Part 11 §11.300)
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        logout();
+        router.push("/auth/login?reason=idle");
+      }, IDLE_TIMEOUT_MS);
+    };
+    const events = ["mousedown", "keydown", "touchstart", "scroll", "pointermove"];
+    events.forEach((e) => window.addEventListener(e, reset, { passive: true }));
+    reset();
+    return () => {
+      clearTimeout(timer);
+      events.forEach((e) => window.removeEventListener(e, reset));
+    };
+  }, [logout, router]);
+
   const initials = user?.full_name
     ? user.full_name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
     : "?";
 
   return (
     <div className="flex h-screen">
+      {/* Terms modal — shown on first login until user accepts (Part 11 §11.10(j)) */}
+      {user && !user.terms_accepted_at && <TermsModal />}
       {/* Sidebar */}
       <aside className="w-64 border-r bg-card flex flex-col">
         {/* Logo */}

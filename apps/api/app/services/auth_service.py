@@ -16,7 +16,8 @@ from app.models.company import Company
 from app.models.user import User
 from app.models.base import generate_uuid
 
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # 8 hours — Part 11 §11.300 session control
+PASSWORD_HISTORY_DEPTH = 5
 ALGORITHM = "HS256"
 
 
@@ -70,6 +71,51 @@ async def get_user_by_id(db: AsyncSession, user_id: str) -> Optional[User]:
         select(User).options(selectinload(User.company)).where(User.id == user_id)
     )
     return result.scalar_one_or_none()
+
+
+def validate_password_strength(password: str) -> Optional[str]:
+    """Returns an error message if the password is too weak, None if it passes. Part 11 §11.300."""
+    if len(password) < 8:
+        return "Password must be at least 8 characters"
+    if len(password.encode()) > 72:
+        return "Password must be 72 characters or fewer"
+    if not re.search(r'[A-Z]', password):
+        return "Password must contain at least one uppercase letter"
+    if not re.search(r'[a-z]', password):
+        return "Password must contain at least one lowercase letter"
+    if not re.search(r'\d', password):
+        return "Password must contain at least one digit"
+    return None
+
+
+async def check_password_history(db: AsyncSession, user_id: str, new_password: str) -> bool:
+    """Returns True if new_password is NOT in the last PASSWORD_HISTORY_DEPTH hashes (safe to use)."""
+    from app.models.password_history import PasswordHistory
+    result = await db.execute(
+        select(PasswordHistory)
+        .where(PasswordHistory.user_id == user_id)
+        .order_by(PasswordHistory.created_at.desc())
+        .limit(PASSWORD_HISTORY_DEPTH)
+    )
+    for entry in result.scalars().all():
+        if verify_password(new_password, entry.password_hash):
+            return False
+    return True
+
+
+async def save_password_history(db: AsyncSession, user_id: str, current_hash: str) -> None:
+    """Store the current password hash before it is replaced, pruning history beyond the depth limit."""
+    from app.models.password_history import PasswordHistory
+    db.add(PasswordHistory(id=generate_uuid(), user_id=user_id, password_hash=current_hash))
+    # Prune old entries beyond the depth limit
+    result = await db.execute(
+        select(PasswordHistory)
+        .where(PasswordHistory.user_id == user_id)
+        .order_by(PasswordHistory.created_at.desc())
+        .offset(PASSWORD_HISTORY_DEPTH)
+    )
+    for old in result.scalars().all():
+        await db.delete(old)
 
 
 async def authenticate_user(db: AsyncSession, email: str, password: str) -> Optional[User]:

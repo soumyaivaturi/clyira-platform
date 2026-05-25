@@ -38,6 +38,7 @@ export const authApi = {
   me: () => api.get("/auth/me"),
   changePassword: (current_password: string, new_password: string) =>
     api.patch("/auth/password", { current_password, new_password }),
+  acceptTerms: () => api.post("/auth/accept-terms"),
 };
 
 // ── Companies ─────────────────────────────────────────────────────────────────
