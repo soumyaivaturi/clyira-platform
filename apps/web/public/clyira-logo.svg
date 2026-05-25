@@ -1,22 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
-  <!-- Outer rounded frame — open at top-right where the node sits -->
-  <!-- Bottom-left-top arc: from top-right gap, around the left, to bottom-right -->
-  <path
-    d="M 70 8 Q 8 8 8 30 L 8 70 Q 8 92 30 92 L 70 92"
-    stroke="#7654c9" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"
-  />
-  <!-- Right side partial: from bottom up to where gap begins -->
-  <path
-    d="M 92 62 L 92 30 Q 92 8 70 8"
-    stroke="#7654c9" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"
-  />
-  <!-- Inner C -->
-  <path
-    d="M 67 34 A 24 24 0 1 0 67 66"
-    stroke="#7654c9" stroke-width="9" stroke-linecap="round"
-  />
-  <!-- Node connector line -->
-  <line x1="92" y1="62" x2="82" y2="66" stroke="#7654c9" stroke-width="7" stroke-linecap="round"/>
-  <!-- Node dot -->
-  <circle cx="88" cy="68" r="6" fill="#7654c9"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Filled purple background -->
+  <rect x="4" y="4" width="92" height="92" rx="22" fill="#7654c9"/>
+  <!-- White C arc -->
+  <path d="M 67 31 A 23 23 0 1 0 67 69" stroke="white" stroke-width="11" fill="none" stroke-linecap="round"/>
+  <!-- White connector line from C tip to dot -->
+  <line x1="67" y1="31" x2="77" y2="22" stroke="white" stroke-width="9" stroke-linecap="round"/>
+  <!-- White node dot -->
+  <circle cx="82" cy="18" r="6.5" fill="white"/>
 </svg>
