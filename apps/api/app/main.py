@@ -404,6 +404,126 @@ async def seed_enforcement_corpus(
     return {"status": "seeding_started", "source": source, "years": years}
 
 
+# Admin: seed enforcement_records from bundled observations.jsonl (no external calls)
+@app.post("/admin/seed-from-corpus")
+async def seed_from_corpus(request: Request, background_tasks: BackgroundTasks):
+    """
+    Populate enforcement_records from the bundled rag_index/observations.jsonl.
+    Fast, no external HTTP — uses the 2,919 FDA Warning Letter observations
+    already bundled in the Docker image.
+    """
+    import os
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    async def _do_seed():
+        import json, re
+        from pathlib import Path
+        from sqlalchemy import select
+        from app.core.database import AsyncSessionLocal
+        from app.models.regulatory import EnforcementRecord
+        from app.models.base import generate_uuid
+
+        JSONL_PATHS = [
+            Path(__file__).parent.parent / "rag_index" / "observations.jsonl",
+            Path.home() / "Documents" / "Clyira-Corpus" / "rag_index" / "observations.jsonl",
+        ]
+        jsonl_path = next((p for p in JSONL_PATHS if p.exists()), None)
+        if not jsonl_path:
+            print("seed-from-corpus: observations.jsonl not found")
+            return
+
+        CATEGORY_KW = {
+            "data_integrity": ["data integrity", "alcoa", "falsif", "fabricat", "audit trail", "electronic record", "chromatogram", "raw data", "21 cfr 11"],
+            "lab_data": ["out-of-specification", "oos", "oot", "laboratory", "analytical method", "method validation", "retest", "hplc", "system suitability"],
+            "capa": ["corrective action", "preventive action", "capa", "investigation", "root cause", "effectiveness check"],
+            "process_validation": ["process validation", "validation protocol", "cpv", "ipc", "in-process control"],
+            "equipment_qualification": ["equipment qualification", "calibration", "preventive maintenance"],
+            "training": ["training", "qualification of personnel", "competency", "gmp training"],
+            "environmental_monitoring": ["environmental monitoring", "bioburden", "endotoxin", "microbial", "contamination"],
+            "sterility_assurance": ["sterility", "aseptic", "sterilization", "media fill"],
+            "documentation": ["batch record", "logbook", "record keeping", "written procedure", "sop ", "standard operating"],
+            "change_control": ["change control", "change management", "post-approval change"],
+            "stability": ["stability", "shelf life", "expiry", "degradation"],
+        }
+        CFR_PATTERN = re.compile(r'21\s+CFR\s+[\w.]+(?:\([a-z]\))?', re.IGNORECASE)
+
+        def _cats(text: str):
+            tl = text.lower()
+            return [c for c, kws in CATEGORY_KW.items() if any(k in tl for k in kws)]
+
+        def _cfr(text: str):
+            return list(dict.fromkeys(CFR_PATTERN.findall(text)))
+
+        observations = []
+        with open(jsonl_path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        observations.append(json.loads(line))
+                    except Exception:
+                        pass
+
+        print(f"seed-from-corpus: loaded {len(observations)} observations from {jsonl_path}")
+
+        inserted = 0
+        skipped = 0
+        async with AsyncSessionLocal() as db:
+            for obs in observations:
+                ref = obs.get("id", "")
+                if ref:
+                    existing = await db.execute(
+                        select(EnforcementRecord).where(EnforcementRecord.reference_number == ref)
+                    )
+                    if existing.scalar_one_or_none():
+                        skipped += 1
+                        continue
+
+                text_body = obs.get("text", "")
+                subject = obs.get("subject", "")
+                company = obs.get("company", "Unknown")
+                year = str(obs.get("year", ""))
+                cfr_from_jsonl = obs.get("cfr_citations", [])
+                cfr_extracted = _cfr(text_body)
+                all_cfr = list(dict.fromkeys(cfr_from_jsonl + cfr_extracted))
+
+                record = EnforcementRecord(
+                    id=generate_uuid(),
+                    agency="FDA",
+                    record_type="warning_letter",
+                    reference_number=ref[:100] if ref else None,
+                    issue_date=f"{year}-01-01" if year.isdigit() else None,
+                    company_cited=company[:255],
+                    sub_sectors=[],
+                    observation_categories=_cats(text_body + " " + subject),
+                    cfr_citations=all_cfr[:20],
+                    title=(subject or text_body[:200])[:500],
+                    summary=text_body[:1000],
+                    observations=[text_body[:2000]] if text_body else [],
+                    outcome="warning_letter_issued",
+                    pattern_tags=[],
+                    severity_indicator="high",
+                    trending=False,
+                    trend_velocity=None,
+                )
+                db.add(record)
+                inserted += 1
+
+                if inserted % 200 == 0:
+                    await db.commit()
+                    print(f"seed-from-corpus: committed {inserted} records…")
+
+            await db.commit()
+
+        print(f"seed-from-corpus: done — inserted={inserted}, skipped={skipped}")
+
+    background_tasks.add_task(_do_seed)
+    return {"status": "seeding_started", "source": "observations.jsonl", "message": "Check server logs for progress."}
+
+
 # Debug: test seeder connectivity + first-pass synchronously (admin only)
 @app.get("/debug/seed-test")
 async def debug_seed_test(request: Request):
