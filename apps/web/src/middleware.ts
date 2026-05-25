@@ -7,7 +7,7 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // "/" must be exact-matched — using startsWith("/") would match every path
-  const isPublic = pathname === "/" || PUBLIC_AUTH_PREFIXES.some((p) => pathname.startsWith(p));
+  const isPublic = pathname === "/" || pathname === "/preview" || PUBLIC_AUTH_PREFIXES.some((p) => pathname.startsWith(p));
   const token = request.cookies.get("clyira_token")?.value;
 
   // Unauthenticated → redirect to login (for protected routes)
