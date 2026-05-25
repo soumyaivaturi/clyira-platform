@@ -1,20 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
-  <!-- Outer rounded frame — open at bottom-right corner -->
+  <!-- Outer rounded frame — open at top-right where the node sits -->
+  <!-- Bottom-left-top arc: from top-right gap, around the left, to bottom-right -->
   <path
-    d="M 68 10 Q 90 10 90 32 L 90 56"
-    stroke="#7654c9" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"
+    d="M 70 8 Q 8 8 8 30 L 8 70 Q 8 92 30 92 L 70 92"
+    stroke="#7654c9" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"
   />
+  <!-- Right side partial: from bottom up to where gap begins -->
   <path
-    d="M 32 10 Q 10 10 10 32 L 10 68 Q 10 90 32 90 L 68 90"
-    stroke="#7654c9" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"
+    d="M 92 62 L 92 30 Q 92 8 70 8"
+    stroke="#7654c9" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"
   />
-  <!-- Inner C shape -->
+  <!-- Inner C -->
   <path
-    d="M 68 36 A 26 26 0 1 0 68 64"
-    stroke="#7654c9" stroke-width="6.5" stroke-linecap="round"
+    d="M 67 34 A 24 24 0 1 0 67 66"
+    stroke="#7654c9" stroke-width="9" stroke-linecap="round"
   />
-  <!-- Connector line from outer frame to dot -->
-  <line x1="82" y1="44" x2="74" y2="36" stroke="#7654c9" stroke-width="5" stroke-linecap="round"/>
+  <!-- Node connector line -->
+  <line x1="92" y1="62" x2="82" y2="66" stroke="#7654c9" stroke-width="7" stroke-linecap="round"/>
   <!-- Node dot -->
-  <circle cx="86" cy="40" r="5.5" fill="#7654c9"/>
+  <circle cx="88" cy="68" r="6" fill="#7654c9"/>
 </svg>
