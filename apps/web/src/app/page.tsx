@@ -154,7 +154,7 @@ export default function LandingPage() {
           <Link href="/" className="flex items-center gap-2.5">
             <img src="/clyira-logo.png" alt="Clyira" className="w-10 h-10 object-contain" />
             <span className="font-bold text-lg tracking-tight text-gray-900">
-              CLYIRA<span style={{ color: "#9333ea" }}>.</span>AI
+              CLYIRA<span style={{ color: "#7654c9" }}>.</span>AI
             </span>
           </Link>
 
@@ -187,7 +187,7 @@ export default function LandingPage() {
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           <div
             className="absolute -top-64 -right-64 w-[700px] h-[700px] rounded-full opacity-[0.06]"
-            style={{ background: "radial-gradient(circle, #9333ea, transparent 70%)" }}
+            style={{ background: "radial-gradient(circle, #7654c9, transparent 70%)" }}
           />
           <div
             className="absolute top-40 -left-32 w-[400px] h-[400px] rounded-full opacity-[0.04]"
@@ -659,7 +659,7 @@ export default function LandingPage() {
               <Link href="/" className="flex items-center gap-2.5 mb-4">
                 <img src="/clyira-logo.png" alt="Clyira" className="w-10 h-10 object-contain" />
                 <span className="font-bold text-white tracking-tight">
-                  CLYIRA<span style={{ color: "#9333ea" }}>.</span>AI
+                  CLYIRA<span style={{ color: "#7654c9" }}>.</span>AI
                 </span>
               </Link>
               <p className="text-sm text-gray-500 leading-relaxed">

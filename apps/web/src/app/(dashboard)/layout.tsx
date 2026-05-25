@@ -78,7 +78,7 @@ export default function DashboardLayout({
               className="w-10 h-10 object-contain"
             />
             <span className="font-bold text-lg tracking-tight">
-              CLYIRA<span style={{ color: "#9333ea" }}>.</span>AI
+              CLYIRA<span style={{ color: "#7654c9" }}>.</span>AI
             </span>
           </Link>
         </div>
