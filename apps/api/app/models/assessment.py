@@ -16,6 +16,7 @@ class Assessment(Base, TimestampMixin):
 
     # Status
     status = Column(String(50), default="queued")  # queued, running, completed, failed
+    current_level = Column(String(20), nullable=True)  # e.g. "L1", "L3", "L9", "validating", "scoring"
     started_at = Column(String)
     completed_at = Column(String)
 

@@ -76,6 +76,7 @@ class AssessmentOut(BaseModel):
     id: str
     document_id: str
     status: str
+    current_level: Optional[str] = None
     clyira_score: Optional[float] = None
     adjusted_score: Optional[float] = None
     score_band: Optional[str] = None

@@ -78,15 +78,27 @@ class AssessmentService:
             return
 
         assessment.status = "running"
+        assessment.current_level = None
         await self.db.commit()
 
         context = await self._build_context(document, company, assessment, include_references, regulatory_frameworks)
 
+        _db = self.db
+        _assessment = assessment
+
+        async def _progress(level: str) -> None:
+            _assessment.current_level = level
+            try:
+                await _db.commit()
+            except Exception:
+                pass
+
         try:
-            results = await self.orchestrator.run_assessment(context)
+            results = await self.orchestrator.run_assessment(context, progress_callback=_progress)
             await self._store_findings(assessment.id, results["findings"])
 
             assessment.status = "completed"
+            assessment.current_level = None
             assessment.clyira_score = results["score"]
             assessment.adjusted_score = results["score"]  # starts equal; updates as findings are resolved
             assessment.score_band = results["score_band"]
@@ -138,6 +150,7 @@ class AssessmentService:
             logger.error(f"Background assessment {assessment_id} failed: {e}\n{tb}")
             print(f"  ASSESSMENT FAILED [{assessment_id}]: {type(e).__name__}: {e}\n{tb}")
             assessment.status = "failed"
+            assessment.current_level = None
             assessment.error_detail = f"{type(e).__name__}: {e}\n\n{tb}"
             await self.db.commit()
 

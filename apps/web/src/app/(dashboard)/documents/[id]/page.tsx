@@ -36,8 +36,8 @@ interface Finding {
 }
 
 interface Assessment {
-  id: string; document_id: string; status: string; clyira_score?: number;
-  adjusted_score?: number; score_band?: string;
+  id: string; document_id: string; status: string; current_level?: string;
+  clyira_score?: number; adjusted_score?: number; score_band?: string;
   findings_critical: number; findings_high: number;
   findings_medium: number; findings_low: number; findings_info: number;
   enforcement_matches: number; processing_time_seconds?: number;
@@ -52,6 +52,14 @@ interface HistoryEntry {
 }
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
+
+const LEVEL_PROGRESS_LABELS: Record<string, string> = {
+  L1: "Structural Integrity", L2: "Document Control", L3: "Quality Logic",
+  L4: "Data Integrity", L5: "Data Intelligence", L6: "Cross-Reference",
+  L7: "Lifecycle Compliance", L8: "Regulatory Intelligence", L9: "Enforcement",
+  L10: "Longitudinal", L11: "Submission Readiness",
+  validating: "Validating findings", scoring: "Calculating score",
+};
 
 // ── Regulatory Framework Data ──────────────────────────────────────────────────
 
@@ -992,7 +1000,9 @@ export default function DocumentDetailPage() {
           title={`Assess against ${selectedFrameworks.length} frameworks`}>
           {assessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
           {assessing
-            ? (assessment?.status === "queued" ? "Queued…" : "Assessing…")
+            ? assessment?.current_level
+              ? `${assessment.current_level}: ${LEVEL_PROGRESS_LABELS[assessment.current_level] ?? "Processing"}…`
+              : (assessment?.status === "queued" ? "Queued…" : "Assessing…")
             : assessment ? "Re-assess" : "Run Assessment"}
         </button>
         </div>

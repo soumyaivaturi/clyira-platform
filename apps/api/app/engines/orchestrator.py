@@ -42,10 +42,17 @@ class AssessmentOrchestrator:
         self.scoring_engine = ScoringEngine()
         self.validator = AntiHallucinationGate()
 
-    async def run_assessment(self, context: AssessmentContext) -> dict:
-        """Execute the full assessment pipeline"""
+    async def run_assessment(self, context: AssessmentContext, progress_callback=None) -> dict:
+        """Execute the full assessment pipeline. progress_callback(level: str) is called before each phase."""
         start_time = time.time()
         all_findings: list[FindingResult] = []
+
+        async def _progress(level: str):
+            if progress_callback:
+                try:
+                    await progress_callback(level)
+                except Exception:
+                    pass
 
         # Resolve DTAP
         if not context.dtap_profile:
@@ -70,6 +77,7 @@ class AssessmentOrchestrator:
         # Phase 1: Rule Engine (deterministic checks)
         rule_levels = profile.get_rule_levels()
         if rule_levels:
+            await _progress(rule_levels[0])
             logger.info(f"Phase 1: Rule engine for levels {rule_levels}")
             rule_findings = await self.rule_engine.run(context, rule_levels)
             all_findings.extend(rule_findings)
@@ -77,12 +85,14 @@ class AssessmentOrchestrator:
         # Phase 2: LLM Engine (semantic analysis with RAG)
         llm_levels = profile.get_llm_levels()
         if llm_levels:
+            await _progress(llm_levels[0])
             logger.info(f"Phase 2: LLM engine for levels {llm_levels}")
             llm_findings = await self.llm_engine.run(context, llm_levels)
             all_findings.extend(llm_findings)
 
         # Phase 3: Enforcement Matching (L9)
         if "L9" in profile.get_enabled_levels():
+            await _progress("L9")
             logger.info("Phase 3: Enforcement matching")
             enforcement_findings = await self.enforcement_engine.run(
                 context, all_findings
@@ -96,6 +106,7 @@ class AssessmentOrchestrator:
 
         # Phase 3b: Longitudinal analysis (L10) — runs after enforcement so it can see all findings
         if context.historical_assessments:
+            await _progress("L10")
             logger.info(f"Phase 3b: Longitudinal analysis ({len(context.historical_assessments)} prior assessments)")
             # Elevate severity of recurring unresolved findings
             all_findings = self.longitudinal_engine.elevate_recurring(all_findings, context)
@@ -104,10 +115,12 @@ class AssessmentOrchestrator:
             all_findings.extend(l10_findings)
 
         # Phase 4: Anti-hallucination validation
+        await _progress("validating")
         logger.info("Phase 4: Anti-hallucination gate")
         validated_findings = await self.validator.validate(all_findings, context)
 
         # Phase 5: Scoring
+        await _progress("scoring")
         logger.info("Phase 5: Calculating score")
         from app.engines.scoring import ScoringEngine
         score_result = self.scoring_engine.calculate(validated_findings, profile)
