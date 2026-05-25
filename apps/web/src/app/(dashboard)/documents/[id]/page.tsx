@@ -57,7 +57,7 @@ const LEVEL_PROGRESS_LABELS: Record<string, string> = {
   L1: "Structural Integrity", L2: "Document Control", L3: "Quality Logic",
   L4: "Data Integrity", L5: "Data Intelligence", L6: "Cross-Reference",
   L7: "Lifecycle Compliance", L8: "Regulatory Intelligence", L9: "Enforcement",
-  L10: "Longitudinal", L11: "Submission Readiness",
+  L10: "Longitudinal", L11: "Inspection Readiness",
   validating: "Validating findings", scoring: "Calculating score",
 };
 
