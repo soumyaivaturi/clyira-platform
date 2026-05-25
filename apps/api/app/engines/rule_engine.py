@@ -5028,3 +5028,240 @@ class RuleEngine:
             confidence_score=0.67,
             validated=True,
         )
+
+    # ========== L3: Root Cause Depth (Deviation) ==========
+
+    def _check_l3_root_cause_depth(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Root cause analysis must demonstrate analytical depth — not just label 'human error'."""
+        text_lower = ctx.document_text.lower()
+
+        # Positive indicators of deep RCA
+        deep_rca_patterns = [
+            r'5[\s-]*why', r'five\s+why', r'why[\s-]+why',
+            r'fishbone', r'ishikawa', r'cause[\s-]+and[\s-]+effect',
+            r'fault\s+tree', r'failure\s+mode',
+            r'contributing\s+factor', r'root\s+cause\s+(?:identified|confirmed|determined|established)',
+            r'systematic\s+(?:analysis|review|investigation)',
+            r'causal\s+factor',
+        ]
+        has_deep_rca = any(re.search(p, text_lower) for p in deep_rca_patterns)
+        if has_deep_rca:
+            return None
+
+        # Check if RCA section exists at all
+        has_rca_section = re.search(
+            r'root\s+cause|rca\b|cause\s+(?:of|for)\s+(?:the\s+)?deviation', text_lower
+        )
+        if not has_rca_section:
+            return FindingResult(
+                level="L3",
+                severity="high",
+                category="root_cause_analysis_absent",
+                title="Root cause analysis section not found in deviation report",
+                description=(
+                    "No root cause analysis section was identified in this deviation report. "
+                    "21 CFR 211.192 requires that any unexplained discrepancy or failure of a "
+                    "batch to meet specification shall be thoroughly investigated. A documented "
+                    "root cause analysis is the foundation of that investigation."
+                ),
+                evidence="",
+                regulatory_citation="21 CFR 211.192",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.82,
+                validated=True,
+            )
+
+        # RCA exists but lacks analytical depth — check if it's just "human error" label
+        human_error_only = re.search(
+            r'root\s+cause[\s\S]{0,200}human\s+error', text_lower
+        ) and not has_deep_rca
+
+        # Check for supporting evidence cited in RCA
+        evidence_cited = re.search(
+            r'(?:data\s+(?:shows?|indicates?|confirms?)|evidence\s+(?:of|that|shows?)|'
+            r'review\s+of\s+(?:batch|records?|data|logs?)|trending|historical)',
+            text_lower
+        )
+
+        if not evidence_cited:
+            return FindingResult(
+                level="L3",
+                severity="medium",
+                category="root_cause_insufficient_depth",
+                title="Root cause analysis lacks structured methodology or supporting evidence",
+                description=(
+                    "The root cause analysis was identified but does not demonstrate structured "
+                    "analytical methodology (e.g., 5-Why, fishbone/Ishikawa, fault tree) or cite "
+                    "supporting data and evidence. FDA expects investigations to identify the "
+                    "fundamental cause — not surface-level attribution — with evidence. "
+                    "Per 21 CFR 211.192 and ICH Q10, investigations must be thorough and "
+                    "conclusions must be supported by documented facts."
+                ),
+                evidence="Root cause section present but no structured methodology or evidence citation detected.",
+                regulatory_citation="21 CFR 211.192; ICH Q10 Section 3.2",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.71,
+                validated=True,
+            )
+
+        return None
+
+    # ========== L9: Enforcement Pattern Checks (Deviation / LIR / Validation) ==========
+
+    def _check_l9_enforcement_pattern_match(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Flag if document's topic areas match high-frequency FDA enforcement patterns."""
+        if not ctx.enforcement_records:
+            return None
+
+        text_lower = ctx.document_text.lower()
+
+        # Build CFR citation frequency map from loaded enforcement records
+        from collections import Counter
+        cfr_freq: Counter = Counter()
+        for rec in ctx.enforcement_records:
+            for cfr in rec.get("cfr_citations", []):
+                cfr_clean = re.sub(r'\s+', ' ', cfr.strip())
+                cfr_freq[cfr_clean] += 1
+
+        # Top enforcement-cited CFR sections relevant to this document
+        HIGH_FREQ_THRESHOLD = 5
+        hot_sections = [cfr for cfr, cnt in cfr_freq.items() if cnt >= HIGH_FREQ_THRESHOLD]
+
+        if not hot_sections:
+            return None
+
+        # Check if document text references any of the hot CFR sections' topic areas
+        CFR_TOPICS = {
+            "211.192": ["investigation", "discrepancy", "out-of-specification", "batch review"],
+            "211.100": ["written procedure", "deviation", "standard operating"],
+            "211.68":  ["computer", "electronic record", "audit trail", "backup"],
+            "211.22":  ["quality control", "qc unit", "quality unit"],
+            "211.165": ["testing", "acceptance criteria", "specification"],
+            "820.100": ["capa", "corrective action", "preventive action"],
+            "820.30":  ["design control", "design history"],
+        }
+
+        matched_topics = []
+        for cfr_key, keywords in CFR_TOPICS.items():
+            cfr_is_hot = any(cfr_key in h for h in hot_sections)
+            if cfr_is_hot:
+                topic_in_doc = any(kw in text_lower for kw in keywords)
+                if topic_in_doc:
+                    matched_topics.append(f"21 CFR {cfr_key}")
+
+        if len(matched_topics) < 2:
+            return None
+
+        return FindingResult(
+            level="L9",
+            severity="medium",
+            category="enforcement_pattern_overlap",
+            title=f"Document covers {len(matched_topics)} CFR areas with high FDA enforcement frequency",
+            description=(
+                f"This document addresses areas ({', '.join(matched_topics[:3])}) that appear "
+                f"frequently in FDA enforcement actions loaded into Clyira's intelligence database. "
+                "Documents in these areas receive heightened inspector scrutiny. Ensure all "
+                "applicable sections are complete, precise, and supported by data."
+            ),
+            evidence=f"High-frequency CFR sections matched: {', '.join(matched_topics[:5])}",
+            regulatory_citation="; ".join(matched_topics[:3]),
+            citation_type="traceability",
+            agency="FDA",
+            enforcement_match=True,
+            confidence_score=0.68,
+            validated=True,
+        )
+
+    def _check_l9_repeat_observation_risk(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Flag if prior assessments show recurring findings in the same categories."""
+        if not ctx.historical_assessments or len(ctx.historical_assessments) < 2:
+            return None
+
+        from collections import Counter
+        category_counts: Counter = Counter()
+        for hist in ctx.historical_assessments:
+            for f in hist.get("findings", []):
+                if f.get("status") not in ("resolved", "disputed"):
+                    cat = f.get("category", "")
+                    if cat:
+                        category_counts[cat] += 1
+
+        # Categories appearing in 2+ prior assessments unresolved
+        repeat_cats = [cat for cat, cnt in category_counts.items() if cnt >= 2]
+        if not repeat_cats:
+            return None
+
+        return FindingResult(
+            level="L9",
+            severity="high",
+            category="repeat_observation_risk",
+            title=f"Recurring unresolved findings detected across {len(ctx.historical_assessments)} prior assessments",
+            description=(
+                f"The following finding categories have appeared in multiple prior assessments "
+                f"of this document without resolution: {', '.join(repeat_cats[:5])}. "
+                "Repeat observations in FDA inspections are treated as systemic failures and "
+                "significantly increase the risk of a Warning Letter or consent decree. "
+                "Per 21 CFR 211.192 and ICH Q10, effectiveness checks must confirm that "
+                "corrective actions have actually addressed the root cause."
+            ),
+            evidence=f"Repeat categories across prior assessments: {', '.join(repeat_cats[:5])}",
+            regulatory_citation="21 CFR 211.192; ICH Q10 Section 3.2",
+            citation_type="traceability",
+            agency="FDA",
+            confidence_score=0.82,
+            validated=True,
+        )
+
+    def _check_l9_severity_elevation(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Identify if enforcement record volume for this document's topics warrants a risk advisory."""
+        if not ctx.enforcement_records:
+            return None
+
+        doc_cat = (ctx.document_category or "").lower()
+        # Map document category to enforcement observation keywords
+        CAT_KEYWORDS = {
+            "deviation":   ["deviation", "investigation", "oos", "discrepancy", "batch failure"],
+            "lir":         ["out-of-specification", "oos", "laboratory", "retest", "invalidat"],
+            "validation":  ["validation", "qualify", "calibration", "computer system", "csv"],
+            "capa":        ["corrective action", "capa", "effectiveness", "root cause"],
+            "sop":         ["procedure", "sop", "written procedure", "documentation"],
+            "atm":         ["analytical method", "hplc", "system suitability", "method validation"],
+        }
+        keywords = CAT_KEYWORDS.get(doc_cat, [])
+        if not keywords:
+            return None
+
+        # Count how many enforcement records match this document category
+        match_count = 0
+        for rec in ctx.enforcement_records:
+            summary = (rec.get("summary", "") + " " + rec.get("title", "")).lower()
+            if any(kw in summary for kw in keywords):
+                match_count += 1
+
+        # Only flag if this is a high-enforcement-pressure category
+        HIGH_PRESSURE_THRESHOLD = 10
+        if match_count < HIGH_PRESSURE_THRESHOLD:
+            return None
+
+        return FindingResult(
+            level="L9",
+            severity="info",
+            category="high_enforcement_pressure_category",
+            title=f"High enforcement pressure: {match_count} matching FDA actions for {ctx.document_category} documents",
+            description=(
+                f"Clyira's enforcement intelligence database contains {match_count} FDA enforcement "
+                f"actions related to {ctx.document_category} documents. This document type is under "
+                "active regulatory scrutiny. All findings from this assessment — especially medium "
+                "and above — should be treated as elevated-priority remediation items. "
+                "FDA inspectors are familiar with common deficiency patterns in this document type."
+            ),
+            evidence=f"{match_count} enforcement records matched for document category '{ctx.document_category}'",
+            regulatory_citation="FDA Enforcement Intelligence",
+            citation_type="traceability",
+            agency="FDA",
+            enforcement_match=True,
+            confidence_score=0.75,
+            validated=True,
+        )
