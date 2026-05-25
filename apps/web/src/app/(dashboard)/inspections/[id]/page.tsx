@@ -31,6 +31,9 @@ interface InspRequest {
   category: string;
   status: string;
   response_text: string | null;
+  ai_talking_points?: string[];
+  ai_suggested_documents?: string[];
+  ai_risk_assessment?: string | null;
   created_at: string;
 }
 
@@ -402,7 +405,7 @@ export default function WarRoomPage() {
                 <div>
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Open</p>
                   <div className="space-y-2">
-                    {openRequests.map(req => <RequestCard key={req.id} req={req} onUpdate={handleUpdateRequest} />)}
+                    {openRequests.map(req => <RequestCard key={req.id} req={req} inspectionId={id} onUpdate={handleUpdateRequest} />)}
                   </div>
                 </div>
               )}
@@ -410,7 +413,7 @@ export default function WarRoomPage() {
                 <div>
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 mt-4">Resolved</p>
                   <div className="space-y-2">
-                    {otherRequests.map(req => <RequestCard key={req.id} req={req} onUpdate={handleUpdateRequest} />)}
+                    {otherRequests.map(req => <RequestCard key={req.id} req={req} inspectionId={id} onUpdate={handleUpdateRequest} />)}
                   </div>
                 </div>
               )}
@@ -488,10 +491,31 @@ export default function WarRoomPage() {
   );
 }
 
-function RequestCard({ req, onUpdate }: { req: InspRequest; onUpdate: (id: string, status: string) => void }) {
+function RequestCard({
+  req,
+  inspectionId,
+  onUpdate,
+}: {
+  req: InspRequest;
+  inspectionId: string;
+  onUpdate: (id: string, status: string) => void;
+}) {
   const [expanded, setExpanded] = useState(req.status === "open");
   const [responding, setResponding] = useState(false);
-  const [response, setResponse] = useState(req.response_text ?? "");
+  const [analyzing, setAnalyzing] = useState(false);
+  const [aiData, setAiData] = useState<{
+    talking_points: string[];
+    suggested_documents: string[];
+    risk_assessment: string;
+  } | null>(
+    req.ai_talking_points?.length
+      ? {
+          talking_points: req.ai_talking_points,
+          suggested_documents: req.ai_suggested_documents ?? [],
+          risk_assessment: req.ai_risk_assessment ?? "",
+        }
+      : null
+  );
   const statusCfg = REQUEST_STATUS_STYLES[req.status] ?? REQUEST_STATUS_STYLES.open;
   const StatusIcon = statusCfg.icon;
 
@@ -499,6 +523,20 @@ function RequestCard({ req, onUpdate }: { req: InspRequest; onUpdate: (id: strin
     setResponding(true);
     try { await onUpdate(req.id, s); }
     finally { setResponding(false); }
+  };
+
+  const handleAnalyze = async () => {
+    setAnalyzing(true);
+    try {
+      const res = await inspectionsApi.analyzeRequest(inspectionId, req.id);
+      setAiData({
+        talking_points: res.data.ai_talking_points ?? [],
+        suggested_documents: res.data.ai_suggested_documents ?? [],
+        risk_assessment: res.data.ai_risk_assessment ?? "",
+      });
+    } finally {
+      setAnalyzing(false);
+    }
   };
 
   return (
@@ -515,6 +553,14 @@ function RequestCard({ req, onUpdate }: { req: InspRequest; onUpdate: (id: strin
               <span className="text-[10px] text-muted-foreground capitalize">{req.category}</span>
               <span className="text-[10px] text-muted-foreground">·</span>
               <span className="text-[10px] text-muted-foreground">{timeAgo(req.created_at)}</span>
+              {aiData && (
+                <>
+                  <span className="text-[10px] text-muted-foreground">·</span>
+                  <span className="text-[10px] text-primary font-medium flex items-center gap-0.5">
+                    <Zap className="w-2.5 h-2.5" /> AI analyzed
+                  </span>
+                </>
+              )}
             </div>
           </div>
           <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border flex-shrink-0 ${statusCfg.className}`}>
@@ -531,6 +577,57 @@ function RequestCard({ req, onUpdate }: { req: InspRequest; onUpdate: (id: strin
               <p className="text-xs font-semibold text-muted-foreground mb-1">Response</p>
               <p className="text-sm">{req.response_text}</p>
             </div>
+          )}
+
+          {/* AI Analysis Panel */}
+          {aiData ? (
+            <div className="bg-primary/5 border border-primary/20 rounded-lg p-3 space-y-2.5">
+              <p className="text-[10px] font-semibold text-primary uppercase tracking-wide flex items-center gap-1">
+                <Zap className="w-3 h-3" /> AI Analysis
+              </p>
+              {aiData.risk_assessment && (
+                <p className="text-xs text-muted-foreground italic">{aiData.risk_assessment}</p>
+              )}
+              {aiData.talking_points.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold text-foreground mb-1">Talking Points</p>
+                  <ul className="space-y-1">
+                    {aiData.talking_points.map((pt, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-xs">
+                        <span className="text-primary mt-0.5 flex-shrink-0">•</span>
+                        <span>{pt}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {aiData.suggested_documents.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold text-foreground mb-1">Suggested Documents</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {aiData.suggested_documents.map((doc, i) => (
+                      <span key={i} className="text-[10px] px-2 py-0.5 bg-background border rounded-md font-medium">
+                        {doc}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <button onClick={handleAnalyze} disabled={analyzing}
+                className="text-[10px] text-primary hover:underline font-medium flex items-center gap-1 disabled:opacity-50">
+                {analyzing ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RefreshCw className="w-2.5 h-2.5" />}
+                Re-analyze
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleAnalyze}
+              disabled={analyzing}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border rounded-lg bg-white hover:bg-primary/5 hover:border-primary/40 hover:text-primary transition-colors disabled:opacity-50"
+            >
+              {analyzing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+              {analyzing ? "Analyzing…" : "Get AI Analysis"}
+            </button>
           )}
 
           {req.status === "open" && (
