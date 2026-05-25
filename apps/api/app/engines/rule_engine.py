@@ -208,6 +208,40 @@ class RuleEngine:
 
         return findings
 
+    def _check_l1_table_of_contents(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Long SOPs (>5 sections) should have a table of contents for navigability."""
+        text_lower = ctx.document_text.lower()
+        has_toc = bool(re.search(
+            r'(?:table\s+of\s+contents|contents\s*[\n\r]|toc\b)',
+            text_lower
+        ))
+        if has_toc:
+            return None
+        profile = ctx.dtap_profile
+        if len(getattr(profile, "required_sections", [])) < 6:
+            return None
+        return FindingResult(
+            level="L1",
+            severity="info",
+            category="table_of_contents_absent",
+            title="Table of contents not present",
+            description=(
+                "The document does not include a table of contents. For SOPs with six or more "
+                "required sections, a table of contents aids navigation during execution and "
+                "inspection review, and is expected by most pharmaceutical quality document "
+                "standards. Absence is not a deficiency per se but may be noted during audits."
+            ),
+            evidence="",
+            regulatory_citation="EU GMP Chapter 4 / ICH Q10",
+            citation_type="indirect",
+            agency="EMA",
+            suggestion_draft="Add a Table of Contents section after the title page listing all section headers with page numbers.",
+            next_step_text="Add a Table of Contents to improve document navigability.",
+            remediation_priority=5,
+            confidence_score=0.60,
+            validated=True,
+        )
+
     def _check_l1_document_number_format(self, ctx: AssessmentContext) -> Optional[FindingResult]:
         """Check document has a proper document number"""
         # Look for common document number patterns
@@ -430,6 +464,95 @@ class RuleEngine:
             citation_type="direct",
             agency="FDA",
             confidence_score=0.80,
+            validated=True,
+        )
+
+    def _check_l7_obsolescence_handling(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """SOP must define what happens when it is superseded — transition, archival, and access restrictions."""
+        text_lower = ctx.document_text.lower()
+        has_obsolescence = bool(re.search(
+            r'(?:obsolete|superseded|retire[ds]?\b|withdrawn|archive[ds]?\s+(?:copy|version)|'
+            r'when\s+(?:this|the)\s+(?:sop|procedure|document)\s+is\s+(?:replaced|superseded|updated))',
+            text_lower
+        ))
+        if has_obsolescence:
+            return None
+        return FindingResult(
+            level="L7",
+            severity="low",
+            category="obsolescence_handling_absent",
+            title="Obsolescence / supersession procedure not defined",
+            description=(
+                "The document does not describe the process for retiring or archiving it when a new "
+                "version is issued. GMP document control requires that upon supersession: (1) all copies "
+                "of the old version are retrieved and destroyed or clearly marked obsolete, (2) the "
+                "document management system records the retirement date, and (3) only the current "
+                "approved version is accessible to users. Absence of obsolescence instructions creates "
+                "risk of personnel continuing to use superseded procedures."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 211.68",
+            citation_type="direct",
+            agency="FDA",
+            suggestion_draft=(
+                "Add to Document Control / Lifecycle section:\n"
+                "Obsolescence: Upon issue of a new version, all controlled copies of the previous "
+                "version shall be retrieved and destroyed or marked 'OBSOLETE — DO NOT USE'. "
+                "The document control system shall reflect the retirement date. Electronic copies "
+                "shall be archived per [Records Retention SOP reference] and restricted from active use."
+            ),
+            next_step_text="Add an obsolescence/retirement clause to the document control section.",
+            remediation_priority=4,
+            confidence_score=0.70,
+            validated=True,
+        )
+
+    def _check_l7_periodic_review_trigger(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """SOP must define ad-hoc triggers that require an unscheduled review (regulatory changes, deviations, complaints)."""
+        text_lower = ctx.document_text.lower()
+        has_review_trigger = bool(re.search(
+            r'(?:trigger(?:ed)?\s+(?:a\s+)?review|unscheduled\s+review|review\s+(?:shall|must|will)\s+be\s+(?:initiated|triggered)|'
+            r'deviation.*review.*sop|complaint.*require.*review|regulation.*change.*review|'
+            r'following\s+a\s+(?:deviation|change|complaint|inspection)',
+            text_lower
+        ))
+        if has_review_trigger:
+            return None
+        has_scheduled_review = bool(re.search(
+            r'(?:annual\s+review|biennial\s+review|periodic\s+review|review\s+cycle|review\s+date)',
+            text_lower
+        ))
+        if not has_scheduled_review:
+            return None
+        return FindingResult(
+            level="L7",
+            severity="low",
+            category="review_trigger_not_defined",
+            title="Ad-hoc review triggers not defined",
+            description=(
+                "The document references scheduled (periodic) reviews but does not define events "
+                "that would trigger an unscheduled review. Best-practice GMP document control "
+                "specifies triggers such as: regulatory changes affecting the procedure, repeat "
+                "deviations or complaints related to the SOP, significant process changes, or "
+                "inspection observations. Without defined triggers, a regulatory change may not "
+                "prompt timely document updates."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR 211.68 / ICH Q10",
+            citation_type="indirect",
+            agency="FDA",
+            suggestion_draft=(
+                "Add to Review section:\n"
+                "Unscheduled Reviews: This procedure shall be reviewed and updated as needed when any "
+                "of the following occur:\n"
+                "• Applicable regulatory guidance is revised or new regulation published\n"
+                "• Repeat deviation or OOS result attributed to this procedure\n"
+                "• Customer or regulatory complaint referencing this procedure\n"
+                "• Significant change to equipment, process, or personnel"
+            ),
+            next_step_text="Add a list of events that require unscheduled document review.",
+            remediation_priority=4,
+            confidence_score=0.65,
             validated=True,
         )
 
@@ -2201,6 +2324,16 @@ class RuleEngine:
     def _check_l2_training_requirements(self, ctx: AssessmentContext) -> list[FindingResult]:
         """ATM should specify analyst training/qualification requirements."""
         return self._check_l7_training_requirements_defined(ctx)
+
+    def _check_l2_version_control(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """ATM must have version control block (delegates to universal check)."""
+        result = self._check_l2_version_control_block(ctx)
+        return [result] if result else []
+
+    def _check_l4_alcoa_recording_instructions(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Method must specify data recording instructions — delegates to universal rule."""
+        result = self._check_l4_data_recording_instructions(ctx)
+        return [result] if result else []
 
     def _check_l4_raw_data_requirements(self, ctx: AssessmentContext) -> list[FindingResult]:
         """Method must specify what raw data must be retained and where."""
