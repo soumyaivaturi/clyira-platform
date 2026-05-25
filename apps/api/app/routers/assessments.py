@@ -95,6 +95,42 @@ class AssessmentOut(BaseModel):
         from_attributes = True
 
 
+@router.get("/recent", response_model=dict)
+async def recent_assessments(
+    limit: int = Query(default=8, le=20),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the most recent completed assessments across all documents for the company."""
+    from sqlalchemy import desc as sa_desc
+    result = await db.execute(
+        select(Assessment, Document.title, Document.document_category)
+        .join(Document, Assessment.document_id == Document.id)
+        .where(
+            Assessment.company_id == current_user.company_id,
+            Assessment.status == "completed",
+        )
+        .order_by(sa_desc(Assessment.created_at))
+        .limit(limit)
+    )
+    rows = []
+    for assessment, doc_title, doc_category in result.all():
+        rows.append({
+            "id": assessment.id,
+            "document_id": assessment.document_id,
+            "document_title": doc_title,
+            "document_category": doc_category,
+            "clyira_score": assessment.clyira_score,
+            "adjusted_score": assessment.adjusted_score,
+            "score_band": assessment.score_band,
+            "findings_critical": assessment.findings_critical or 0,
+            "findings_high": assessment.findings_high or 0,
+            "data_integrity_hold": assessment.data_integrity_hold or False,
+            "created_at": assessment.created_at.isoformat() if assessment.created_at else None,
+        })
+    return {"assessments": rows, "count": len(rows)}
+
+
 @router.post("/run", response_model=AssessmentOut, status_code=status.HTTP_202_ACCEPTED)
 async def run_assessment(
     data: RunAssessmentRequest,

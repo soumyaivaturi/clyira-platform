@@ -95,6 +95,7 @@ export const assessmentsApi = {
     }),
   getLiveScore: (id: string) => api.get(`/assessments/${id}/live-score`),
   getReport: (id: string) => api.get(`/assessments/${id}/report`),
+  recent: (limit = 8) => api.get("/assessments/recent", { params: { limit } }),
   exportDocx: (id: string) =>
     api.get(`/assessments/${id}/export/docx`, { responseType: "blob", timeout: 60000 }),
 };

@@ -5,8 +5,9 @@ import Link from "next/link";
 import {
   FileText, Shield, Radio,
   AlertTriangle, ChevronRight, Upload, Plus, RefreshCw, Lock, Zap,
+  ClipboardCheck,
 } from "lucide-react";
-import { readinessApi, documentsApi } from "@/lib/api";
+import { readinessApi, documentsApi, assessmentsApi } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { ScoreRing, ScoreBar, ScoreBadge } from "@/components/shared/score-display";
 import { DocStatusBadge } from "@/components/shared/badges";
@@ -28,10 +29,25 @@ interface DocSummary {
   latest_score: number | null; status: string; created_at: string;
 }
 
+interface RecentAssessment {
+  id: string;
+  document_id: string;
+  document_title: string;
+  document_category: string;
+  clyira_score: number | null;
+  adjusted_score: number | null;
+  score_band: string | null;
+  findings_critical: number;
+  findings_high: number;
+  data_integrity_hold: boolean;
+  created_at: string;
+}
+
 export default function DashboardPage() {
   const { user } = useAuth();
   const [readiness, setReadiness] = useState<ReadinessDashboard | null>(null);
   const [recentDocs, setRecentDocs] = useState<DocSummary[]>([]);
+  const [recentAssessments, setRecentAssessments] = useState<RecentAssessment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -39,12 +55,14 @@ export default function DashboardPage() {
     setLoading(true);
     setError("");
     try {
-      const [rRes, dRes] = await Promise.all([
+      const [rRes, dRes, aRes] = await Promise.all([
         readinessApi.dashboard(),
         documentsApi.list(),
+        assessmentsApi.recent(8),
       ]);
       setReadiness(rRes.data);
       setRecentDocs((dRes.data.documents ?? []).slice(0, 6));
+      setRecentAssessments(aRes.data.assessments ?? []);
     } catch {
       setError("Could not load dashboard data. Please refresh the page or sign in again.");
     } finally {
@@ -287,62 +305,134 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Recent Documents */}
-      <div className="bg-card border rounded-xl">
-        <div className="px-5 py-4 border-b flex items-center justify-between">
-          <div>
-            <h2 className="font-semibold text-sm">Recent Documents</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">Latest uploads and assessments</p>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Recent Documents */}
+        <div className="bg-card border rounded-xl">
+          <div className="px-5 py-4 border-b flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold text-sm">Recent Documents</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Latest uploads</p>
+            </div>
+            <Link href="/documents" className="text-xs text-primary hover:underline flex items-center gap-1">
+              View all <ChevronRight className="w-3 h-3" />
+            </Link>
           </div>
-          <Link href="/documents" className="text-xs text-primary hover:underline flex items-center gap-1">
-            View all <ChevronRight className="w-3 h-3" />
-          </Link>
+
+          {loading ? (
+            <div className="divide-y">
+              {[1,2,3,4].map(i => (
+                <div key={i} className="flex items-center gap-4 px-5 py-3 animate-pulse">
+                  <div className="w-8 h-8 bg-muted rounded-lg flex-shrink-0" />
+                  <div className="flex-1 space-y-1.5">
+                    <div className="h-3.5 bg-muted rounded w-3/4" />
+                    <div className="h-3 bg-muted rounded w-1/3" />
+                  </div>
+                  <div className="w-12 h-5 bg-muted rounded-full" />
+                </div>
+              ))}
+            </div>
+          ) : recentDocs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <FileText className="w-8 h-8 text-muted-foreground/40 mb-2" />
+              <p className="text-sm text-muted-foreground">No documents yet.</p>
+              <Link href="/documents" className="text-xs text-primary hover:underline mt-1">Upload your first document →</Link>
+            </div>
+          ) : (
+            <div className="divide-y">
+              {recentDocs.map((doc) => (
+                <Link
+                  key={doc.id}
+                  href={`/documents/${doc.id}`}
+                  className="flex items-center gap-4 px-5 py-3 hover:bg-muted/40 transition-colors"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <FileText className="w-4 h-4 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{doc.title}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {doc.document_category ?? "—"} · {doc.department_owner ?? "Unassigned"} · {timeAgo(doc.created_at)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <ScoreBadge score={doc.latest_score} />
+                    <DocStatusBadge status={doc.status} />
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
 
-        {loading ? (
-          <div className="divide-y">
-            {[1,2,3,4].map(i => (
-              <div key={i} className="flex items-center gap-4 px-5 py-3 animate-pulse">
-                <div className="w-8 h-8 bg-muted rounded-lg flex-shrink-0" />
-                <div className="flex-1 space-y-1.5">
-                  <div className="h-3.5 bg-muted rounded w-3/4" />
-                  <div className="h-3 bg-muted rounded w-1/3" />
-                </div>
-                <div className="w-12 h-5 bg-muted rounded-full" />
-              </div>
-            ))}
+        {/* Recent Assessment Activity */}
+        <div className="bg-card border rounded-xl">
+          <div className="px-5 py-4 border-b flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold text-sm">Recent Assessments</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Latest completed runs</p>
+            </div>
+            <Link href="/documents" className="text-xs text-primary hover:underline flex items-center gap-1">
+              All documents <ChevronRight className="w-3 h-3" />
+            </Link>
           </div>
-        ) : recentDocs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <FileText className="w-8 h-8 text-muted-foreground/40 mb-2" />
-            <p className="text-sm text-muted-foreground">No documents yet.</p>
-            <Link href="/documents" className="text-xs text-primary hover:underline mt-1">Upload your first document →</Link>
-          </div>
-        ) : (
-          <div className="divide-y">
-            {recentDocs.map((doc) => (
-              <Link
-                key={doc.id}
-                href={`/documents/${doc.id}`}
-                className="flex items-center gap-4 px-5 py-3 hover:bg-muted/40 transition-colors"
-              >
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <FileText className="w-4 h-4 text-primary" />
+
+          {loading ? (
+            <div className="divide-y">
+              {[1,2,3,4].map(i => (
+                <div key={i} className="flex items-center gap-4 px-5 py-3 animate-pulse">
+                  <div className="w-8 h-8 bg-muted rounded-lg flex-shrink-0" />
+                  <div className="flex-1 space-y-1.5">
+                    <div className="h-3.5 bg-muted rounded w-3/4" />
+                    <div className="h-3 bg-muted rounded w-1/3" />
+                  </div>
+                  <div className="w-10 h-6 bg-muted rounded-full" />
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{doc.title}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {doc.document_category ?? "—"} · {doc.department_owner ?? "Unassigned"} · {timeAgo(doc.created_at)}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <ScoreBadge score={doc.latest_score} />
-                  <DocStatusBadge status={doc.status} />
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          ) : recentAssessments.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <ClipboardCheck className="w-8 h-8 text-muted-foreground/40 mb-2" />
+              <p className="text-sm text-muted-foreground">No assessments yet.</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Run an assessment from the Documents page.</p>
+            </div>
+          ) : (
+            <div className="divide-y">
+              {recentAssessments.map((a) => (
+                <Link
+                  key={a.id}
+                  href={`/documents/${a.document_id}`}
+                  className="flex items-center gap-4 px-5 py-3 hover:bg-muted/40 transition-colors"
+                >
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                    a.data_integrity_hold ? "bg-red-100" : "bg-emerald-50"
+                  }`}>
+                    <ClipboardCheck className={`w-4 h-4 ${a.data_integrity_hold ? "text-red-500" : "text-emerald-600"}`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{a.document_title}</p>
+                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                      <span className="text-xs text-muted-foreground">{a.document_category ?? "—"}</span>
+                      {(a.findings_critical > 0 || a.findings_high > 0) && (
+                        <span className="text-[10px] font-medium text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded">
+                          {a.findings_critical > 0 ? `${a.findings_critical}C` : ""}{a.findings_critical > 0 && a.findings_high > 0 ? " " : ""}{a.findings_high > 0 ? `${a.findings_high}H` : ""}
+                        </span>
+                      )}
+                      {a.data_integrity_hold && (
+                        <span className="text-[10px] font-medium text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                          <Lock className="w-2.5 h-2.5" /> DI Hold
+                        </span>
+                      )}
+                      <span className="text-xs text-muted-foreground">· {timeAgo(a.created_at)}</span>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <ScoreBadge score={a.adjusted_score ?? a.clyira_score} />
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
