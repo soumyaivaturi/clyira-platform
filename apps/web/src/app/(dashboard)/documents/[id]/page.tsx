@@ -954,14 +954,38 @@ export default function DocumentDetailPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {assessment?.status === "completed" && (
-            <button
-              onClick={exportDocx}
-              disabled={exporting}
-              className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm font-medium hover:bg-accent disabled:opacity-50"
-            >
-              {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-              Export DOCX
-            </button>
+            <>
+              <button
+                onClick={exportDocx}
+                disabled={exporting}
+                className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm font-medium hover:bg-accent disabled:opacity-50"
+              >
+                {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                DOCX
+              </button>
+              <button
+                onClick={async () => {
+                  if (!assessment) return;
+                  setExporting(true);
+                  try {
+                    const res = await assessmentsApi.exportCsv(assessment.id);
+                    const blob = new Blob([res.data], { type: "text/csv" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `Clyira_Findings_${doc?.title?.slice(0, 30) ?? "Report"}_${assessment.id.slice(0, 8)}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  } catch { setError("CSV export failed. Please try again."); }
+                  finally { setExporting(false); }
+                }}
+                disabled={exporting}
+                className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm font-medium hover:bg-accent disabled:opacity-50"
+              >
+                {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                CSV
+              </button>
+            </>
           )}
         <button onClick={runAssessment} disabled={assessing}
           className="flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 flex-shrink-0"

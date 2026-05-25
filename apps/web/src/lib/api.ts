@@ -100,6 +100,8 @@ export const assessmentsApi = {
     api.post("/assessments/bulk-run", { document_ids: documentIds || null, include_references: includeReferences }),
   exportDocx: (id: string) =>
     api.get(`/assessments/${id}/export/docx`, { responseType: "blob", timeout: 60000 }),
+  exportCsv: (id: string) =>
+    api.get(`/assessments/${id}/export/csv`, { responseType: "blob", timeout: 30000 }),
 };
 
 // ── Assistant ─────────────────────────────────────────────────────────────────

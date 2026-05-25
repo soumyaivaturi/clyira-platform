@@ -328,3 +328,79 @@ async def export_assessment_docx(
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/{assessment_id}/export/csv")
+async def export_assessment_csv(
+    assessment_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download findings as a CSV — suitable for QMS/LIMS import or Excel analysis."""
+    import csv
+
+    result = await db.execute(
+        select(Assessment).where(
+            Assessment.id == assessment_id,
+            Assessment.company_id == current_user.company_id,
+        )
+    )
+    assessment = result.scalar_one_or_none()
+    if not assessment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")
+    if assessment.status != "completed":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Assessment not completed yet")
+
+    doc_result = await db.execute(select(Document).where(Document.id == assessment.document_id))
+    document = doc_result.scalar_one_or_none()
+
+    findings_result = await db.execute(
+        select(Finding)
+        .where(Finding.assessment_id == assessment_id)
+        .order_by(Finding.severity)
+    )
+    findings = findings_result.scalars().all()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+
+    writer.writerow([
+        "finding_id", "assessment_id", "document_title", "document_number",
+        "level", "level_name", "severity", "category", "title", "description",
+        "evidence", "location", "regulatory_citation", "citation_type", "agency",
+        "enforcement_match", "severity_elevated", "status",
+        "suggestion_draft", "next_step_text", "remediation_priority",
+        "confidence_score", "validated",
+    ])
+
+    doc_title = document.title if document else ""
+    doc_number = document.document_number if document else ""
+
+    for f in findings:
+        writer.writerow([
+            f.id, assessment_id, doc_title, doc_number,
+            f.level, _LEVEL_NAMES.get(f.level or "", f.level or ""),
+            f.severity, f.category or "", f.title,
+            (f.description or "").replace("\n", " "),
+            (f.evidence or "").replace("\n", " "),
+            f.location or "", f.regulatory_citation or "",
+            f.citation_type or "", f.agency or "",
+            "Yes" if f.enforcement_match else "No",
+            "Yes" if f.severity_elevated else "No",
+            f.status,
+            (f.suggestion_draft or "").replace("\n", " "),
+            (f.next_step_text or "").replace("\n", " "),
+            f.remediation_priority or "",
+            f.confidence_score or "",
+            "Yes" if f.validated else "No",
+        ])
+
+    safe_title = "".join(c for c in (document.title if document else "report") if c.isalnum() or c in " _-")[:50]
+    filename = f"Clyira_Findings_{safe_title}_{assessment_id[:8]}.csv"
+    csv_bytes = buf.getvalue().encode("utf-8-sig")  # utf-8-sig for Excel BOM
+
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
