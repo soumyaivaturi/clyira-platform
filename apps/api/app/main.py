@@ -626,3 +626,95 @@ async def reextract_documents(request: Request):
         "errors": len(errors),
         "details": {"updated": updated, "skipped": skipped, "errors": errors},
     }
+
+
+# Admin: seed regulatory_corpus from bundled regulatory_corpus.jsonl
+@app.post("/admin/seed-regulatory-corpus")
+async def seed_regulatory_corpus(request: Request, background_tasks: BackgroundTasks):
+    """
+    Populate regulatory_corpus table from the bundled rag_index/regulatory_corpus.jsonl.
+    Contains 21 CFR Parts 11, 58, 210, 211, 212, 600, 606, 610, 820 — section-level text.
+    Idempotent: skips records whose citation_reference already exists.
+    """
+    import os
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    async def _do_seed():
+        import json
+        from pathlib import Path
+        from sqlalchemy import select
+        from app.core.database import AsyncSessionLocal
+        from app.models.regulatory import RegulatoryCorpus
+        from app.models.base import generate_uuid
+
+        JSONL_PATHS = [
+            Path(__file__).parent.parent / "rag_index" / "regulatory_corpus.jsonl",
+            Path.home() / "Documents" / "Clyira-Corpus" / "rag_index" / "regulatory_corpus.jsonl",
+        ]
+        jsonl_path = next((p for p in JSONL_PATHS if p.exists()), None)
+        if not jsonl_path:
+            print("seed-regulatory-corpus: regulatory_corpus.jsonl not found")
+            return
+
+        records = []
+        with open(jsonl_path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        records.append(json.loads(line))
+                    except Exception:
+                        pass
+
+        print(f"seed-regulatory-corpus: loaded {len(records)} sections from {jsonl_path}")
+
+        inserted = 0
+        skipped = 0
+        async with AsyncSessionLocal() as db:
+            for r in records:
+                citation = r.get("citation_reference", "")
+                if citation:
+                    existing = await db.execute(
+                        select(RegulatoryCorpus).where(
+                            RegulatoryCorpus.citation_reference == citation
+                        )
+                    )
+                    if existing.scalar_one_or_none():
+                        skipped += 1
+                        continue
+
+                row = RegulatoryCorpus(
+                    id=generate_uuid(),
+                    hierarchy_level=r.get("hierarchy_level", 2),
+                    agency=r.get("agency", "FDA"),
+                    document_type=r.get("document_type", "regulation"),
+                    title=r.get("title", "")[:500],
+                    citation_reference=citation[:200] if citation else None,
+                    section=r.get("section", "")[:200],
+                    content=r.get("content", ""),
+                    effective_date=r.get("effective_date"),
+                    sub_sectors=r.get("sub_sectors", []),
+                    document_categories=r.get("document_categories", []),
+                    departments=[],
+                    is_current=r.get("is_current", True),
+                )
+                db.add(row)
+                inserted += 1
+
+                if inserted % 50 == 0:
+                    await db.commit()
+                    print(f"seed-regulatory-corpus: committed {inserted} records…")
+
+            await db.commit()
+
+        print(f"seed-regulatory-corpus: done — inserted={inserted}, skipped={skipped}")
+
+    background_tasks.add_task(_do_seed)
+    return {
+        "status": "seeding_started",
+        "source": "regulatory_corpus.jsonl",
+        "message": "Check server logs for progress.",
+    }
