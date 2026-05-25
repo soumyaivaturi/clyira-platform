@@ -2509,6 +2509,280 @@ class RuleEngine:
             validated=True,
         )]
 
+    # ========== L5: ATM Data & Statistical Intelligence Checks ==========
+
+    def _check_l5_oos_investigation_trigger_defined(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Method must define what constitutes an OOS result and trigger criteria for investigation."""
+        text_lower = ctx.document_text.lower()
+        has_oos_criteria = bool(re.search(
+            r'(?:out[\s-]of[\s-]specification|oos\b|oos\s+result|result\s+outside\s+spec|'
+            r'failing\s+result|specification\s+limit\s+exceeded)',
+            text_lower
+        ))
+        has_oos_action = bool(re.search(
+            r'(?:oos\s+(?:investigation|procedure|sop|protocol)|'
+            r'investigate.*oos|oos.*initiated|oos.*report|'
+            r'initiate.*investigation.*oos|failing.*investigate)',
+            text_lower
+        ))
+        if has_oos_criteria and has_oos_action:
+            return []
+        if not has_oos_criteria:
+            return [FindingResult(
+                level="L5",
+                severity="medium",
+                category="oos_trigger_not_defined",
+                title="OOS investigation trigger criteria not defined in analytical method",
+                description=(
+                    "The method does not define what constitutes an Out-of-Specification (OOS) result "
+                    "or the criteria that trigger an OOS investigation. Per FDA OOS Guidance 2006 and "
+                    "21 CFR 211.192, every analytical method that generates a specification-testable "
+                    "result must reference OOS investigation procedures. Analysts must know what action "
+                    "to take when a result falls outside the specification before performing the analysis."
+                ),
+                evidence="",
+                regulatory_citation="FDA OOS Guidance 2006 / 21 CFR 211.192",
+                citation_type="direct",
+                agency="FDA",
+                suggestion_draft=(
+                    "Add to Results / Reporting section:\n"
+                    "OOS Investigation Trigger:\n"
+                    "If any result falls outside the specification limit, immediately notify supervisor "
+                    "and initiate an OOS investigation per [SOP reference]. Do not re-analyse before "
+                    "completing Phase I laboratory investigation and obtaining QA authorization.\n"
+                    "OOS Specification Limits: [Reference to specification document]"
+                ),
+                next_step_text="Add OOS definition and investigation trigger reference to the Results section.",
+                remediation_priority=3,
+                confidence_score=0.72,
+                validated=True,
+            )]
+        return []
+
+    def _check_l5_oot_trend_criteria(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Method should define Out-of-Trend (OOT) criteria and trending thresholds."""
+        text_lower = ctx.document_text.lower()
+        has_oot = bool(re.search(
+            r'(?:out[\s-]of[\s-]trend|oot\b|trending|trend\s+(?:analysis|criteria|monitoring|alert)|'
+            r'statistical\s+process\s+control|spc\b|alert\s+limit|action\s+limit)',
+            text_lower
+        ))
+        if has_oot:
+            return []
+        return [FindingResult(
+            level="L5",
+            severity="low",
+            category="oot_criteria_absent",
+            title="Out-of-Trend (OOT) criteria not defined",
+            description=(
+                "The method does not define Out-of-Trend (OOT) criteria, alert limits, or trending "
+                "thresholds. OOT criteria enable early detection of systematic drift before results "
+                "become OOS. FDA and ICH Q10 expectations include proactive trending for methods "
+                "used in product release and stability testing. Absence of OOT criteria limits the "
+                "method's utility as a process performance monitoring tool."
+            ),
+            evidence="",
+            regulatory_citation="ICH Q10 / FDA PAT Guidance",
+            citation_type="indirect",
+            agency="FDA",
+            suggestion_draft=(
+                "Add to Statistical Controls / Results section:\n"
+                "Out-of-Trend (OOT) Alert Limits:\n"
+                "• Alert Limit: [Mean ± 2σ] (or 80% of specification limit)\n"
+                "• Action Limit: [Mean ± 3σ] (or 90% of specification limit)\n"
+                "Results approaching the alert limit shall be flagged for trend review per [SOP reference]."
+            ),
+            next_step_text="Define OOT alert and action limits based on historical method performance data.",
+            remediation_priority=4,
+            confidence_score=0.65,
+            validated=True,
+        )]
+
+    def _check_l5_retest_retake_criteria(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Method must define criteria under which a retest or sample retake is permitted."""
+        text_lower = ctx.document_text.lower()
+        has_retest_criteria = bool(re.search(
+            r'(?:retest\s+(?:criteria|is\s+(?:not\s+)?permitted|policy|conditions?)|'
+            r'when\s+(?:to\s+)?retest|conditions?\s+for\s+retest|'
+            r'retake\s+(?:criteria|is\s+permitted|conditions?)|'
+            r'repeat\s+analysis\s+(?:is\s+(?:not\s+)?permitted|requires?|criteria))',
+            text_lower
+        ))
+        has_retest_mention = bool(re.search(r'retest|retake|repeat\s+(?:test|analysis|injection)', text_lower))
+        if has_retest_criteria:
+            return []
+        if not has_retest_mention:
+            return [FindingResult(
+                level="L5",
+                severity="medium",
+                category="retest_criteria_absent",
+                title="Retest/retake criteria not defined",
+                description=(
+                    "The method does not define the conditions under which a retest or sample retake "
+                    "is permitted. FDA OOS Guidance 2006 is explicit: retesting is only permissible "
+                    "when an assignable laboratory error has been documented; otherwise it constitutes "
+                    "testing into compliance. Methods must pre-specify legitimate retest conditions "
+                    "(e.g., instrumental failure, contaminated sample, calculational error) to "
+                    "distinguish valid retests from post-hoc result manipulation."
+                ),
+                evidence="",
+                regulatory_citation="FDA OOS Guidance 2006",
+                citation_type="direct",
+                agency="FDA",
+                suggestion_draft=(
+                    "Add to Procedure or Results section:\n"
+                    "Retest / Repeat Analysis Policy:\n"
+                    "Repeat analysis is ONLY permitted when a documented assignable laboratory cause "
+                    "is identified (e.g., sample preparation error, instrument malfunction, contamination).\n"
+                    "A repeat analysis without an assignable cause requires initiation of an OOS investigation.\n"
+                    "Unauthorized retesting constitutes testing into compliance and is prohibited."
+                ),
+                next_step_text="Add explicit retest criteria and OOS investigation requirement.",
+                remediation_priority=2,
+                confidence_score=0.74,
+                validated=True,
+            )]
+        return []
+
+    def _check_l5_statistical_tools_specified(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Methods involving calculations should specify statistical tools or software."""
+        text_lower = ctx.document_text.lower()
+        has_calculation = bool(re.search(
+            r'(?:calculate|computation|mean|average|rsd\b|%\s*rsd|standard\s+deviation|confidence\s+interval)',
+            text_lower
+        ))
+        if not has_calculation:
+            return []
+        has_stat_tool = bool(re.search(
+            r'(?:excel|waters\s+empower|chromeleon|openlab|labx|minitab|jmp|spss|'
+            r'statistical\s+(?:software|tool|package)|data\s+system|cds\b)',
+            text_lower
+        ))
+        if has_stat_tool:
+            return []
+        return [FindingResult(
+            level="L5",
+            severity="low",
+            category="statistical_tools_not_specified",
+            title="Statistical calculation tool or software not specified",
+            description=(
+                "The method involves statistical calculations but does not specify the software or "
+                "tool used (e.g., Waters Empower, Agilent OpenLAB, Excel with specified version). "
+                "Per 21 CFR Part 11 and EU GMP Annex 11, computer systems used for calculations "
+                "must be identified and qualified. Specifying the calculation tool ensures result "
+                "reproducibility and supports data integrity requirements."
+            ),
+            evidence="",
+            regulatory_citation="21 CFR Part 11 / EU GMP Annex 11",
+            citation_type="direct",
+            agency="FDA",
+            suggestion_draft="Add: 'Calculations shall be performed using [Software Name, Version]. The system is qualified per [qualification record reference].'",
+            next_step_text="Specify the validated software used for calculations and its qualification status.",
+            remediation_priority=4,
+            confidence_score=0.62,
+            validated=True,
+        )]
+
+    # ========== L5: CAPA Data & Statistical Intelligence Checks ==========
+
+    def _check_l5_metrics_defined_for_effectiveness(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPA effectiveness check must define specific, measurable metrics — not just 'no recurrence'."""
+        text_lower = ctx.document_text.lower()
+        has_effectiveness = bool(re.search(
+            r'(?:effectiveness\s+check|effectiveness\s+verif|effectiveness\s+criteria|'
+            r'check\s+effectiveness|verify\s+effectiveness)',
+            text_lower
+        ))
+        if not has_effectiveness:
+            return []
+        has_measurable = bool(re.search(
+            r'(?:zero\s+recurrence|no\s+(?:further\s+)?recurrence\s+(?:in|for|within)\s+\d|'
+            r'rate\s+(?:below|of|reduced\s+by)|kpi|key\s+performance|metric\s+is|'
+            r'measured\s+by|target\s+(?:value|threshold)|≤\s*\d|>\s*\d\s*%|'
+            r'\d+\s*%\s+(?:reduction|improvement|compliance))',
+            text_lower
+        ))
+        if has_measurable:
+            return []
+        return [FindingResult(
+            level="L5",
+            severity="medium",
+            category="effectiveness_metrics_vague",
+            title="Effectiveness check lacks specific measurable metrics",
+            description=(
+                "An effectiveness check is referenced but lacks specific, measurable criteria. "
+                "Effectiveness checks stated only as 'no recurrence observed' or 'issue does not "
+                "reoccur' cannot be objectively verified. Per ICH Q10 and FDA CAPA expectations, "
+                "effectiveness checks must define a measurable target (e.g., zero recurrence of "
+                "deviation type X within 6 months, deviation rate reduced by ≥50%, 100% compliance "
+                "to SOP Y as verified by audit). Vague effectiveness criteria are a frequent FDA "
+                "483 observation in CAPA systems."
+            ),
+            evidence="Effectiveness check referenced without quantitative success criteria.",
+            regulatory_citation="ICH Q10 / 21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            suggestion_draft=(
+                "Update effectiveness check section:\n"
+                "Effectiveness Metric: [Zero recurrence of [deviation type] within 12 months of CAPA closure]\n"
+                "Measurement Method: [Review of deviation log / audit results / complaint rate]\n"
+                "Target: [0 recurrences OR ≥50% reduction in frequency]\n"
+                "Review Date: [Date, typically 6–12 months post-closure]\n"
+                "Responsible: [QA Manager / CAPA Owner]\n"
+                "Success Criterion: [Specific, objective outcome that confirms root cause is eliminated]"
+            ),
+            next_step_text="Define a measurable effectiveness metric with a specific target value and review date.",
+            remediation_priority=3,
+            confidence_score=0.76,
+            validated=True,
+        )]
+
+    def _check_l5_monitoring_period_defined(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """CAPA must define the post-closure monitoring period for recurrence monitoring."""
+        text_lower = ctx.document_text.lower()
+        has_capa = bool(re.search(r'\bcapa\b|corrective.*preventive', text_lower))
+        if not has_capa:
+            return []
+        has_monitoring_period = bool(re.search(
+            r'(?:monitor(?:ing)?\s+(?:for|period|duration)|'
+            r'post[\s-]closure\s+(?:monitoring|review|period)|'
+            r'(?:6|12|24|36|18|3|9)\s+months?\s+(?:post|after|following)|'
+            r'monitoring\s+(?:for|period)\s+(?:of\s+)?\d+\s+(?:months?|days?|years?)|'
+            r'surveillance\s+period)',
+            text_lower
+        ))
+        if has_monitoring_period:
+            return []
+        return [FindingResult(
+            level="L5",
+            severity="low",
+            category="monitoring_period_not_defined",
+            title="Post-closure recurrence monitoring period not defined",
+            description=(
+                "The CAPA does not specify the post-closure monitoring period during which recurrence "
+                "of the original issue will be tracked. Without a defined surveillance period, there "
+                "is no systematic mechanism to confirm the CAPA eliminated the root cause. "
+                "FDA CAPA guidance and ICH Q10 expect that CAPA closure includes a defined period "
+                "of enhanced monitoring — typically 6–12 months — before the effectiveness check is "
+                "declared successful."
+            ),
+            evidence="",
+            regulatory_citation="ICH Q10 / FDA CAPA guidance",
+            citation_type="indirect",
+            agency="FDA",
+            suggestion_draft=(
+                "Add to CAPA Closure / Effectiveness Check section:\n"
+                "Post-Closure Monitoring Period: [6 months / 12 months from closure date]\n"
+                "Monitoring Activity: [Review deviation log monthly / audit compliance quarterly]\n"
+                "Recurrence Signal: [Any recurrence of [original event type] within monitoring period]\n"
+                "If recurrence detected: re-open CAPA or initiate new CAPA [CAPA-ID reference]"
+            ),
+            next_step_text="Specify the monitoring period duration and what event would trigger CAPA re-opening.",
+            remediation_priority=4,
+            confidence_score=0.68,
+            validated=True,
+        )]
+
     # ========== L1/L3/L4/L7/L8: Deviation Report Checks ==========
 
     def _check_l1_deviation_required_fields(self, ctx: AssessmentContext) -> list[FindingResult]:

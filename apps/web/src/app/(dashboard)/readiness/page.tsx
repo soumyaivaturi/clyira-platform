@@ -24,6 +24,7 @@ interface ReadinessDashboard {
 interface MockResult {
   simulation_id: string;
   readiness_score: number;
+  readiness_interpretation?: string;
   questions: {
     category: string; question: string; criticality: string;
     related_document: string | null; regulatory_basis?: string;
@@ -32,6 +33,9 @@ interface MockResult {
   departments_assessed: string[];
   data_integrity_holds?: number;
   question_count?: number;
+  risk_profile?: { category_id: string; label: string; cfr: string; description: string }[];
+  open_critical_findings?: number;
+  open_high_findings?: number;
 }
 
 interface EnforcementAlert {
@@ -446,14 +450,58 @@ export default function ReadinessPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="bg-card border rounded-xl p-5 flex items-center gap-4">
-                <div className="flex-1">
-                  <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Simulated Readiness Score</p>
-                  <p className="text-3xl font-bold tabular-nums">{mockResult.readiness_score?.toFixed(1) ?? "—"}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{mockResult.questions.length} questions generated</p>
+              {/* Score + interpretation */}
+              <div className="bg-card border rounded-xl p-5">
+                <div className="flex items-start gap-6 flex-wrap">
+                  <div>
+                    <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Readiness Score</p>
+                    <p className="text-3xl font-bold tabular-nums">{mockResult.readiness_score?.toFixed(1) ?? "—"}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{mockResult.questions.length} inspection questions</p>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    {mockResult.readiness_interpretation && (
+                      <p className="text-sm text-foreground font-medium leading-relaxed">{mockResult.readiness_interpretation}</p>
+                    )}
+                    <div className="flex flex-wrap gap-3 mt-2">
+                      {(mockResult.open_critical_findings ?? 0) > 0 && (
+                        <span className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded">
+                          {mockResult.open_critical_findings} open critical finding{mockResult.open_critical_findings !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                      {(mockResult.open_high_findings ?? 0) > 0 && (
+                        <span className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded">
+                          {mockResult.open_high_findings} open high finding{mockResult.open_high_findings !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                      {(mockResult.data_integrity_holds ?? 0) > 0 && (
+                        <span className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded">
+                          {mockResult.data_integrity_holds} DI hold{mockResult.data_integrity_holds !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">Depts: {mockResult.departments_assessed.join(", ")}</p>
+                  </div>
                 </div>
-                <p className="text-xs text-muted-foreground">{mockResult.departments_assessed.join(", ")}</p>
               </div>
+
+              {/* FDA 483 Risk Profile */}
+              {(mockResult.risk_profile?.length ?? 0) > 0 && (
+                <div className="bg-card border rounded-xl p-5">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">FDA 483 Risk Areas Detected</p>
+                  <div className="space-y-2">
+                    {mockResult.risk_profile!.map((r) => (
+                      <div key={r.category_id} className="flex items-start gap-3 py-2 border-b last:border-0">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium">{r.label}</p>
+                          <p className="text-xs text-muted-foreground">{r.description}</p>
+                        </div>
+                        <span className="text-[10px] font-mono text-muted-foreground flex-shrink-0">{r.cfr}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-3">
                 {mockResult.questions.map((q, i) => (

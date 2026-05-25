@@ -174,14 +174,78 @@ Generate 5 realistic FDA inspection questions. Return ONLY the JSON array."""
             "regulatory_basis": "21 CFR 211.68",
         }]
 
+    # ── FDA 483 risk profile mapping ─────────────────────────────────────────
+    FDA_483_CATEGORIES = {
+        "data_integrity": {
+            "label": "Data Integrity & ALCOA+",
+            "cfr": "21 CFR 211.68 / 21 CFR 211.194",
+            "description": "Controls for electronic data, audit trails, and contemporaneous recording",
+        },
+        "oos_investigation": {
+            "label": "OOS/OOT Investigation Adequacy",
+            "cfr": "21 CFR 211.192",
+            "description": "Completeness and timeliness of laboratory investigations",
+        },
+        "capa_system": {
+            "label": "CAPA System",
+            "cfr": "21 CFR 211.192 / ICH Q10",
+            "description": "Root cause analysis depth and effectiveness verification",
+        },
+        "document_control": {
+            "label": "Document Control",
+            "cfr": "21 CFR 211.68",
+            "description": "SOPs current, approved, version-controlled and accessible",
+        },
+        "training": {
+            "label": "Training & Qualification",
+            "cfr": "21 CFR 211.68",
+            "description": "Personnel training records and qualification for assigned tasks",
+        },
+    }
+
+    risk_categories = set()
+    for finding in top_findings[:15]:
+        category_lower = (finding.category or "").lower()
+        level = finding.level or ""
+        if "alcoa" in category_lower or "data_integrity" in category_lower or finding.level == "L4":
+            risk_categories.add("data_integrity")
+        if "oos" in category_lower or "investigation" in category_lower or finding.level in ("L3",):
+            risk_categories.add("oos_investigation")
+        if "capa" in category_lower or "root_cause" in category_lower:
+            risk_categories.add("capa_system")
+        if "document_control" in category_lower or "revision" in category_lower or finding.level == "L2":
+            risk_categories.add("document_control")
+        if "training" in category_lower or "qualification" in category_lower:
+            risk_categories.add("training")
+
+    risk_profile = [
+        {**FDA_483_CATEGORIES[cat], "category_id": cat}
+        for cat in risk_categories
+        if cat in FDA_483_CATEGORIES
+    ]
+
+    score = readiness["company_score"]
+    if score >= 85:
+        readiness_interpretation = "Low inspection risk — minor observations expected at most."
+    elif score >= 70:
+        readiness_interpretation = "Moderate risk — likely to receive 483 observations; addressable with current CAPA program."
+    elif score >= 55:
+        readiness_interpretation = "Elevated risk — expect multiple 483 observations and possible Warning Letter follow-up."
+    else:
+        readiness_interpretation = "High risk — critical deficiencies present; voluntary compliance recommended before inspection."
+
     return {
         "simulation_id": f"mock-{current_user.company_id[:8]}",
         "status": "completed",
         "readiness_score": readiness["company_score"],
+        "readiness_interpretation": readiness_interpretation,
         "data_integrity_holds": readiness.get("data_integrity_holds", 0),
         "questions": questions[:12],
         "question_count": len(questions[:12]),
         "departments_assessed": [d["department"] for d in readiness["departments"]],
+        "risk_profile": risk_profile,
+        "open_critical_findings": len([f for f in top_findings if f.severity == "critical"]),
+        "open_high_findings": len([f for f in top_findings if f.severity == "high"]),
     }
 
 
