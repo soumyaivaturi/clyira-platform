@@ -6,8 +6,9 @@ import Link from "next/link";
 import {
   FileText, Upload, Plus, Search, X, Loader2,
   FileUp, Sparkles, AlertCircle, ChevronRight, CheckSquare, Square, TrendingDown,
+  PlayCircle,
 } from "lucide-react";
-import { documentsApi } from "@/lib/api";
+import { documentsApi, assessmentsApi } from "@/lib/api";
 import { ScoreBadge } from "@/components/shared/score-display";
 import { DocStatusBadge } from "@/components/shared/badges";
 import { EmptyState, LoadingRows } from "@/components/shared/empty-state";
@@ -449,6 +450,8 @@ export default function DocumentsPage() {
   const [showUpload, setShowUpload] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState("");
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
@@ -510,6 +513,27 @@ export default function DocumentsPage() {
           <p className="text-sm text-muted-foreground mt-0.5">Upload, assess, and manage your quality document corpus</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={async () => {
+              setBulkRunning(true);
+              setBulkMsg("");
+              try {
+                const res = await assessmentsApi.bulkRun();
+                const count = res.data.queued ?? 0;
+                setBulkMsg(count > 0 ? `${count} assessment${count !== 1 ? "s" : ""} queued` : "No un-assessed documents found.");
+              } catch {
+                setBulkMsg("Failed to queue bulk assessments.");
+              } finally {
+                setBulkRunning(false);
+                setTimeout(() => setBulkMsg(""), 5000);
+              }
+            }}
+            disabled={bulkRunning}
+            title="Assess all un-assessed documents"
+            className="flex items-center gap-2 px-4 py-2 border rounded-lg text-sm hover:bg-accent transition-colors disabled:opacity-50">
+            {bulkRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
+            Assess All
+          </button>
           <button onClick={() => setShowUpload(true)}
             className="flex items-center gap-2 px-4 py-2 border rounded-lg text-sm hover:bg-accent transition-colors">
             <Upload className="w-4 h-4" /> Upload
@@ -524,6 +548,11 @@ export default function DocumentsPage() {
       {loadError && (
         <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-4 py-3">
           {loadError}
+        </div>
+      )}
+      {bulkMsg && (
+        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm rounded-lg px-4 py-3">
+          {bulkMsg}
         </div>
       )}
 

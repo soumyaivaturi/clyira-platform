@@ -75,6 +75,16 @@ LIR_DTAP = DTAPProfile(
                 "root_cause_named_evidence",
             ],
         ),
+        "L7": LevelConfig(
+            enabled=True,
+            engine="rule",
+            weight=0.8,
+            checks=[
+                "oos_30day_timeline",
+                "phase2_pre_authorization",
+                "capa_timeline_defined",
+            ],
+        ),
         "L8": LevelConfig(
             enabled=True,
             engine="hybrid",
@@ -106,8 +116,9 @@ LIR_DTAP = DTAPProfile(
         "L1": 0.10,
         "L2": 0.05,
         "L3": 0.25,
-        "L4": 0.25,
-        "L8": 0.28,
+        "L4": 0.22,
+        "L7": 0.05,
+        "L8": 0.26,
         "L9": 0.07,
     },
 

@@ -4408,6 +4408,189 @@ class RuleEngine:
             validated=True,
         )
 
+    # ========== L7: LIR Lifecycle / Timeline Checks ==========
+
+    def _check_l7_oos_30day_timeline(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """FDA OOS Guidance 2006 requires the full OOS investigation be completed within 30 calendar days."""
+        text = ctx.document_text
+        text_lower = text.lower()
+        findings = []
+
+        has_overdue_marker = bool(re.search(
+            r'(?:exceed(?:ed|ing)\s+30[\s-]day|beyond\s+30\s+(?:calendar\s+)?day|'
+            r'investigation\s+(?:not\s+)?completed\s+within\s+30|'
+            r'extended\s+investigation\s+timeline|>30\s*days?\s+(?:for\s+)?investigation)',
+            text_lower
+        ))
+        has_extension_justification = bool(re.search(
+            r'(?:extension\s+(?:approved|justif|request)|timeline\s+extension|'
+            r'extended\s+(?:due\s+to|because)|30[\s-]day\s+extension)',
+            text_lower
+        ))
+        has_30day_reference = bool(re.search(
+            r'(?:30[\s-](?:calendar\s+)?day|within\s+30\s+days?|30\s+days?\s+(?:of\s+)?(?:initiation|opening))',
+            text_lower
+        ))
+
+        if has_overdue_marker and not has_extension_justification:
+            findings.append(FindingResult(
+                level="L7",
+                severity="high",
+                category="oos_timeline_exceeded",
+                title="OOS investigation exceeded 30-day timeline without documented justification",
+                description=(
+                    "The investigation indicates it exceeded the 30-calendar-day completion requirement "
+                    "without a documented extension justification. FDA OOS Guidance 2006 requires "
+                    "OOS investigations to be completed within 30 calendar days of initiating the "
+                    "investigation. Extensions require explicit QA approval and documented rationale. "
+                    "Uninvestigated OOS results past 30 days are a recurring FDA 483 observation and "
+                    "Warning Letter theme (e.g., 21 CFR 211.192 deficiencies)."
+                ),
+                evidence=has_overdue_marker and "Text contains markers of exceeded 30-day timeline" or "",
+                regulatory_citation="FDA OOS Guidance 2006 / 21 CFR 211.192",
+                citation_type="direct",
+                agency="FDA",
+                suggestion_draft=(
+                    "Add an Extension Justification section:\n"
+                    "Extension Request Date: [Date]\n"
+                    "Reason for Extension: [Complexity of investigation / pending analytical confirmation / etc.]\n"
+                    "Revised Completion Date: [Date]\n"
+                    "QA Approval of Extension: [Signature / Date]\n\n"
+                    "FDA OOS Guidance 2006 requires completion within 30 calendar days; "
+                    "extensions must be pre-approved and documented."
+                ),
+                next_step_text="Add extension justification with QA approval and revised completion date.",
+                remediation_priority=2,
+                confidence_score=0.80,
+                validated=True,
+            ))
+
+        if not has_30day_reference:
+            findings.append(FindingResult(
+                level="L7",
+                severity="medium",
+                category="oos_timeline_not_referenced",
+                title="OOS investigation does not reference the 30-day completion requirement",
+                description=(
+                    "The investigation does not reference the 30-calendar-day timeline requirement "
+                    "from FDA OOS Guidance 2006. Compliant LIRs should document the initiation date "
+                    "and target completion date and confirm the investigation was concluded within the "
+                    "30-day window (or document an approved extension). Absence of this reference "
+                    "suggests the timeline requirement is not being tracked."
+                ),
+                evidence="",
+                regulatory_citation="FDA OOS Guidance 2006 / 21 CFR 211.192",
+                citation_type="direct",
+                agency="FDA",
+                suggestion_draft=(
+                    "Add to LIR Identification section:\n"
+                    "Investigation Initiation Date: [Date]\n"
+                    "30-Day Target Completion Date: [Date + 30 days]\n"
+                    "Actual Completion Date: [Date]\n"
+                    "Timeline Status: Completed within 30-day window / Extension approved [Ref No.]"
+                ),
+                next_step_text="Add initiation date, 30-day target, and actual completion date to the LIR header.",
+                remediation_priority=3,
+                confidence_score=0.72,
+                validated=True,
+            ))
+
+        return findings
+
+    def _check_l7_phase2_pre_authorization(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Phase II retesting requires pre-authorization before samples are re-analysed."""
+        text_lower = ctx.document_text.lower()
+
+        has_phase2 = bool(re.search(r'phase\s+ii|phase\s+2\b', text_lower))
+        if not has_phase2:
+            return []
+
+        has_preauth = bool(re.search(
+            r'(?:pre[\s-]?authoriz|pre[\s-]?approv|authorized\s+(?:by\s+)?(?:QA|quality)|'
+            r'approval\s+(?:prior|before)\s+(?:re)?test|retesting\s+(?:plan|protocol|pre[\s-]approv))',
+            text_lower
+        ))
+        if has_preauth:
+            return []
+
+        return [FindingResult(
+            level="L7",
+            severity="high",
+            category="phase2_not_pre_authorized",
+            title="Phase II retesting initiated without documented pre-authorization",
+            description=(
+                "Phase II retesting is documented but pre-authorization by QA before retesting "
+                "began was not found. FDA OOS Guidance 2006 is explicit: Phase II retesting "
+                "must be planned and pre-authorized — not initiated ad hoc after a failing result. "
+                "Unauthorized retesting is one of the most cited OOS investigation deficiencies in "
+                "FDA Warning Letters and constitutes testing into compliance."
+            ),
+            evidence="Phase II retesting section present; no pre-authorization language found.",
+            regulatory_citation="FDA OOS Guidance 2006 / 21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            suggestion_draft=(
+                "Add to Phase II section header:\n"
+                "Phase II Retesting Pre-Authorization:\n"
+                "Authorized by (QA): _____________  Date: ___________\n"
+                "Retesting Plan: [# of samples, # of injections, analyst assignment]\n"
+                "Predefined Passing Criterion for Invalidation: [Specify OOS limit]\n\n"
+                "Retesting must be authorized BEFORE analysts perform additional analyses."
+            ),
+            next_step_text="Obtain and document QA pre-authorization for Phase II retesting before analyses are performed.",
+            remediation_priority=1,
+            confidence_score=0.78,
+            validated=True,
+        )]
+
+    def _check_l7_capa_timeline_defined(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """LIR CAPA must include defined completion timelines."""
+        text_lower = ctx.document_text.lower()
+
+        has_capa = bool(re.search(r'\bcapa\b|corrective\s+(?:and\s+)?preventive\s+action', text_lower))
+        if not has_capa:
+            return []
+
+        has_capa_timeline = bool(re.search(
+            r'(?:capa\s+(?:due|target|completion|deadline|by)|'
+            r'complete\s+(?:by|before|within)\s+\d|'
+            r'target\s+(?:date|completion)\s*:\s*\d{1,2}[/-]\d{1,2}|'
+            r'due\s+date\s*:\s*\d)',
+            text_lower
+        ))
+        if has_capa_timeline:
+            return []
+
+        return [FindingResult(
+            level="L7",
+            severity="medium",
+            category="capa_timeline_absent",
+            title="CAPA in LIR lacks defined completion timeline",
+            description=(
+                "CAPA actions are referenced in the LIR but no completion dates or target timelines "
+                "were specified. An LIR CAPA without defined timelines cannot be tracked for "
+                "on-time closure and may signal a systemic issue is unresolved. "
+                "ICH Q10 and FDA expectations require CAPAs to have measurable timelines. "
+                "Open CAPAs from OOS investigations are tracked across inspections."
+            ),
+            evidence="CAPA section present; no completion date found.",
+            regulatory_citation="ICH Q10 / 21 CFR 211.192",
+            citation_type="direct",
+            agency="FDA",
+            suggestion_draft=(
+                "Update CAPA section with:\n"
+                "CAPA ID: [Reference to CAPA record]\n"
+                "Action Description: [What will be done]\n"
+                "Responsible Person: [Name / Role]\n"
+                "Target Completion Date: [Date]\n"
+                "Effectiveness Check Due: [Date, typically 90 days post-completion]"
+            ),
+            next_step_text="Assign CAPA ID, responsible owner, and target completion date for each action.",
+            remediation_priority=3,
+            confidence_score=0.73,
+            validated=True,
+        )]
+
     def _check_l7_change_control_trigger(self, ctx: AssessmentContext) -> Optional[FindingResult]:
         """Impact assessment must describe which changes would invalidate the validation."""
         text_lower = ctx.document_text.lower()

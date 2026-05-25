@@ -8,12 +8,12 @@ import {
   Radio,
   LayoutDashboard,
   Settings,
-  Bell,
   LogOut,
   ChevronDown,
   ClipboardList,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { NotificationBell } from "@/components/shared/notification-bell";
 
 const navigation = [
   {
@@ -122,9 +122,7 @@ export default function DashboardLayout({
         <header className="h-16 border-b bg-card flex items-center justify-between px-6">
           <div />
           <div className="flex items-center gap-4">
-            <button className="relative p-2 rounded-md hover:bg-accent">
-              <Bell className="w-5 h-5 text-muted-foreground" />
-            </button>
+            <NotificationBell />
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                 <span className="text-xs font-semibold text-primary">{initials}</span>

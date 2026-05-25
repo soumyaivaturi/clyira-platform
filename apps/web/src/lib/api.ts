@@ -96,6 +96,8 @@ export const assessmentsApi = {
   getLiveScore: (id: string) => api.get(`/assessments/${id}/live-score`),
   getReport: (id: string) => api.get(`/assessments/${id}/report`),
   recent: (limit = 8) => api.get("/assessments/recent", { params: { limit } }),
+  bulkRun: (documentIds?: string[], includeReferences = true) =>
+    api.post("/assessments/bulk-run", { document_ids: documentIds || null, include_references: includeReferences }),
   exportDocx: (id: string) =>
     api.get(`/assessments/${id}/export/docx`, { responseType: "blob", timeout: 60000 }),
 };
@@ -129,6 +131,11 @@ export const readinessApi = {
   gaps: (department?: string) => api.get("/readiness/gaps", { params: { department } }),
   mockInspection: () => api.post("/readiness/mock-inspection"),
   enforcementAlerts: () => api.get("/readiness/enforcement-alerts"),
+};
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+export const notificationsApi = {
+  alerts: () => api.get("/notifications/alerts"),
 };
 
 // ── Inspections ───────────────────────────────────────────────────────────────

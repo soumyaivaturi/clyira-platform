@@ -169,6 +169,76 @@ async def run_assessment(
     return AssessmentOut.model_validate(assessment)
 
 
+class BulkRunRequest(BaseModel):
+    document_ids: Optional[list[str]] = None  # None = all un-assessed docs for company
+    include_references: bool = True
+
+
+@router.post("/bulk-run", response_model=dict, status_code=status.HTTP_202_ACCEPTED)
+async def bulk_run_assessments(
+    data: BulkRunRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue assessments for multiple documents (or all un-assessed docs if no IDs given)."""
+    from sqlalchemy import desc as sa_desc
+
+    if data.document_ids:
+        result = await db.execute(
+            select(Document).where(
+                Document.id.in_(data.document_ids),
+                Document.company_id == current_user.company_id,
+            )
+        )
+        docs = result.scalars().all()
+    else:
+        # All documents that have never been assessed (no completed assessment)
+        assessed_subq = (
+            select(Assessment.document_id)
+            .where(
+                Assessment.company_id == current_user.company_id,
+                Assessment.status == "completed",
+            )
+            .distinct()
+        )
+        result = await db.execute(
+            select(Document).where(
+                Document.company_id == current_user.company_id,
+                Document.status == "ready",
+                ~Document.id.in_(assessed_subq),
+            )
+        )
+        docs = result.scalars().all()
+
+    if not docs:
+        return {"queued": 0, "assessments": [], "message": "No documents to assess."}
+
+    svc = AssessmentService(db)
+    queued = []
+    for doc in docs:
+        try:
+            assessment = await svc.trigger_assessment(
+                document_id=doc.id,
+                company_id=current_user.company_id,
+                user_id=current_user.id,
+                include_references=data.include_references,
+            )
+            background_tasks.add_task(
+                _run_assessment_task,
+                assessment.id,
+                doc.id,
+                current_user.company_id,
+                data.include_references,
+                None,
+            )
+            queued.append({"assessment_id": assessment.id, "document_id": doc.id, "document_title": doc.title})
+        except Exception:
+            pass
+
+    return {"queued": len(queued), "assessments": queued, "message": f"Queued {len(queued)} assessment(s)."}
+
+
 @router.get("/{assessment_id}", response_model=AssessmentOut)
 async def get_assessment(
     assessment_id: str,

@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from app.core.config import settings
 from app.routers import auth, documents, assessments, companies, readiness, inspections
-from app.routers import assistant, export, audit
+from app.routers import assistant, export, audit, notifications
 
 
 @asynccontextmanager
@@ -237,6 +237,7 @@ app.include_router(assistant.router, prefix="/api/v1/assistant", tags=["Author &
 app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit Trail"])
 app.include_router(readiness.router, prefix="/api/v1/readiness", tags=["Audit Readiness"])
 app.include_router(inspections.router, prefix="/api/v1/inspections", tags=["Real-Time Audit Support"])
+app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"])
 
 
 async def _run_enforcement_seed(source: str, years: int) -> None:
