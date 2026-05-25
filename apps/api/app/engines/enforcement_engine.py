@@ -63,8 +63,10 @@ class EnforcementEngine:
                 finding.enforcement_match = True
                 finding.enforcement_context = rag_engine.format_enforcement_excerpt(precedents)
 
-            # CFR frequency-based severity elevation
-            if cfr:
+            # CFR frequency-based severity elevation — only for L3+ content findings.
+            # L1/L2 structural gaps (missing sections, document control) are already
+            # correctly severity-rated; enforcement precedents don't change their weight.
+            if cfr and finding.level not in ("L1", "L2"):
                 freq = rag_engine.get_cfr_observation_count(cfr)
 
                 if freq >= _FREQ_CRITICAL:

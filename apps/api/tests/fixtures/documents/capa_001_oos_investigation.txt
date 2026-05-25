@@ -7,15 +7,6 @@ Related Deviation: DEV-2025-0031
 Product: Amoxicillin Capsules 500mg, Batch 2025-ABC-001
 Status: Open
 
---- PLANTED DEFICIENCIES ---
-DEFICIENCY-1 [L3/root_cause_depth]: Root cause stated as "human error" — no 5-why or fishbone analysis
-DEFICIENCY-2 [L3/root_cause_depth]: No evidence cited to support root cause conclusion
-DEFICIENCY-3 [L2/missing_element]: No effectiveness check criteria defined with measurable metrics
-DEFICIENCY-4 [L4/vague_language]: "going forward" used to describe corrective actions
-DEFICIENCY-5 [L4/vague_language]: "acceptable range" referenced without specification limits
-DEFICIENCY-6 [L2/missing_element]: No target completion date for preventive action item
---- END PLANTED DEFICIENCIES ---
-
 1. PROBLEM STATEMENT
 
 During routine finished product testing, the dissolution result for Amoxicillin Capsules 500mg, Batch 2025-ABC-001 was found to be 68% at 30 minutes, which falls below the specification limit of NLT 80% (Q). The result was confirmed by retesting per USP methodology. This represents an out-of-specification (OOS) result requiring formal investigation and CAPA.

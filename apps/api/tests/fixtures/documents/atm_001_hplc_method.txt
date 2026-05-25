@@ -8,15 +8,6 @@ Author: Dr. Priya Nair
 Reviewed By: Lab Manager
 Approved By: QA Director
 
---- PLANTED DEFICIENCIES ---
-DEFICIENCY-1 [L5/acceptance_criteria]: System suitability criteria listed without numerical limits ("satisfactory" used instead of specific values)
-DEFICIENCY-2 [L5/critical_parameters_identified]: Column temperature not specified as a critical parameter
-DEFICIENCY-3 [L4/vague_language]: "acceptable" used repeatedly without numerical definition
-DEFICIENCY-4 [L5/measurement_units_specified]: Mobile phase ratio stated as "approximately 70:30" — no tolerance range given
-DEFICIENCY-5 [L2/missing_element]: No statement on method validation status / validation report reference
-DEFICIENCY-6 [L2/missing_element]: No reference to compendial method or primary reference standard specification
---- END PLANTED DEFICIENCIES ---
-
 1. PURPOSE AND SCOPE
 
 This method describes the HPLC procedure for the determination of Metformin Hydrochloride content in finished product tablets. This method applies to QC release testing and stability samples.

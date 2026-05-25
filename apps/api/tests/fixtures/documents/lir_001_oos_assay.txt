@@ -8,15 +8,6 @@ Test: Assay (HPLC)
 OOS Result: 93.8% (Specification: 90.0%–110.0% — RESULT IS WITHIN SPECIFICATION)
 Reason for Investigation: Result below internal alert limit of 95.0%
 
---- PLANTED DEFICIENCIES ---
-DEFICIENCY-1 [L5/oos_investigation_trigger_defined]: Trigger is internal alert limit, not specification — investigation standard unclear
-DEFICIENCY-2 [L4/vague_language]: "acceptable" used without defining the specific threshold for retesting
-DEFICIENCY-3 [L3/evidence_citation]: Phase I and Phase II conclusions not supported by specific data citations
-DEFICIENCY-4 [L4/alcoa_original]: Mentions "corrected chromatogram" without documenting why original was corrected
-DEFICIENCY-5 [L2/missing_element]: No statement on whether retained sample was tested
-DEFICIENCY-6 [L2/missing_element]: Batch disposition recommendation missing from conclusion
---- END PLANTED DEFICIENCIES ---
-
 1. PURPOSE
 
 This Laboratory Investigation Report documents the investigation into an out-of-specification (OOS) / out-of-alert (OOA) result for the Assay determination of Lisinopril Tablets 10mg, Batch 2025-LIS-047. The result of 93.8% is within the specification range of 90.0%–110.0% but falls below the internal alert threshold of 95.0%, triggering this formal investigation.

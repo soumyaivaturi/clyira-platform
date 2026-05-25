@@ -154,13 +154,15 @@ class RuleEngine:
         doc_text_lower = ctx.document_text.lower()
 
         for section in profile.required_sections:
-            # Check if section header exists (flexible matching)
-            patterns = [
-                section.lower(),
-                section.lower().replace(" ", ""),
-                re.escape(section.lower()),
-            ]
-            found = any(p in doc_text_lower for p in patterns)
+            # Keyword-based matching: extract significant words (≥4 chars) from the
+            # section name and check if ANY of them appear in the document. This allows
+            # "Effectiveness Checks" to match "EFFECTIVENESS CHECK", "Root Cause Analysis
+            # Method" to match "ROOT CAUSE ANALYSIS", etc.
+            keywords = [w.lower() for w in section.split() if len(w) >= 4]
+            if keywords:
+                found = any(kw in doc_text_lower for kw in keywords)
+            else:
+                found = section.lower() in doc_text_lower
 
             if not found:
                 findings.append(FindingResult(
@@ -830,8 +832,11 @@ class RuleEngine:
         systemic_indicators = [
             'sop was', 'procedure was', 'training gap', 'ambiguous', 'unclear',
             'not defined', 'workload', 'design flaw', 'systemic', 'root cause of the error',
-            'underlying cause', 'contributing factor', 'because the', 'because there', 'because no',
+            'underlying cause', 'because the', 'because there', 'because no',
         ]
+        # NOTE: 'contributing factor' intentionally excluded — a "Contributing Factors"
+        # section listing surface-level items (operator experience, line speed) is NOT
+        # a systemic root cause analysis and must not suppress this finding.
         for pat in rc_patterns:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
@@ -1939,8 +1944,12 @@ class RuleEngine:
             )]
         sst_start = has_sst.start()
         sst_block = text[sst_start:sst_start + 600]
+        # Require explicit limit operators or percent values — bare \d+\.\d+ is excluded
+        # because section numbers like "7.1" would otherwise create false matches.
         has_numeric = re.search(
-            r'(?:NMT|NLT|not\s+more\s+than|not\s+less\s+than|≤|≥|±|\d+\.\d+|\d+\s*%)',
+            r'(?:NMT|NLT|not\s+more\s+than|not\s+less\s+than|≤|≥|±)\s*\d'
+            r'|\d+\s*%'
+            r'|\d+\.\d+\s*(?:ppm|µg|mg|mL|nm|mm)\b',
             sst_block, re.IGNORECASE
         )
         has_only_generic = (
