@@ -1,0 +1,41 @@
+Clyira API — Alembic Migration Guide
+=====================================
+
+## Setup (first time on existing Render DB)
+
+The Render DB already has all tables from SQLAlchemy create_all(). Mark the
+baseline migration as applied without running it:
+
+    cd apps/api
+    alembic stamp 001_baseline
+
+## Common commands
+
+    # Apply all pending migrations:
+    alembic upgrade head
+
+    # Roll back one migration:
+    alembic downgrade -1
+
+    # Show current migration state:
+    alembic current
+
+    # Generate a new migration from model changes:
+    alembic revision --autogenerate -m "add xyz column"
+
+    # Show migration history:
+    alembic history --verbose
+
+## Creating a new migration
+
+1. Make your model changes in apps/api/app/models/
+2. Run: alembic revision --autogenerate -m "describe the change"
+3. Review the generated file in alembic/versions/
+4. Apply: alembic upgrade head
+
+## Notes
+
+- Migrations run asynchronously (asyncpg driver) via asyncio.run()
+- DATABASE_URL is read from settings (env var or .env file)
+- The baseline migration is safe to run on a fresh DB — it creates all tables
+- On an existing DB, use `alembic stamp 001_baseline` to skip it
