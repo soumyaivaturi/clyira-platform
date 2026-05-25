@@ -167,14 +167,15 @@ ATM_DTAP = DTAPProfile(
             required_context=["historical_assessments"],
         ),
         "L11": LevelConfig(
-            enabled=True,  # ATMs are often submission-relevant
-            engine="hybrid",
+            enabled=True,
+            engine="rule",
             weight=1.0,
             checks=[
-                "ectd_module_3_format",
-                "method_description_completeness",
-                "validation_report_linkage",
-                "specification_alignment",
+                "no_tbd_placeholders",
+                "no_draft_language",
+                "effective_date_present",
+                "blank_signature_lines",
+                "version_control_complete",
             ],
         ),
     },

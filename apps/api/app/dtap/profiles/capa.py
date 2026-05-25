@@ -175,10 +175,16 @@ CAPA_DTAP = DTAPProfile(
             required_context=["historical_assessments"],
         ),
         "L11": LevelConfig(
-            enabled=False,
+            enabled=True,
             engine="rule",
-            weight=0.5,
-            checks=[],
+            weight=1.0,
+            checks=[
+                "no_tbd_placeholders",
+                "no_draft_language",
+                "effective_date_present",
+                "blank_signature_lines",
+                "version_control_complete",
+            ],
         ),
     },
 

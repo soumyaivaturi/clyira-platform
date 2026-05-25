@@ -102,6 +102,8 @@ export const assessmentsApi = {
     api.get(`/assessments/${id}/export/docx`, { responseType: "blob", timeout: 60000 }),
   exportCsv: (id: string) =>
     api.get(`/assessments/${id}/export/csv`, { responseType: "blob", timeout: 30000 }),
+  historyByDocument: (documentId: string) =>
+    api.get(`/assessments/by-document/${documentId}`),
 };
 
 // ── Assistant ─────────────────────────────────────────────────────────────────

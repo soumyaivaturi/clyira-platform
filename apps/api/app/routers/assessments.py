@@ -240,6 +240,50 @@ async def bulk_run_assessments(
     return {"queued": len(queued), "assessments": queued, "message": f"Queued {len(queued)} assessment(s)."}
 
 
+@router.get("/by-document/{document_id}", response_model=dict)
+async def get_document_assessment_history(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all completed assessments for a document, oldest first — for score trend charts."""
+    from sqlalchemy import asc as sa_asc
+    doc_result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.company_id == current_user.company_id,
+        )
+    )
+    if not doc_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    result = await db.execute(
+        select(Assessment)
+        .where(
+            Assessment.document_id == document_id,
+            Assessment.status == "completed",
+        )
+        .order_by(sa_asc(Assessment.created_at))
+    )
+    history = []
+    for a in result.scalars().all():
+        history.append({
+            "id": a.id,
+            "clyira_score": a.clyira_score,
+            "adjusted_score": a.adjusted_score,
+            "score_band": a.score_band,
+            "findings_critical": a.findings_critical or 0,
+            "findings_high": a.findings_high or 0,
+            "findings_medium": a.findings_medium or 0,
+            "findings_low": a.findings_low or 0,
+            "data_integrity_hold": a.data_integrity_hold or False,
+            "dtap_id": a.dtap_id,
+            "processing_time_seconds": a.processing_time_seconds,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        })
+    return {"document_id": document_id, "history": history, "count": len(history)}
+
+
 @router.get("/{assessment_id}", response_model=AssessmentOut)
 async def get_assessment(
     assessment_id: str,

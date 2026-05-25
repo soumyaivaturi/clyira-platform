@@ -159,13 +159,15 @@ SOP_DTAP = DTAPProfile(
             required_context=["historical_assessments"],
         ),
         "L11": LevelConfig(
-            enabled=False,  # Only for submission-related docs
-            engine="hybrid",
+            enabled=True,
+            engine="rule",
             weight=1.0,
             checks=[
-                "submission_format_compliance",
-                "ectd_structure",
-                "module_completeness",
+                "no_tbd_placeholders",
+                "no_draft_language",
+                "effective_date_present",
+                "blank_signature_lines",
+                "version_control_complete",
             ],
         ),
     },

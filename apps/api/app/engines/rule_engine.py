@@ -5376,3 +5376,194 @@ class RuleEngine:
             ))
 
         return findings
+
+    # ========== L11: Inspection Readiness Checks ==========
+
+    def _check_l11_no_tbd_placeholders(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Document must not contain TBD/TODO/placeholder text before inspection."""
+        text = ctx.document_text
+        placeholder_patterns = [
+            (r'\bTBD\b', "TBD"),
+            (r'\bTBC\b', "TBC"),
+            (r'\bTBR\b', "TBR"),
+            (r'\bTODO\b', "TODO"),
+            (r'\[INSERT\b', "[INSERT ...]"),
+            (r'\[PLACEHOLDER\b', "[PLACEHOLDER]"),
+            (r'\[TO BE COMPLETED\b', "[TO BE COMPLETED]"),
+            (r'\[TO BE ADDED\b', "[TO BE ADDED]"),
+            (r'to\s+be\s+determined\b(?!\s+by\s+(?:QA|analyst))', "to be determined"),
+            (r'not\s+yet\s+available\b', "not yet available"),
+        ]
+        found = []
+        for pat, label in placeholder_patterns:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                start = max(0, m.start() - 60)
+                excerpt = text[start:m.end() + 60].strip().replace('\n', ' ')
+                found.append(f'"{label}" at: …{excerpt}…')
+
+        if not found:
+            return []
+        return [FindingResult(
+            level="L11",
+            severity="high",
+            category="placeholder_text_present",
+            title=f"Unresolved placeholder text detected ({len(found)} instance{'s' if len(found) > 1 else ''})",
+            description=(
+                f"The document contains {len(found)} unresolved placeholder(s): "
+                f"{'; '.join(found[:3])}. A document presented to an FDA investigator "
+                f"with TBD/placeholder text will be cited as incomplete under 21 CFR 211.100."
+            ),
+            evidence=found[0],
+            regulatory_citation="21 CFR 211.100(a)",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.97,
+            validated=True,
+        )]
+
+    def _check_l11_no_draft_language(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Document must not carry DRAFT watermark or 'not for use' language."""
+        text = ctx.document_text
+        draft_patterns = [
+            r'\bDRAFT\b',
+            r'NOT\s+FOR\s+(?:USE|DISTRIBUTION|RELEASE|IMPLEMENTATION)',
+            r'FOR\s+REVIEW\s+ONLY',
+            r'PRELIMINARY\s+(?:VERSION|DRAFT|COPY)',
+            r'DO\s+NOT\s+USE\b',
+            r'UNDER\s+DEVELOPMENT\b',
+        ]
+        for pat in draft_patterns:
+            m = re.search(pat, text[:3000], re.IGNORECASE)
+            if m:
+                return [FindingResult(
+                    level="L11",
+                    severity="critical",
+                    category="draft_document",
+                    title="Document carries DRAFT or 'not for use' designation",
+                    description=(
+                        f"The document header contains '{m.group(0).strip()}', indicating it is "
+                        f"not in approved/effective status. Using or citing a DRAFT document "
+                        f"during an FDA inspection is a direct 21 CFR 211.100(b) violation."
+                    ),
+                    evidence=text[max(0, m.start()-30):m.end()+60].strip(),
+                    regulatory_citation="21 CFR 211.100(b)",
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.98,
+                    validated=True,
+                )]
+        return []
+
+    def _check_l11_effective_date_present(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Document must have an effective/issue/approval date in the header."""
+        text_top = ctx.document_text[:2000]
+        date_patterns = [
+            r'(?:effective|issue|approval|approved|issued|date)\s*(?:date)?[:\s]*\d{1,2}[-/]\d{1,2}[-/]\d{2,4}',
+            r'(?:effective|issue|approval|approved|issued|date)\s*(?:date)?[:\s]*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*[\s.,]+\d{4}',
+            r'(?:effective|issue|approval)\s*(?:date)?[:\s]*\d{4}-\d{2}-\d{2}',
+        ]
+        for pat in date_patterns:
+            if re.search(pat, text_top, re.IGNORECASE):
+                return []
+        return [FindingResult(
+            level="L11",
+            severity="high",
+            category="effective_date_missing",
+            title="Effective/approval date absent from document header",
+            description=(
+                "No effective date or approval date was found in the document header. "
+                "An FDA investigator will flag any quality document that cannot be dated — "
+                "it cannot be determined whether the document was in effect at the time of "
+                "the event under investigation."
+            ),
+            regulatory_citation="21 CFR 211.68; 21 CFR 211.100",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.85,
+            validated=True,
+        )]
+
+    def _check_l11_blank_signature_lines(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """All signature fields must be completed — blank lines are a critical inspection finding."""
+        text = ctx.document_text
+        blank_sig_patterns = [
+            r'(?:signature|signed|approved\s+by|author)[:\s]*_{3,}',
+            r'(?:signature|signed|approved\s+by|author)[:\s]*\.\.\.',
+            r'(?:signature|signed|approved\s+by|author)[:\s]*\[?\s*\]?$',
+            r'(?:QA|quality\s+(?:assurance|manager|director))\s+(?:signature|approval)[:\s]*_{3,}',
+        ]
+        blanks = []
+        for pat in blank_sig_patterns:
+            for m in re.finditer(pat, text, re.IGNORECASE | re.MULTILINE):
+                context_line = text[max(0, m.start()-20):m.end()+20].strip().replace('\n', ' ')
+                blanks.append(context_line[:120])
+        if not blanks:
+            return []
+        return [FindingResult(
+            level="L11",
+            severity="critical",
+            category="blank_signatures",
+            title=f"Unsigned approval/signature field{'s' if len(blanks) > 1 else ''} detected ({len(blanks)})",
+            description=(
+                f"Found {len(blanks)} blank signature or approval line(s). "
+                f"A document with blank signatures presented during an FDA inspection "
+                f"is an immediate 483 observation — it cannot be considered an approved, "
+                f"controlled document. Example: {blanks[0]}"
+            ),
+            evidence=blanks[0],
+            regulatory_citation="21 CFR 211.68; 21 CFR 211.100(b)",
+            citation_type="direct",
+            agency="FDA",
+            confidence_score=0.93,
+            validated=True,
+        )]
+
+    def _check_l11_version_control_complete(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Document must carry a version number and revision history."""
+        text_top = ctx.document_text[:3000]
+        has_version = bool(re.search(
+            r'(?:version|revision|rev\.?|ver\.?)[:\s]*\d+[\d.]*',
+            text_top, re.IGNORECASE
+        ))
+        has_history = bool(re.search(
+            r'(?:revision\s+history|change\s+log|change\s+history|document\s+history|version\s+history)',
+            ctx.document_text, re.IGNORECASE
+        ))
+        findings = []
+        if not has_version:
+            findings.append(FindingResult(
+                level="L11",
+                severity="high",
+                category="version_number_missing",
+                title="Version/revision number absent from document header",
+                description=(
+                    "No version or revision number was found in the first 3000 characters. "
+                    "Version control is required for all GMP documents under 21 CFR 211.68 "
+                    "and EU GMP Chapter 4. Without a version number, document currency "
+                    "cannot be confirmed during an inspection."
+                ),
+                regulatory_citation="21 CFR 211.68; EU GMP Chapter 4",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.88,
+                validated=True,
+            ))
+        if not has_history:
+            findings.append(FindingResult(
+                level="L11",
+                severity="medium",
+                category="revision_history_absent",
+                title="Revision history section not found",
+                description=(
+                    "No revision history section was detected. GMP-compliant documents "
+                    "must maintain a revision history documenting what changed, who changed "
+                    "it, and why — to demonstrate document lifecycle control."
+                ),
+                regulatory_citation="21 CFR 211.68",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.82,
+                validated=True,
+            ))
+        return findings

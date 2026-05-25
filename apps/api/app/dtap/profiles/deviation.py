@@ -108,6 +108,18 @@ DEVIATION_DTAP = DTAPProfile(
             ],
             required_context=["findings_so_far", "enforcement_records"],
         ),
+        "L11": LevelConfig(
+            enabled=True,
+            engine="rule",
+            weight=1.0,
+            checks=[
+                "no_tbd_placeholders",
+                "no_draft_language",
+                "effective_date_present",
+                "blank_signature_lines",
+                "version_control_complete",
+            ],
+        ),
     },
 
     score_weights={
@@ -117,7 +129,8 @@ DEVIATION_DTAP = DTAPProfile(
         "L4": 0.20,
         "L7": 0.05,
         "L8": 0.25,
-        "L9": 0.10,
+        "L9": 0.07,
+        "L11": 0.03,
     },
 
     passing_threshold=70.0,
