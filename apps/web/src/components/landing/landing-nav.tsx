@@ -22,9 +22,9 @@ export function LandingNav() {
     >
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2.5">
-          <img src="/clyira-logo.png" alt="Clyira" className="w-10 h-10 object-contain" />
-          <span className="font-bold text-lg tracking-tight text-gray-900">
-            CLYIRA<span style={{ color: "#7654c9" }}>.</span>AI
+          <img src="/clyira-logo.png" alt="Clyira" className="w-12 h-12 object-contain" />
+          <span className="font-extrabold text-xl tracking-tight text-gray-900">
+            CLYIRA<span style={{ color: "#7654c9", fontSize: "1.4em", lineHeight: 1 }}>.</span>AI
           </span>
         </Link>
 
