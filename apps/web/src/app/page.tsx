@@ -177,14 +177,23 @@ export default function LandingPage() {
           <div className="max-w-3xl mx-auto text-center">
 
             <AnimateIn delay={0}>
+              <div className="flex items-center justify-center gap-3 mb-8">
+                <img src="/clyira-logo.png" alt="Clyira" className="w-20 h-20 object-contain drop-shadow-sm" />
+                <span className="font-bold text-4xl tracking-tight text-gray-900">
+                  CLYIRA<span style={{ color: "#7654c9" }}>.</span>AI
+                </span>
+              </div>
+            </AnimateIn>
+
+            <AnimateIn delay={60}>
               <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-clyira-200 bg-clyira-50 text-xs font-semibold text-clyira-700 mb-8">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 AI-Powered Regulatory Intelligence for Life Sciences
               </div>
             </AnimateIn>
 
-            <AnimateIn delay={80}>
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-tight text-gray-900 mb-6">
+            <AnimateIn delay={130}>
+              <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.1] text-gray-900 mb-6">
                 Audit-ready.<br />
                 <span className="text-transparent bg-clip-text bg-gradient-to-r from-clyira-600 to-violet-500">
                   Always.
@@ -192,14 +201,14 @@ export default function LandingPage() {
               </h1>
             </AnimateIn>
 
-            <AnimateIn delay={160}>
-              <p className="text-lg text-gray-500 leading-relaxed mb-10 max-w-2xl mx-auto">
+            <AnimateIn delay={200}>
+              <p className="text-xl text-gray-500 leading-relaxed mb-10 max-w-2xl mx-auto">
                 Clyira gives pharmaceutical, biotech, and medical device teams real-time AI document assessment,
                 department-level readiness scores, and live inspection support — built for FDA, EMA, and ICH standards.
               </p>
             </AnimateIn>
 
-            <AnimateIn delay={220}>
+            <AnimateIn delay={260}>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
                 <Link
                   href="/auth/register"
@@ -217,7 +226,7 @@ export default function LandingPage() {
               </div>
             </AnimateIn>
 
-            <AnimateIn delay={280}>
+            <AnimateIn delay={320}>
               <div className="flex flex-wrap items-center justify-center gap-6">
                 {complianceBadges.map(({ icon: Icon, label }) => (
                   <div key={label} className="flex items-center gap-1.5 text-xs text-gray-400">
