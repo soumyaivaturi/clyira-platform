@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_KEY: str = ""
     SUPABASE_STORAGE_BUCKET: str = "documents"
 
+    # Email (Resend — https://resend.com, free tier 3,000/month)
+    RESEND_API_KEY: str = ""
+    EMAIL_FROM: str = "Clyira <notifications@clyira.ai>"
+    EMAIL_ENABLED: bool = True  # Set False to disable all emails regardless of API key
+
     # Assessment Engine
     ASSESSMENT_TIMEOUT_SECONDS: int = 300
     MAX_CONCURRENT_ASSESSMENTS: int = 5

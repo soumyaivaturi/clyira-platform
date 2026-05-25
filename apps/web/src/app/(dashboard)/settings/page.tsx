@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { companiesApi } from "@/lib/api";
-import { Settings, User, Building2, Bell, Shield, Key, Save, Loader2, CheckCircle, X } from "lucide-react";
+import { companiesApi, notificationsApi } from "@/lib/api";
+import { Settings, User, Building2, Bell, Shield, Key, Save, Loader2, CheckCircle, X, Send, Mail } from "lucide-react";
 
 const TABS = [
   { key: "profile", label: "Profile", icon: User },
@@ -260,6 +260,89 @@ function CompanyTab() {
   );
 }
 
+function NotificationsTab() {
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<{ sent: boolean; to?: string; reason?: string } | null>(null);
+
+  const handleTestEmail = async () => {
+    setSending(true);
+    setResult(null);
+    try {
+      const res = await notificationsApi.testEmail();
+      setResult(res.data);
+    } catch {
+      setResult({ sent: false, reason: "Request failed — check console for details." });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-card border rounded-xl p-6 space-y-5">
+        <h2 className="font-semibold text-sm">Email Notifications</h2>
+        <p className="text-xs text-muted-foreground -mt-2">
+          Clyira sends email alerts when assessments complete or critical quality events occur.
+          Requires <code className="bg-muted px-1 py-0.5 rounded text-[10px] font-mono">RESEND_API_KEY</code> to be set in your Render environment.
+        </p>
+
+        {[
+          { label: "Assessment completed", desc: "Detailed score and findings summary when an AI assessment finishes", active: true },
+          { label: "Data Integrity hold", desc: "Immediate alert when a DI hold is activated (score capped at 50)", active: true },
+        ].map(n => (
+          <div key={n.label} className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">{n.label}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{n.desc}</p>
+            </div>
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold ${
+              n.active ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-muted text-muted-foreground border"
+            }`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${n.active ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />
+              {n.active ? "Active" : "Inactive"}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-card border rounded-xl p-6 space-y-4">
+        <h2 className="font-semibold text-sm">Send Test Email</h2>
+        <p className="text-xs text-muted-foreground">
+          Verify that email delivery is working by sending a test message to your account email.
+        </p>
+
+        <button
+          onClick={handleTestEmail}
+          disabled={sending}
+          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 transition-colors"
+        >
+          {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          {sending ? "Sending…" : "Send Test Email"}
+        </button>
+
+        {result && (
+          <div className={`flex items-start gap-3 p-3 rounded-lg border text-sm ${
+            result.sent
+              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+              : "bg-amber-50 border-amber-200 text-amber-800"
+          }`}>
+            {result.sent
+              ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              : <Mail className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            }
+            <div>
+              {result.sent
+                ? <p>Test email sent to <strong>{result.to}</strong>. Check your inbox.</p>
+                : <p>{result.reason || "Email could not be sent."}</p>
+              }
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { user } = useAuth();
   const [tab, setTab] = useState("profile");
@@ -331,30 +414,7 @@ export default function SettingsPage() {
 
           {tab === "company" && <CompanyTab />}
 
-          {tab === "notifications" && (
-            <div className="bg-card border rounded-xl p-6 space-y-5">
-              <h2 className="font-semibold text-sm">Notification Preferences</h2>
-              {[
-                { label: "Assessment completed", desc: "When a document AI assessment finishes" },
-                { label: "Score drops below threshold", desc: "When a department score falls below 65" },
-                { label: "Inspection request logged", desc: "When a new inspector request is added" },
-                { label: "Enforcement alerts", desc: "New regulatory warning letters and enforcement actions" },
-              ].map(n => (
-                <div key={n.label} className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-medium">{n.label}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">{n.desc}</p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer flex-shrink-0">
-                    <input type="checkbox" defaultChecked className="sr-only peer" />
-                    <div className="w-9 h-5 bg-muted rounded-full peer peer-checked:bg-primary transition-colors" />
-                    <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4" />
-                  </label>
-                </div>
-              ))}
-              <p className="text-xs text-muted-foreground">Notification delivery (email, in-app) will be configurable in a future release.</p>
-            </div>
-          )}
+          {tab === "notifications" && <NotificationsTab />}
 
           {tab === "security" && (
             <div className="bg-card border rounded-xl p-6 space-y-4">

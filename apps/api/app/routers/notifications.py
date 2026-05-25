@@ -192,3 +192,50 @@ async def get_alerts(
         "high_count": sum(1 for a in alerts if a["severity"] == "high"),
         "medium_count": sum(1 for a in alerts if a["severity"] == "medium"),
     }
+
+
+@router.post("/test-email", response_model=dict)
+async def test_email_notification(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Send a test email to the authenticated user's address.
+    Returns whether the send succeeded so users can verify email configuration.
+    """
+    from app.services.email_service import _email_available, _send, _base_email
+    from app.core.config import settings
+
+    if not _email_available():
+        return {
+            "sent": False,
+            "to": current_user.email,
+            "reason": "Email not configured. Set RESEND_API_KEY environment variable on Render.",
+        }
+
+    body = f"""
+<h2 style="margin:0 0 8px;color:#1e293b;font-size:18px;font-weight:700;">Test Email</h2>
+<p style="margin:0 0 20px;color:#64748b;font-size:14px;">
+  This is a test email from Clyira to confirm your notification settings are working correctly.
+</p>
+<p style="margin:0 0 20px;color:#64748b;font-size:14px;">
+  You will receive emails when:
+</p>
+<ul style="color:#64748b;font-size:14px;margin:0 0 24px;padding-left:20px;">
+  <li style="margin-bottom:8px;">An AI assessment completes</li>
+  <li style="margin-bottom:8px;">A Data Integrity hold is activated</li>
+</ul>
+<a href="https://clyira-platform-web.vercel.app/dashboard"
+   style="display:inline-block;background:#1e3a5f;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:600;">
+  Go to Dashboard →
+</a>"""
+
+    sent = await _send(
+        to=current_user.email,
+        subject="Clyira — Email Notifications Active",
+        html=_base_email(body),
+    )
+    return {
+        "sent": sent,
+        "to": current_user.email,
+        "from": settings.EMAIL_FROM,
+    }

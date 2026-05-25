@@ -140,6 +140,7 @@ export const readinessApi = {
 // ── Notifications ─────────────────────────────────────────────────────────────
 export const notificationsApi = {
   alerts: () => api.get("/notifications/alerts"),
+  testEmail: () => api.post("/notifications/test-email"),
 };
 
 // ── Inspections ───────────────────────────────────────────────────────────────

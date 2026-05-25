@@ -122,6 +122,36 @@ class AssessmentService:
             await self.db.commit()
             logger.info(f"Assessment {assessment_id} completed: score={results['score']}")
 
+            # Email notification
+            try:
+                from app.services.email_service import send_assessment_complete, send_di_hold_alert, _email_available
+                if _email_available() and assessment.triggered_by:
+                    from app.models.user import User
+                    user_result = await self.db.execute(
+                        select(User).where(User.id == assessment.triggered_by)
+                    )
+                    user = user_result.scalar_one_or_none()
+                    if user and user.email:
+                        await send_assessment_complete(
+                            to=user.email,
+                            doc_title=document.title,
+                            score=results["score"],
+                            score_band=results["score_band"],
+                            findings_critical=results["finding_counts"]["critical"],
+                            findings_high=results["finding_counts"]["high"],
+                            assessment_id=assessment_id,
+                            document_id=document_id,
+                        )
+                        if results.get("data_integrity_hold"):
+                            await send_di_hold_alert(
+                                to=user.email,
+                                doc_title=document.title,
+                                document_id=document_id,
+                                reason=results.get("suspended_reason"),
+                            )
+            except Exception as email_err:
+                logger.warning(f"Email notification failed (non-blocking): {email_err}")
+
             # Audit log
             try:
                 await self.write_audit_log(
