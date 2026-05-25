@@ -1,0 +1,71 @@
+DEVIATION REPORT
+Deviation Number: DEV-2025-0089
+Date Initiated: 2025-04-03
+Initiated By: Michael Torres, Manufacturing Operator
+Supervisor: Lisa Park, Production Supervisor
+Classification: Major
+Status: Under Investigation
+
+1. DESCRIPTION OF DEVIATION
+
+On April 3, 2025 at approximately 14:30, during routine inspection of the cold storage room (Room 210-B), Manufacturing Operator M. Torres observed that the temperature logger was displaying a reading of 12°C. The specified storage temperature for Room 210-B is 2°C–8°C.
+
+Review of the continuous temperature log indicates that the room temperature exceeded 8°C beginning at approximately 08:15 on April 3, 2025 and remained out of range until 16:45 when the HVAC issue was corrected. Total duration of excursion: approximately 8.5 hours.
+
+Products potentially affected: Drug Substance DS-API-2025-001 (100 kg), Drug Substance DS-API-2025-002 (75 kg), finished product intermediate FP-INT-2025-008.
+
+Note: Temperature data was recorded in the log by the operator after the shift ended, not at the time of observation.
+
+2. IMMEDIATE ACTIONS TAKEN
+
+2.1 The affected materials were immediately quarantined and labeled "On Hold — Deviation Under Investigation."
+2.2 Facilities Engineering was notified and the HVAC malfunction was diagnosed as a failed compressor valve.
+2.3 HVAC repair was completed by 16:45 on April 3, 2025; temperature returned to 4°C.
+2.4 QA Manager was notified at 17:00 on April 3, 2025.
+
+3. IMPACT ASSESSMENT
+
+3.1 Drug substances stored in Room 210-B during the excursion may have been affected depending on their temperature sensitivity profiles.
+3.2 Affected materials are on hold pending stability and quality impact assessment.
+3.3 Product integrity has been potentially compromised.
+3.4 Distribution status: No affected product has been distributed.
+
+4. ROOT CAUSE ANALYSIS
+
+4.1 Immediate Cause
+HVAC compressor valve failed, causing temperature to rise above specification.
+
+4.2 Root Cause
+The root cause is equipment failure due to inadequate preventive maintenance. The compressor valve was at end of its service life.
+
+4.3 Contributing Factors
+Equipment age.
+
+5. CORRECTIVE AND PREVENTIVE ACTIONS
+
+5.1 CAPA-2025-0052 has been initiated to address the root cause.
+5.2 Planned corrective actions include:
+   CA-1: Replace failed compressor valve (Complete — April 3, 2025)
+   CA-2: Review PM schedule for all HVAC equipment in cold storage areas (Due: April 17, 2025)
+5.3 Preventive actions:
+   PA-1: Implement redundant temperature alarm system with automatic notification (Due: June 1, 2025)
+   PA-2: Increase PM frequency for critical HVAC equipment (Due: May 1, 2025)
+
+6. REGULATORY CONSIDERATION
+
+No regulatory reporting assessment has been documented at this time.
+
+7. QUALITY RISK ASSESSMENT
+
+Stability testing of retained samples from the affected drug substances will be conducted to determine if product quality is maintained within acceptable limits. Results expected within 30 days.
+
+8. ATTACHMENTS
+
+A. Temperature log printout (Room 210-B, April 3, 2025)
+B. HVAC repair work order
+C. Material inventory in Room 210-B at time of excursion
+
+Signatures:
+Initiator: Michael Torres _________________ Date: April 4, 2025
+QA Review: _________________ Date: _________
+QA Approval: _________________ Date: _________

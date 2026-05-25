@@ -511,9 +511,11 @@ class RuleEngine:
         """SOP must define ad-hoc triggers that require an unscheduled review (regulatory changes, deviations, complaints)."""
         text_lower = ctx.document_text.lower()
         has_review_trigger = bool(re.search(
-            r'(?:trigger(?:ed)?\s+(?:a\s+)?review|unscheduled\s+review|review\s+(?:shall|must|will)\s+be\s+(?:initiated|triggered)|'
-            r'deviation.*review.*sop|complaint.*require.*review|regulation.*change.*review|'
-            r'following\s+a\s+(?:deviation|change|complaint|inspection)',
+            r'trigger(?:ed)?\s+(?:a\s+)?review'
+            r'|unscheduled\s+review'
+            r'|review\s+(?:shall|must|will)\s+be\s+(?:initiated|triggered)'
+            r'|deviation.*review.*sop|complaint.*require.*review|regulation.*change.*review'
+            r'|following\s+a\s+(?:deviation|change|complaint|inspection)',
             text_lower
         ))
         if has_review_trigger:
@@ -5039,10 +5041,9 @@ class RuleEngine:
         deep_rca_patterns = [
             r'5[\s-]*why', r'five\s+why', r'why[\s-]+why',
             r'fishbone', r'ishikawa', r'cause[\s-]+and[\s-]+effect',
-            r'fault\s+tree', r'failure\s+mode',
-            r'contributing\s+factor', r'root\s+cause\s+(?:identified|confirmed|determined|established)',
+            r'fault\s+tree',
             r'systematic\s+(?:analysis|review|investigation)',
-            r'causal\s+factor',
+            r'failure\s+mode\s+(?:and\s+effect|analysis)',
         ]
         has_deep_rca = any(re.search(p, text_lower) for p in deep_rca_patterns)
         if has_deep_rca:
@@ -5072,15 +5073,37 @@ class RuleEngine:
                 validated=True,
             )
 
-        # RCA exists but lacks analytical depth — check if it's just "human error" label
-        human_error_only = re.search(
-            r'root\s+cause[\s\S]{0,200}human\s+error', text_lower
-        ) and not has_deep_rca
+        # RCA attributes root cause to "human error" without deeper analysis
+        human_error_only = bool(re.search(
+            r'root\s+cause[\s\S]{0,300}human\s+error', text_lower
+        )) and not has_deep_rca
 
-        # Check for supporting evidence cited in RCA
+        if human_error_only:
+            return FindingResult(
+                level="L3",
+                severity="high",
+                category="root_cause_depth",
+                title="Root cause attributed to 'human error' without structured analytical methodology",
+                description=(
+                    "The investigation concludes 'human error' as the root cause without applying a "
+                    "structured methodology (5-Why, fishbone/Ishikawa, fault tree) to identify the "
+                    "underlying systemic cause. FDA consistently rejects 'human error' as a root cause "
+                    "without demonstrating why the error was possible and what system failed. "
+                    "Per 21 CFR 211.192 and ICH Q10, investigations must identify the fundamental "
+                    "cause — not surface-level attribution — and propose systemic corrections."
+                ),
+                evidence="Root cause stated as 'human error' but no structured RCA methodology detected.",
+                regulatory_citation="21 CFR 211.192; ICH Q10 Section 3.2",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.83,
+                validated=True,
+            )
+
+        # RCA exists but no supporting evidence or structured methodology
         evidence_cited = re.search(
             r'(?:data\s+(?:shows?|indicates?|confirms?)|evidence\s+(?:of|that|shows?)|'
-            r'review\s+of\s+(?:batch|records?|data|logs?)|trending|historical)',
+            r'trending\s+data|historical\s+(?:data|records?|review))',
             text_lower
         )
 

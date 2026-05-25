@@ -1,0 +1,72 @@
+CORRECTIVE AND PREVENTIVE ACTION REPORT
+CAPA Number: CAPA-2025-0047
+Initiated By: Sarah Chen, QA Analyst
+Initiation Date: 2025-03-12
+Source: Out-of-Specification result investigation
+Related Deviation: DEV-2025-0031
+Product: Amoxicillin Capsules 500mg, Batch 2025-ABC-001
+Status: Open
+
+--- PLANTED DEFICIENCIES ---
+DEFICIENCY-1 [L3/root_cause_depth]: Root cause stated as "human error" — no 5-why or fishbone analysis
+DEFICIENCY-2 [L3/root_cause_depth]: No evidence cited to support root cause conclusion
+DEFICIENCY-3 [L2/missing_element]: No effectiveness check criteria defined with measurable metrics
+DEFICIENCY-4 [L4/vague_language]: "going forward" used to describe corrective actions
+DEFICIENCY-5 [L4/vague_language]: "acceptable range" referenced without specification limits
+DEFICIENCY-6 [L2/missing_element]: No target completion date for preventive action item
+--- END PLANTED DEFICIENCIES ---
+
+1. PROBLEM STATEMENT
+
+During routine finished product testing, the dissolution result for Amoxicillin Capsules 500mg, Batch 2025-ABC-001 was found to be 68% at 30 minutes, which falls below the specification limit of NLT 80% (Q). The result was confirmed by retesting per USP methodology. This represents an out-of-specification (OOS) result requiring formal investigation and CAPA.
+
+2. SCOPE AND IMPACT
+
+This CAPA addresses the OOS dissolution result for Batch 2025-ABC-001 only. The batch has been placed on quarantine hold pending disposition. No product from this batch has been distributed. No other batches are affected based on review of recent testing records.
+
+3. ROOT CAUSE ANALYSIS
+
+3.1 Immediate Cause
+The dissolution result failed to meet the specification of NLT 80% (Q) at 30 minutes.
+
+3.2 Root Cause
+After reviewing the batch record and speaking with the operator, the root cause has been determined to be human error. The operator did not follow the procedure correctly during the encapsulation process, which led to non-uniform capsule fill weights, which in turn caused the dissolution failure.
+
+3.3 Contributing Factors
+- Operator was relatively new to the process (6 months experience)
+- Line was operating at high speed during production
+
+4. CORRECTIVE ACTIONS
+
+4.1 Immediate Corrections
+CA-1: Batch 2025-ABC-001 has been placed on hold. QA will make a disposition decision within 5 business days. [Responsible: QA Manager | Due: 2025-03-17]
+CA-2: Operator has been retrained on the encapsulation SOP. [Responsible: Training Dept | Due: 2025-03-19]
+
+4.2 Systemic Corrections
+CA-3: Going forward, all new operators will be required to complete additional supervised runs before independent operation. [Responsible: Production Manager | Due: TBD]
+CA-4: In-process weight checks will be increased from every 30 minutes to every 15 minutes to detect fill weight variation earlier. [Responsible: Production Manager | Due: 2025-04-01]
+
+5. PREVENTIVE ACTIONS
+
+PA-1: Review encapsulation SOPs to identify any areas where written guidance could be clarified. [Responsible: QA | Due: Not specified]
+PA-2: Evaluate whether automated weight rejection system would prevent similar deviations in the acceptable range in the future. [Responsible: Engineering | Due: Not specified]
+
+6. EFFECTIVENESS CHECK
+
+The CAPA will be considered effective when:
+- No OOS results are observed for dissolution testing going forward.
+- Operator error deviations are reduced.
+
+Effectiveness check to be performed by: QA Analyst
+Effectiveness check timeline: To be determined
+
+7. REGULATORY CITATIONS
+
+21 CFR 211.192 — Production Record Review
+21 CFR 211.68 — Automatic, mechanical, and electronic equipment
+ICH Q10 — Pharmaceutical Quality System, CAPA
+
+8. APPROVALS
+
+QA Review: _____________________ Date: _________
+QA Manager Approval: _____________________ Date: _________

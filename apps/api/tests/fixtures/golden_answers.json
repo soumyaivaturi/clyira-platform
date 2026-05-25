@@ -1,0 +1,192 @@
+{
+  "_meta": {
+    "description": "Golden answers for synthetic test document assessment. Each entry lists findings MUST be produced by the rule engine for that document. Tests are pass/fail: all required findings must appear.",
+    "version": "1.2",
+    "last_updated": "2026-05-24",
+    "usage": "Run tests/run_golden_tests.py from apps/api/ to validate",
+    "notes": "Vague language findings emitted at L3 by universal scanner. root_cause_depth fires at L3."
+  },
+
+  "sop_001_deviation_handling": {
+    "document_path": "tests/fixtures/documents/sop_001_deviation_handling.txt",
+    "document_category": "sop",
+    "dtap_id": "SOP",
+    "description": "SOP with missing section headers, unsigned approvals, no change history, vague language",
+    "required_findings": [
+      {
+        "level": "L3",
+        "category": "vague_language",
+        "contains_text": "as needed",
+        "reason": "Vague 'as needed' detected by universal scanner"
+      },
+      {
+        "level": "L3",
+        "category": "vague_language",
+        "contains_text": "if applicable",
+        "reason": "Vague 'if applicable' detected by universal scanner"
+      },
+      {
+        "level": "L2",
+        "category": "authorship_roles_incomplete",
+        "reason": "Missing Prepared By / author roles detected in SOP header"
+      },
+      {
+        "level": "L7",
+        "category": "review_cycle",
+        "reason": "SOP review cycle not defined"
+      },
+      {
+        "level": "L9",
+        "category": "failure_mode_fm_002",
+        "reason": "CAPA System Deficiency pattern must match SOP on deviation handling"
+      }
+    ],
+    "forbidden_findings": [],
+    "known_gaps": [
+      "L1 missing_section for Scope — 'scope' text found in document body bypasses check",
+      "L2 approval_signature — SOP profile has check but blank '(Pending)' may not trigger"
+    ]
+  },
+
+  "capa_001_oos_investigation": {
+    "document_path": "tests/fixtures/documents/capa_001_oos_investigation.txt",
+    "document_category": "capa",
+    "dtap_id": "CAPA",
+    "description": "CAPA with 'human error' root cause, missing effectiveness metrics, vague language",
+    "required_findings": [
+      {
+        "level": "L3",
+        "category": "human_error_root_cause",
+        "reason": "Root cause 'human error' without systemic mechanism must fire"
+      },
+      {
+        "level": "L3",
+        "category": "vague_language",
+        "contains_text": "going forward",
+        "reason": "Vague 'going forward' in corrective action"
+      },
+      {
+        "level": "L3",
+        "category": "vague_language",
+        "contains_text": "acceptable range",
+        "reason": "Vague 'acceptable range' without specification"
+      },
+      {
+        "level": "L1",
+        "category": "target_completion_date_missing",
+        "reason": "CAPA target completion date not defined"
+      },
+      {
+        "level": "L9",
+        "category": "failure_mode_fm_002",
+        "reason": "CAPA System Deficiency pattern must fire for CAPA documents"
+      }
+    ],
+    "forbidden_findings": [],
+    "known_gaps": [
+      "L3 root_cause_depth (from _check_l3_root_cause_depth) — human_error_root_cause fires first from a different check"
+    ]
+  },
+
+  "atm_001_hplc_method": {
+    "document_path": "tests/fixtures/documents/atm_001_hplc_method.txt",
+    "document_category": "atm",
+    "dtap_id": "ATM",
+    "description": "HPLC method with unspecified system suitability limits, 'acceptable' without numeric criteria",
+    "required_findings": [
+      {
+        "level": "L3",
+        "category": "system_suitability_no_criteria",
+        "reason": "System suitability section uses 'satisfactory/acceptable' without numeric limits"
+      },
+      {
+        "level": "L3",
+        "category": "vague_language",
+        "contains_text": "as needed",
+        "reason": "Vague 'as needed' in mobile phase adjustment"
+      },
+      {
+        "level": "L2",
+        "category": "qa_approval_absent",
+        "reason": "QA approval signature block not present (author is Dr. Nair but no QA Director signature line)"
+      },
+      {
+        "level": "L5",
+        "category": "oos_trigger_not_defined",
+        "reason": "OOS investigation trigger criteria not defined in ATM"
+      }
+    ],
+    "forbidden_findings": [],
+    "known_gaps": [
+      "L5 acceptance_criteria for numeric system suitability — LLM engine handles in production",
+      "Column temperature not flagged as critical parameter — requires LLM"
+    ]
+  },
+
+  "deviation_001_temperature_excursion": {
+    "document_path": "tests/fixtures/documents/deviation_001_temperature_excursion.txt",
+    "document_category": "deviation",
+    "dtap_id": "DEVIATION",
+    "description": "Deviation report with single-line RCA, vague impact assessment, missing disposition",
+    "required_findings": [
+      {
+        "level": "L3",
+        "category": "root_cause_insufficient_depth",
+        "reason": "RCA present but no structured methodology or evidence citation"
+      },
+      {
+        "level": "L2",
+        "category": "unsigned_qa_approval",
+        "reason": "QA approval signature line is blank"
+      },
+      {
+        "level": "L8",
+        "category": "patient_safety_assessment_absent",
+        "reason": "Patient safety impact assessment not documented"
+      },
+      {
+        "level": "L9",
+        "category": "failure_mode_fm_002",
+        "reason": "CAPA System Deficiency failure pattern matches deviation document"
+      }
+    ],
+    "forbidden_findings": [],
+    "known_gaps": [
+      "L4 ALCOA contemporaneous for delayed recording — full check needs document-type awareness",
+      "L2 missing_element for batch disposition — fires as L8 disposition_not_justified instead"
+    ]
+  },
+
+  "lir_001_oos_assay": {
+    "document_path": "tests/fixtures/documents/lir_001_oos_assay.txt",
+    "document_category": "lir",
+    "dtap_id": "LIR",
+    "description": "LIR with result within spec (93.8%, limit 90-110%), blank approvals, retesting without authorization",
+    "required_findings": [
+      {
+        "level": "L2",
+        "category": "qa_approval_absent",
+        "reason": "QA approval signature block blank — critical for LIR"
+      },
+      {
+        "level": "L3",
+        "category": "retesting_not_authorized",
+        "reason": "Phase II retesting documented without QA pre-authorization"
+      },
+      {
+        "level": "L9",
+        "category": "failure_mode_fm_001",
+        "reason": "OOS Investigation Failure pattern matches LIR document"
+      }
+    ],
+    "forbidden_findings": [
+      {
+        "category": "oos_result",
+        "reason": "Result 93.8% is WITHIN specification (90-110%) — must NOT be flagged as OOS"
+      }
+    ],
+    "known_gaps": [
+      "L4 data integrity finding for corrected chromatogram without justification — requires deeper ALCOA check"
+    ]
+  }
+}

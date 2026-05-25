@@ -1,0 +1,85 @@
+STANDARD OPERATING PROCEDURE
+Title: Deviation Handling and Investigation
+Document Number: SOP-QA-042
+Version: 3.2
+Effective Date: 2025-01-15
+Department: Quality Assurance
+Author: J. Martinez
+Reviewed By: (Pending)
+Approved By: (Pending)
+
+1. PURPOSE
+
+This procedure establishes the requirements for identifying, documenting, investigating, and resolving deviations from established procedures, specifications, or regulatory requirements at our manufacturing facility.
+
+2. (no section header — scope content begins here)
+
+This SOP applies to all manufacturing, laboratory, and quality operations where a deviation from an approved procedure, specification, or regulatory requirement has occurred or is suspected. Applicable to all personnel in Production, QC, and QA departments.
+
+3. DEFINITIONS
+
+3.1 Deviation: Any departure from an approved instruction, procedure, specification, or established standard.
+3.2 Planned Deviation: A pre-approved departure from a procedure before it occurs.
+3.3 Unplanned Deviation: A departure from a procedure that is identified after it occurs.
+3.4 CAPA: Corrective Action and Preventive Action.
+3.5 Root Cause: The fundamental reason for the occurrence of a problem.
+
+4. RESPONSIBILITIES
+
+4.1 Manufacturing Personnel: Responsible for identifying and immediately reporting deviations to the supervisor.
+4.2 Supervisor: Responsible for initiating deviation reports and preliminary assessment.
+4.3 Quality Assurance: Responsible for deviation classification, investigation oversight, and approval.
+4.4 Quality Control: Responsible for laboratory testing as applicable to the deviation.
+
+5. PROCEDURE
+
+5.1 Deviation Identification and Reporting
+
+5.1.1 Any personnel who identifies a deviation shall report it to their supervisor immediately upon discovery.
+5.1.2 The supervisor shall initiate a Deviation Report (Form QA-042-F01) within 24 hours of identification.
+5.1.3 The Deviation Report shall include: date of occurrence, description of the deviation, affected batch numbers, and preliminary assessment.
+
+5.2 Deviation Classification
+
+5.2.1 Quality Assurance shall classify the deviation as needed within 2 business days:
+   - Critical: Potential impact on product quality, patient safety, or regulatory compliance
+   - Major: Potential impact on product quality but unlikely to affect patient safety
+   - Minor: No direct impact on product quality
+
+5.2.2 Classification shall be based on risk assessment if applicable.
+
+5.3 Investigation
+
+5.3.1 A thorough investigation shall be conducted for all Critical and Major deviations.
+5.3.2 The investigation shall identify the root cause using appropriate tools as appropriate.
+5.3.3 Investigation shall be completed within 30 calendar days for Critical deviations and 45 days for Major deviations.
+5.3.4 Minor deviations may be documented with a brief explanation.
+
+5.4 Impact Assessment
+
+5.4.1 QA shall assess the impact of the deviation on product quality and patient safety.
+5.4.2 Impact assessment shall consider: affected batches, product disposition, and regulatory reporting requirements.
+5.4.3 Products associated with Critical deviations shall be placed on hold pending disposition decision.
+
+5.5 Corrective and Preventive Action (CAPA)
+
+5.5.1 CAPAs shall be initiated for all Critical and Major deviations.
+5.5.2 The CAPA shall address the root cause identified during investigation.
+5.5.3 CAPA effectiveness shall be verified on an ongoing basis following implementation.
+
+5.6 Closure
+
+5.6.1 Deviations may be closed when all required documentation is complete and approved by QA.
+5.6.2 Closed deviation records shall be retained for the period required by regulation.
+
+6. DOCUMENTATION
+
+6.1 Deviation Report Form: QA-042-F01
+6.2 CAPA Request Form: QA-CAPA-001-F01
+6.3 Deviation Log maintained by Quality Assurance Department
+
+7. REGULATORY REQUIREMENTS
+
+This SOP is designed to comply with 21 CFR 211.100, 21 CFR 211.192, and ICH Q10 requirements for deviation management and CAPA systems.
+
+Revision History: See Document Control System for revision history.

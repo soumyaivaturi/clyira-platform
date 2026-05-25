@@ -51,3 +51,4 @@ class FindingResult:
     next_step_text: str = ""
     confidence_score: float = 0.0
     validated: bool = False
+    remediation_priority: int = 0

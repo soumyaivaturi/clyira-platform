@@ -1,0 +1,102 @@
+LABORATORY INVESTIGATION REPORT
+LIR Number: LIR-2025-0023
+Initiated By: David Kim, Senior Analyst
+Date Initiated: 2025-05-02
+Product: Lisinopril Tablets 10mg
+Batch Number: 2025-LIS-047
+Test: Assay (HPLC)
+OOS Result: 93.8% (Specification: 90.0%–110.0% — RESULT IS WITHIN SPECIFICATION)
+Reason for Investigation: Result below internal alert limit of 95.0%
+
+--- PLANTED DEFICIENCIES ---
+DEFICIENCY-1 [L5/oos_investigation_trigger_defined]: Trigger is internal alert limit, not specification — investigation standard unclear
+DEFICIENCY-2 [L4/vague_language]: "acceptable" used without defining the specific threshold for retesting
+DEFICIENCY-3 [L3/evidence_citation]: Phase I and Phase II conclusions not supported by specific data citations
+DEFICIENCY-4 [L4/alcoa_original]: Mentions "corrected chromatogram" without documenting why original was corrected
+DEFICIENCY-5 [L2/missing_element]: No statement on whether retained sample was tested
+DEFICIENCY-6 [L2/missing_element]: Batch disposition recommendation missing from conclusion
+--- END PLANTED DEFICIENCIES ---
+
+1. PURPOSE
+
+This Laboratory Investigation Report documents the investigation into an out-of-specification (OOS) / out-of-alert (OOA) result for the Assay determination of Lisinopril Tablets 10mg, Batch 2025-LIS-047. The result of 93.8% is within the specification range of 90.0%–110.0% but falls below the internal alert threshold of 95.0%, triggering this formal investigation.
+
+2. ORIGINAL TEST RESULT
+
+Test: Assay by HPLC (Method ATM-CHEM-0045)
+Analyst: D. Kim
+Date of Analysis: May 2, 2025
+Original Result: 93.8%
+Specification: 90.0%–110.0% (PASS)
+Internal Alert Limit: 95.0% (ALERT TRIGGERED)
+Instrument: HPLC-07
+
+Note: A corrected chromatogram was used for the final calculation. The original chromatogram integration was adjusted.
+
+3. PHASE I INVESTIGATION — LABORATORY INVESTIGATION
+
+3.1 Objective
+Determine whether the OOA result is due to an assignable laboratory error.
+
+3.2 System Suitability Review
+System suitability results were reviewed and found to be acceptable.
+
+3.3 Analyst Interview
+The analyst was interviewed and reported no unusual occurrences during the analysis.
+
+3.4 Standard Preparation Review
+Reference standard preparation was reviewed and appeared to be correct.
+
+3.5 Sample Preparation Review
+Sample preparation documentation was reviewed. No errors were identified.
+
+3.6 Data Review
+Raw data files were reviewed. The data appeared to be complete and acceptable.
+
+3.7 Phase I Conclusion
+No assignable laboratory error was identified. The OOA result appears to be genuine. Investigation proceeds to Phase II.
+
+4. PHASE II INVESTIGATION — MANUFACTURING INVESTIGATION
+
+4.1 Batch Record Review
+The batch manufacturing record for Batch 2025-LIS-047 was reviewed. Process parameters appeared to be within acceptable ranges.
+
+4.2 In-Process Testing Review
+In-process assay results were reviewed. Results showed acceptable variability.
+
+4.3 Raw Material Review
+Certificates of Analysis for API and excipients were reviewed. All incoming material testing results were acceptable.
+
+4.4 Equipment Review
+Manufacturing equipment used for Batch 2025-LIS-047 was reviewed. Calibration and qualification status appeared to be current.
+
+4.5 Environmental Conditions Review
+Environmental monitoring data for the manufacturing area was reviewed. No excursions were noted.
+
+4.6 Phase II Conclusion
+No manufacturing-related assignable cause was identified for the OOA result. The result of 93.8% is genuine and within specification.
+
+5. RETEST RESULTS
+
+Per SOP-QC-015, a retest was conducted by a second analyst:
+Retest Result 1 (Analyst: R. Patel): 94.2%
+Retest Result 2 (Analyst: R. Patel): 94.6%
+Average of all results: 94.2%
+
+All results are within specification (90.0%–110.0%). Average result remains below the 95.0% alert limit.
+
+6. CONCLUSION
+
+The OOA result of 93.8% for Assay of Lisinopril Tablets 10mg, Batch 2025-LIS-047 is confirmed. No assignable laboratory or manufacturing cause was identified. All results are within the specification range. The batch meets established release specifications.
+
+7. REGULATORY CITATIONS
+
+21 CFR 211.192 — Production record review and investigation
+21 CFR 211.165 — Testing and release for distribution
+FDA Guidance: Investigating Out-of-Specification (OOS) Test Results for Pharmaceutical Production (2006)
+
+8. APPROVALS
+
+Analyst: David Kim _________________ Date: May 5, 2025
+QC Supervisor: _________________ Date: _________
+QA Review: _________________ Date: _________

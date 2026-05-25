@@ -1,0 +1,116 @@
+ANALYTICAL TEST METHOD
+Method Title: Assay of Metformin Hydrochloride by HPLC
+Method Number: ATM-CHEM-0089
+Version: 1.0
+Effective Date: 2025-02-01
+Department: Analytical Chemistry / Quality Control
+Author: Dr. Priya Nair
+Reviewed By: Lab Manager
+Approved By: QA Director
+
+--- PLANTED DEFICIENCIES ---
+DEFICIENCY-1 [L5/acceptance_criteria]: System suitability criteria listed without numerical limits ("satisfactory" used instead of specific values)
+DEFICIENCY-2 [L5/critical_parameters_identified]: Column temperature not specified as a critical parameter
+DEFICIENCY-3 [L4/vague_language]: "acceptable" used repeatedly without numerical definition
+DEFICIENCY-4 [L5/measurement_units_specified]: Mobile phase ratio stated as "approximately 70:30" — no tolerance range given
+DEFICIENCY-5 [L2/missing_element]: No statement on method validation status / validation report reference
+DEFICIENCY-6 [L2/missing_element]: No reference to compendial method or primary reference standard specification
+--- END PLANTED DEFICIENCIES ---
+
+1. PURPOSE AND SCOPE
+
+This method describes the HPLC procedure for the determination of Metformin Hydrochloride content in finished product tablets. This method applies to QC release testing and stability samples.
+
+2. PRINCIPLE
+
+Metformin Hydrochloride is separated by reversed-phase HPLC and quantified by UV detection at 232 nm against a reference standard of known purity.
+
+3. SAFETY CONSIDERATIONS
+
+- Acetonitrile is flammable and toxic by inhalation. Use in a ventilated fume hood.
+- Wear appropriate PPE: laboratory coat, safety glasses, gloves.
+- Dispose of organic waste per facility waste management procedures.
+
+4. REAGENTS AND MATERIALS
+
+4.1 Mobile Phase
+   - Component A: Potassium phosphate buffer, pH 6.8
+   - Component B: Acetonitrile (HPLC grade)
+   - Ratio: Approximately 70:30 (A:B) — adjust as needed for acceptable peak shape
+
+4.2 Reference Standard
+   - Metformin Hydrochloride Reference Standard (source not specified)
+   - Potency: Use as labeled
+
+4.3 Equipment
+   - HPLC system with UV detector
+   - Analytical balance (calibrated)
+   - pH meter (calibrated)
+   - Volumetric glassware (Class A)
+
+5. COLUMN AND CHROMATOGRAPHIC CONDITIONS
+
+5.1 Column: C18, 150 × 4.6 mm, 5 µm particle size
+5.2 Flow rate: 1.0 mL/min
+5.3 Detection wavelength: 232 nm
+5.4 Injection volume: 20 µL
+5.5 Run time: 15 minutes
+5.6 Column temperature: Ambient (no specification provided)
+
+6. SYSTEM SUITABILITY
+
+Prior to sample analysis, verify that the system suitability criteria are satisfactory:
+- Theoretical plates: Should be acceptable
+- Tailing factor: Should be acceptable
+- %RSD of standard peak areas (n=5): Should meet acceptable criteria
+- Resolution: Adequate separation from any interfering peaks
+
+6.1 If system suitability is not met, investigate the cause before proceeding. Do not proceed with analysis if system suitability fails.
+
+7. STANDARD PREPARATION
+
+7.1 Weigh approximately 50 mg of Metformin HCl Reference Standard into a 100 mL volumetric flask.
+7.2 Dissolve in mobile phase and dilute to volume.
+7.3 Dilute 5 mL of this solution to 100 mL with mobile phase to give a final concentration of approximately 25 µg/mL.
+7.4 Prepare a minimum of 5 replicate injections for system suitability.
+
+8. SAMPLE PREPARATION
+
+8.1 Weigh and finely powder not less than 20 tablets.
+8.2 Weigh accurately a portion of powder equivalent to approximately 500 mg of Metformin HCl into a 1000 mL volumetric flask.
+8.3 Add 700 mL mobile phase, sonicate for 15 minutes with occasional shaking.
+8.4 Dilute to volume with mobile phase and filter through a 0.45 µm membrane filter.
+8.5 Dilute 5 mL of the filtrate to 100 mL with mobile phase.
+
+9. ANALYSIS
+
+9.1 Inject the reference standard solutions and sample solutions in the following sequence:
+   - Blank (mobile phase)
+   - System suitability standard (5 injections)
+   - Reference standard (3 injections)
+   - Sample solutions
+   - Reference standard (bracket)
+
+9.2 Calculate the assay result using the following formula:
+   % Assay = (Area_Sample / Area_Standard) × (W_Standard / W_Sample) × (P_Standard / 100) × (V_Sample / V_Standard) × 100
+
+10. ACCEPTANCE CRITERIA
+
+10.1 Assay result: 98.0% to 102.0% of label claim (as Metformin Hydrochloride)
+10.2 System suitability: As defined in Section 6 (criteria deemed acceptable by analyst)
+
+11. CALCULATIONS
+
+All calculations shall be performed using validated spreadsheet templates or LIMS.
+
+12. RESULTS REPORTING
+
+12.1 Results shall be reported to 1 decimal place.
+12.2 All raw data and integration parameters shall be saved and retained per data management procedures.
+
+13. REFERENCES
+
+13.1 21 CFR Part 211 — CGMP for Finished Pharmaceuticals
+13.2 ICH Q2(R1) — Validation of Analytical Procedures
+
+Appendix A: Chromatogram examples (to be added upon method validation completion)
