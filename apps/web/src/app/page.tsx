@@ -151,10 +151,10 @@ export default function LandingPage() {
       {/* ── NAVIGATION ──────────────────────────────────────────────────────── */}
       <nav className="sticky top-0 z-50 bg-white/95 backdrop-blur border-b border-gray-100">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <img src="/clyira-logo.png" alt="Clyira" className="w-8 h-8 object-contain" />
-            <span className="font-semibold text-lg tracking-tight">
-              Clyira<span style={{ color: "#8C52FF" }}>.</span>ai
+          <Link href="/" className="flex items-center gap-2.5">
+            <img src="/clyira-logo.png" alt="Clyira" className="w-10 h-10 object-contain" />
+            <span className="font-bold text-lg tracking-tight text-gray-900">
+              CLYIRA<span style={{ color: "#9333ea" }}>.</span>AI
             </span>
           </Link>
 
@@ -173,7 +173,7 @@ export default function LandingPage() {
             </Link>
             <Link
               href="/auth/register"
-              className="text-sm font-medium bg-clyira-600 text-white px-4 py-2 rounded-lg hover:bg-clyira-700 transition-colors"
+              className="text-sm font-semibold bg-clyira-600 text-white px-4 py-2 rounded-lg hover:bg-clyira-700 transition-colors"
             >
               Get started free
             </Link>
@@ -182,30 +182,35 @@ export default function LandingPage() {
       </nav>
 
       {/* ── HERO ────────────────────────────────────────────────────────────── */}
-      <section className="relative overflow-hidden bg-clyira-950 text-white">
-        {/* Gradient orbs */}
-        <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute -top-40 -left-40 w-96 h-96 rounded-full opacity-20 blur-3xl" style={{ background: "#8C52FF" }} />
-          <div className="absolute top-20 right-0 w-80 h-80 rounded-full opacity-15 blur-3xl bg-clyira-400" />
-          <div className="absolute bottom-0 left-1/2 w-64 h-64 rounded-full opacity-10 blur-3xl bg-clyira-300" />
+      <section className="relative overflow-hidden bg-white">
+        {/* Subtle purple radial gradient top-right */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          <div
+            className="absolute -top-64 -right-64 w-[700px] h-[700px] rounded-full opacity-[0.06]"
+            style={{ background: "radial-gradient(circle, #9333ea, transparent 70%)" }}
+          />
+          <div
+            className="absolute top-40 -left-32 w-[400px] h-[400px] rounded-full opacity-[0.04]"
+            style={{ background: "radial-gradient(circle, #a855f7, transparent 70%)" }}
+          />
         </div>
 
         <div className="relative max-w-7xl mx-auto px-6 pt-24 pb-20">
           <div className="max-w-3xl mx-auto text-center">
             {/* Badge */}
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/20 bg-white/5 text-xs font-medium text-clyira-200 mb-8">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-clyira-200 bg-clyira-50 text-xs font-semibold text-clyira-700 mb-8">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               AI-Powered Regulatory Intelligence for Life Sciences
             </div>
 
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-tight mb-6">
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-tight text-gray-900 mb-6">
               Continuous Compliance Intelligence.{" "}
-              <span className="text-transparent bg-clip-text" style={{ backgroundImage: "linear-gradient(135deg, #7cc8fb, #8C52FF)" }}>
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-clyira-600 to-violet-600">
                 From First Draft to Final Audit.
               </span>
             </h1>
 
-            <p className="text-lg text-clyira-200 leading-relaxed mb-10 max-w-2xl mx-auto">
+            <p className="text-lg text-gray-500 leading-relaxed mb-10 max-w-2xl mx-auto">
               Clyira gives pharmaceutical, biotech, and medical device teams real-time AI-powered document assessment,
               department-level audit readiness scores, and live inspection support — built natively for FDA, EMA, and ICH standards.
             </p>
@@ -213,14 +218,14 @@ export default function LandingPage() {
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
               <Link
                 href="/auth/register"
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-lg bg-white text-clyira-950 font-semibold text-sm hover:bg-clyira-50 transition-colors"
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-lg bg-clyira-600 text-white font-semibold text-sm hover:bg-clyira-700 transition-colors shadow-sm"
               >
                 Start for free
                 <ArrowRight className="w-4 h-4" />
               </Link>
               <Link
                 href="#features"
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-lg border border-white/20 text-white font-medium text-sm hover:bg-white/5 transition-colors"
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-lg border border-gray-200 text-gray-700 font-medium text-sm hover:bg-gray-50 transition-colors"
               >
                 See the platform
               </Link>
@@ -229,7 +234,7 @@ export default function LandingPage() {
             {/* Compliance badges */}
             <div className="flex flex-wrap items-center justify-center gap-6">
               {complianceBadges.map(({ icon: Icon, label }) => (
-                <div key={label} className="flex items-center gap-1.5 text-xs text-clyira-300">
+                <div key={label} className="flex items-center gap-1.5 text-xs text-gray-400">
                   <Icon className="w-3.5 h-3.5" />
                   <span>{label}</span>
                 </div>
@@ -237,15 +242,15 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* Dashboard mockup */}
+          {/* Dashboard mockup — light / Apple-clean */}
           <div className="mt-16 mx-auto max-w-4xl">
-            <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur overflow-hidden shadow-2xl">
+            <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden shadow-[0_20px_60px_-10px_rgba(147,51,234,0.12),0_4px_24px_-4px_rgba(0,0,0,0.08)]">
               {/* Window chrome */}
-              <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10 bg-white/5">
-                <div className="w-3 h-3 rounded-full bg-red-400/60" />
-                <div className="w-3 h-3 rounded-full bg-amber-400/60" />
-                <div className="w-3 h-3 rounded-full bg-emerald-400/60" />
-                <div className="ml-4 flex-1 bg-white/5 rounded text-xs text-center text-clyira-400 py-0.5 px-2 max-w-xs mx-auto">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 bg-gray-50">
+                <div className="w-3 h-3 rounded-full bg-red-400" />
+                <div className="w-3 h-3 rounded-full bg-amber-400" />
+                <div className="w-3 h-3 rounded-full bg-emerald-400" />
+                <div className="ml-4 flex-1 bg-white border border-gray-200 rounded text-xs text-center text-gray-400 py-0.5 px-2 max-w-xs mx-auto">
                   app.clyira.ai/dashboard
                 </div>
               </div>
@@ -253,18 +258,18 @@ export default function LandingPage() {
               {/* App layout */}
               <div className="flex h-72 sm:h-80">
                 {/* Sidebar */}
-                <div className="hidden sm:flex w-44 border-r border-white/10 bg-clyira-950/80 flex-col p-3 gap-1">
+                <div className="hidden sm:flex w-44 border-r border-gray-100 bg-gray-50/80 flex-col p-3 gap-1">
                   <div className="flex items-center gap-2 px-2 py-2 mb-2">
-                    <div className="w-6 h-6 rounded bg-white/10 flex items-center justify-center">
+                    <div className="w-6 h-6 rounded bg-clyira-600 flex items-center justify-center">
                       <span className="text-white text-xs font-bold">C</span>
                     </div>
-                    <span className="text-xs font-semibold text-white">Clyira.ai</span>
+                    <span className="text-xs font-bold text-gray-900 tracking-wide">CLYIRA.AI</span>
                   </div>
                   {["Dashboard", "Documents", "Audit Readiness", "Inspections"].map((item, i) => (
                     <div
                       key={item}
                       className={`px-2 py-1.5 rounded text-xs font-medium ${
-                        i === 0 ? "bg-clyira-600/30 text-clyira-200" : "text-clyira-400 hover:text-white"
+                        i === 0 ? "bg-clyira-50 text-clyira-700" : "text-gray-500 hover:text-gray-800"
                       }`}
                     >
                       {item}
@@ -273,23 +278,23 @@ export default function LandingPage() {
                 </div>
 
                 {/* Main content */}
-                <div className="flex-1 p-4 overflow-hidden">
+                <div className="flex-1 p-4 overflow-hidden bg-gray-50/50">
                   {/* KPI cards */}
                   <div className="grid grid-cols-3 gap-3 mb-4">
-                    <div className="bg-white/5 border border-white/10 rounded-lg p-3">
-                      <div className="text-xs text-clyira-400 mb-1">Clyira Score</div>
-                      <div className="text-2xl font-bold text-white">84.2</div>
-                      <div className="text-xs text-emerald-400 mt-0.5">Compliant</div>
+                    <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm">
+                      <div className="text-xs text-gray-400 mb-1">Clyira Score</div>
+                      <div className="text-2xl font-bold text-gray-900">84.2</div>
+                      <div className="text-xs text-emerald-600 mt-0.5 font-medium">Compliant</div>
                     </div>
-                    <div className="bg-white/5 border border-white/10 rounded-lg p-3">
-                      <div className="text-xs text-clyira-400 mb-1">Documents</div>
-                      <div className="text-2xl font-bold text-white">47</div>
-                      <div className="text-xs text-clyira-400 mt-0.5">3 pending</div>
+                    <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm">
+                      <div className="text-xs text-gray-400 mb-1">Documents</div>
+                      <div className="text-2xl font-bold text-gray-900">47</div>
+                      <div className="text-xs text-gray-400 mt-0.5">3 pending</div>
                     </div>
-                    <div className="bg-white/5 border border-white/10 rounded-lg p-3">
-                      <div className="text-xs text-clyira-400 mb-1">Gaps</div>
-                      <div className="text-2xl font-bold text-amber-400">12</div>
-                      <div className="text-xs text-clyira-400 mt-0.5">4 critical</div>
+                    <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm">
+                      <div className="text-xs text-gray-400 mb-1">Gaps</div>
+                      <div className="text-2xl font-bold text-amber-500">12</div>
+                      <div className="text-xs text-gray-400 mt-0.5">4 critical</div>
                     </div>
                   </div>
 
@@ -300,13 +305,13 @@ export default function LandingPage() {
                       { title: "CAPA-2026-07 — Sterility Deviation", score: 67, band: "Moderate", color: "bg-amber-500" },
                       { title: "ATM-018 — HPLC Method", score: 88, band: "Compliant", color: "bg-emerald-500" },
                     ].map((doc) => (
-                      <div key={doc.title} className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+                      <div key={doc.title} className="flex items-center gap-3 bg-white border border-gray-100 rounded-lg px-3 py-2 shadow-sm">
                         <div className={`w-1.5 h-8 rounded-full ${doc.color}`} />
                         <div className="flex-1 min-w-0">
-                          <div className="text-xs font-medium text-white truncate">{doc.title}</div>
-                          <div className="text-xs text-clyira-400">{doc.band}</div>
+                          <div className="text-xs font-medium text-gray-900 truncate">{doc.title}</div>
+                          <div className="text-xs text-gray-400">{doc.band}</div>
                         </div>
-                        <div className="text-sm font-bold text-white tabular-nums">{doc.score}</div>
+                        <div className="text-sm font-bold text-gray-700 tabular-nums">{doc.score}</div>
                       </div>
                     ))}
                   </div>
@@ -377,7 +382,7 @@ export default function LandingPage() {
             {features.map((f) => (
               <div
                 key={f.title}
-                className="group p-6 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-md transition-all"
+                className="group p-6 rounded-xl border border-gray-100 hover:border-clyira-100 hover:shadow-md transition-all"
               >
                 <div className={`w-10 h-10 rounded-lg ${f.bg} flex items-center justify-center mb-4`}>
                   <f.icon className={`w-5 h-5 ${f.color}`} />
@@ -395,7 +400,7 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
             <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-violet-50 text-violet-700 text-xs font-semibold mb-4">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-clyira-50 text-clyira-700 text-xs font-semibold mb-4">
                 Assessment engine
               </div>
               <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-5">
@@ -468,7 +473,7 @@ export default function LandingPage() {
                       <span className="text-gray-600">Section 4.2 does not reference 21 CFR 211.68 — electronic systems validation requirement.</span>
                     </div>
                     <div className="flex items-start gap-2 text-xs">
-                      <span className="mt-0.5 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-semibold shrink-0">INFO</span>
+                      <span className="mt-0.5 px-1.5 py-0.5 rounded bg-clyira-50 text-clyira-700 font-semibold shrink-0">INFO</span>
                       <span className="text-gray-600">Deviation reference in Section 6 should cross-link to current CAPA register per ICH Q10 §3.2.</span>
                     </div>
                   </div>
@@ -492,12 +497,11 @@ export default function LandingPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 relative">
-            {/* Connector line */}
             <div className="hidden md:block absolute top-10 left-1/3 right-1/3 h-px bg-gray-200" />
 
-            {steps.map((step, i) => (
+            {steps.map((step) => (
               <div key={step.number} className="relative text-center">
-                <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-clyira-950 text-white mb-6 relative z-10">
+                <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-clyira-600 text-white mb-6 relative z-10 shadow-lg shadow-clyira-600/20">
                   <span className="text-2xl font-bold">{step.number}</span>
                 </div>
                 <h3 className="font-semibold text-gray-900 text-lg mb-3">{step.title}</h3>
@@ -509,7 +513,7 @@ export default function LandingPage() {
           <div className="mt-12 text-center">
             <Link
               href="/auth/register"
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-clyira-600 text-white font-semibold text-sm hover:bg-clyira-700 transition-colors"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-clyira-600 text-white font-semibold text-sm hover:bg-clyira-700 transition-colors shadow-sm"
             >
               Try it now — it&apos;s free
               <ArrowRight className="w-4 h-4" />
@@ -586,7 +590,7 @@ export default function LandingPage() {
                       </span>
                     )}
                   </div>
-                  <p className={`text-sm ${plan.highlighted ? "text-clyira-200" : "text-gray-500"}`}>
+                  <p className={`text-sm ${plan.highlighted ? "text-clyira-300" : "text-gray-500"}`}>
                     {plan.description}
                   </p>
                 </div>
@@ -594,7 +598,7 @@ export default function LandingPage() {
                 <ul className="space-y-3 flex-1 mb-8">
                   {plan.features.map((feature) => (
                     <li key={feature} className="flex items-start gap-2.5 text-sm">
-                      <CheckCircle className={`w-4 h-4 mt-0.5 shrink-0 ${plan.highlighted ? "text-emerald-400" : "text-emerald-500"}`} />
+                      <CheckCircle className={`w-4 h-4 mt-0.5 shrink-0 ${plan.highlighted ? "text-clyira-400" : "text-emerald-500"}`} />
                       <span className={plan.highlighted ? "text-clyira-100" : "text-gray-600"}>{feature}</span>
                     </li>
                   ))}
@@ -623,13 +627,13 @@ export default function LandingPage() {
           <h2 className="text-3xl sm:text-4xl font-bold mb-5">
             Get audit-ready before your next inspection.
           </h2>
-          <p className="text-clyira-200 mb-10 text-lg">
+          <p className="text-clyira-300 mb-10 text-lg">
             Join quality teams using Clyira to stay ahead of FDA and EMA expectations — not scrambling to catch up.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link
               href="/auth/register"
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3 rounded-lg bg-white text-clyira-950 font-semibold hover:bg-clyira-50 transition-colors"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3 rounded-lg bg-clyira-600 text-white font-semibold hover:bg-clyira-700 transition-colors"
             >
               Start for free
               <ArrowRight className="w-4 h-4" />
@@ -641,7 +645,7 @@ export default function LandingPage() {
               Sign in to your account
             </Link>
           </div>
-          <p className="mt-6 text-xs text-clyira-400">
+          <p className="mt-6 text-xs text-clyira-500">
             No credit card required · Free for up to 10 documents/month · Cancel anytime
           </p>
         </div>
@@ -652,20 +656,20 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
             <div className="col-span-2 md:col-span-1">
-              <Link href="/" className="flex items-center gap-2 mb-4">
-                <img src="/clyira-logo.png" alt="Clyira" className="w-8 h-8 object-contain" />
-                <span className="font-semibold text-white">
-                  Clyira<span style={{ color: "#8C52FF" }}>.</span>ai
+              <Link href="/" className="flex items-center gap-2.5 mb-4">
+                <img src="/clyira-logo.png" alt="Clyira" className="w-10 h-10 object-contain" />
+                <span className="font-bold text-white tracking-tight">
+                  CLYIRA<span style={{ color: "#9333ea" }}>.</span>AI
                 </span>
               </Link>
-              <p className="text-sm text-clyira-400 leading-relaxed">
+              <p className="text-sm text-gray-500 leading-relaxed">
                 AI-powered quality intelligence for pharmaceutical, biotech, and medical device companies.
               </p>
             </div>
 
             <div>
               <h4 className="text-xs font-semibold text-white uppercase tracking-widest mb-4">Product</h4>
-              <ul className="space-y-3 text-sm text-clyira-400">
+              <ul className="space-y-3 text-sm text-gray-500">
                 <li><Link href="#features" className="hover:text-white transition-colors">Features</Link></li>
                 <li><Link href="#pricing" className="hover:text-white transition-colors">Pricing</Link></li>
                 <li><Link href="#how-it-works" className="hover:text-white transition-colors">How it works</Link></li>
@@ -675,7 +679,7 @@ export default function LandingPage() {
 
             <div>
               <h4 className="text-xs font-semibold text-white uppercase tracking-widest mb-4">Compliance</h4>
-              <ul className="space-y-3 text-sm text-clyira-400">
+              <ul className="space-y-3 text-sm text-gray-500">
                 <li><span>21 CFR Part 11</span></li>
                 <li><span>SOC 2 Type II</span></li>
                 <li><span>GDPR</span></li>
@@ -685,7 +689,7 @@ export default function LandingPage() {
 
             <div>
               <h4 className="text-xs font-semibold text-white uppercase tracking-widest mb-4">Company</h4>
-              <ul className="space-y-3 text-sm text-clyira-400">
+              <ul className="space-y-3 text-sm text-gray-500">
                 <li><a href="mailto:hello@clyira.ai" className="hover:text-white transition-colors">Contact</a></li>
                 <li><a href="mailto:sales@clyira.ai" className="hover:text-white transition-colors">Sales</a></li>
                 <li><a href="mailto:support@clyira.ai" className="hover:text-white transition-colors">Support</a></li>
@@ -694,10 +698,10 @@ export default function LandingPage() {
           </div>
 
           <div className="border-t border-white/5 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <p className="text-xs text-clyira-500">
+            <p className="text-xs text-gray-600">
               © 2026 Clyira, Inc. All rights reserved.
             </p>
-            <div className="flex items-center gap-6 text-xs text-clyira-500">
+            <div className="flex items-center gap-6 text-xs text-gray-600">
               <span>Privacy Policy</span>
               <span>Terms of Service</span>
               <span>Security</span>

@@ -35,11 +35,11 @@ export default function LoginPage() {
     <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Logo */}
-        <div className="flex items-center justify-center gap-2 mb-8">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-            <span className="text-primary-foreground font-bold text-lg">C</span>
-          </div>
-          <span className="text-2xl font-semibold">Clyira</span>
+        <div className="flex items-center justify-center gap-2.5 mb-8">
+          <img src="/clyira-logo.png" alt="Clyira" className="w-10 h-10 object-contain" />
+          <span className="text-2xl font-bold tracking-tight">
+            CLYIRA<span style={{ color: "#9333ea" }}>.</span>AI
+          </span>
         </div>
 
         <div className="bg-card border rounded-xl p-8 shadow-sm">

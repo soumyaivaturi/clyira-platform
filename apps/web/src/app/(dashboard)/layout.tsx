@@ -71,14 +71,14 @@ export default function DashboardLayout({
       <aside className="w-64 border-r bg-card flex flex-col">
         {/* Logo */}
         <div className="h-16 flex items-center px-6 border-b">
-          <Link href="/dashboard" className="flex items-center gap-2">
+          <Link href="/dashboard" className="flex items-center gap-2.5">
             <img
               src="/clyira-logo.png"
               alt="Clyira"
-              className="w-8 h-8 object-contain"
+              className="w-10 h-10 object-contain"
             />
-            <span className="font-semibold text-lg tracking-tight">
-              Clyira<span style={{ color: "#8C52FF" }}>.</span>ai
+            <span className="font-bold text-lg tracking-tight">
+              CLYIRA<span style={{ color: "#9333ea" }}>.</span>AI
             </span>
           </Link>
         </div>

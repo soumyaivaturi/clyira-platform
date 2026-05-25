@@ -43,19 +43,19 @@ const config: Config = {
           DEFAULT: "hsl(var(--popover))",
           foreground: "hsl(var(--popover-foreground))",
         },
-        // Clyira brand colors
+        // Clyira brand colors — purple palette
         clyira: {
-          50: "#f0f7ff",
-          100: "#e0effe",
-          200: "#bae0fd",
-          300: "#7cc8fb",
-          400: "#36adf6",
-          500: "#0c93e7",
-          600: "#0074c5",
-          700: "#015da0",
-          800: "#064f84",
-          900: "#0b426e",
-          950: "#072a49",
+          50: "#faf5ff",
+          100: "#f3e8ff",
+          200: "#e9d5ff",
+          300: "#d8b4fe",
+          400: "#c084fc",
+          500: "#a855f7",
+          600: "#9333ea",
+          700: "#7e22ce",
+          800: "#6b21a8",
+          900: "#581c87",
+          950: "#0d0d0d",
         },
         // Score band colors
         score: {
