@@ -36,6 +36,8 @@ export const authApi = {
   register: (email: string, password: string, full_name: string, company_name: string) =>
     api.post("/auth/register", { email, password, full_name, company_name }),
   me: () => api.get("/auth/me"),
+  changePassword: (current_password: string, new_password: string) =>
+    api.patch("/auth/password", { current_password, new_password }),
 };
 
 // ── Companies ─────────────────────────────────────────────────────────────────
@@ -141,6 +143,14 @@ export const readinessApi = {
 export const notificationsApi = {
   alerts: () => api.get("/notifications/alerts"),
   testEmail: () => api.post("/notifications/test-email"),
+};
+
+// ── API Keys ──────────────────────────────────────────────────────────────────
+export const apiKeysApi = {
+  list: () => api.get("/api-keys"),
+  create: (name: string, integration_type?: string) =>
+    api.post("/api-keys", { name, integration_type }),
+  revoke: (id: string) => api.delete(`/api-keys/${id}`),
 };
 
 // ── Inspections ───────────────────────────────────────────────────────────────

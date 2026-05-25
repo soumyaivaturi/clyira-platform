@@ -269,6 +269,30 @@ class AssessmentService:
                 ],
             })
 
+        # Load other company documents for L6 cross-reference analysis
+        company_docs_result = await self.db.execute(
+            select(Document)
+            .where(
+                Document.company_id == company.id,
+                Document.id != document.id,
+                Document.status == "assessed",
+            )
+            .order_by(Document.created_at.desc())
+            .limit(20)
+        )
+        company_documents_metadata = [
+            {
+                "document_id": d.id,
+                "title": d.title,
+                "document_category": d.document_category or "",
+                "department_owner": d.department_owner or "",
+                "extracted_sections": list((d.extracted_sections or {}).keys()),
+                "latest_score": d.latest_score,
+                "regulatory_frameworks": d.regulatory_frameworks or [],
+            }
+            for d in company_docs_result.scalars().all()
+        ]
+
         return AssessmentContext(
             document_id=document.id,
             company_id=company.id,
@@ -283,6 +307,7 @@ class AssessmentService:
             user_references=user_references,
             enforcement_records=enforcement_records,
             historical_assessments=historical_assessments,
+            company_documents_metadata=company_documents_metadata,
         )
 
     async def _store_findings(self, assessment_id: str, findings: list[FindingResult]):

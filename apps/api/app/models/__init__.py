@@ -7,6 +7,7 @@ from app.models.regulatory import RegulatoryCorpus, EnforcementRecord
 from app.models.readiness import ReadinessScore
 from app.models.inspection import Inspection, InspectionRequest, InspectionLog
 from app.models.audit import AuditLog
+from app.models.api_key import APIKey
 
 __all__ = [
     "Base",
@@ -23,4 +24,5 @@ __all__ = [
     "InspectionRequest",
     "InspectionLog",
     "AuditLog",
+    "APIKey",
 ]

@@ -123,3 +123,26 @@ async def get_me(current_user: User = Depends(get_current_user)):
         department=current_user.department,
         onboarding_complete=onboarding_complete,
     )
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.patch("/password", status_code=204)
+async def change_password(
+    data: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not auth_service.verify_password(data.current_password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if len(data.new_password) < 8:
+        raise HTTPException(status_code=422, detail="New password must be at least 8 characters")
+    if len(data.new_password.encode()) > 72:
+        raise HTTPException(status_code=422, detail="New password must be 72 characters or fewer")
+    if data.new_password == data.current_password:
+        raise HTTPException(status_code=400, detail="New password must be different from current password")
+    current_user.password_hash = auth_service.hash_password(data.new_password)
+    await db.commit()
