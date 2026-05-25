@@ -5265,3 +5265,82 @@ class RuleEngine:
             confidence_score=0.75,
             validated=True,
         )
+
+    def _check_l9_failure_mode_match(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Match document text against known FDA failure mode patterns from the failure mode library."""
+        import json
+        from pathlib import Path
+
+        # Load failure modes from bundled JSONL (module-level cache after first load)
+        if not hasattr(self.__class__, "_failure_modes_cache"):
+            fm_path = Path(__file__).parent.parent.parent / "rag_index" / "failure_modes.jsonl"
+            if not fm_path.exists():
+                self.__class__._failure_modes_cache = []
+            else:
+                modes = []
+                with open(fm_path) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                modes.append(json.loads(line))
+                            except Exception:
+                                pass
+                self.__class__._failure_modes_cache = modes
+
+        failure_modes = self.__class__._failure_modes_cache
+        if not failure_modes:
+            return []
+
+        text_lower = ctx.document_text.lower()
+        doc_cat = (ctx.document_category or "").lower()
+        findings = []
+
+        for fm in failure_modes:
+            # Only surface failure modes relevant to this document category
+            fm_doc_cats = [c.lower() for c in fm.get("doc_categories", [])]
+            if doc_cat and fm_doc_cats and doc_cat not in fm_doc_cats:
+                continue
+
+            keywords = fm.get("keywords", [])
+            matched_kws = [kw for kw in keywords if kw.lower() in text_lower]
+            if len(matched_kws) < 2:
+                continue
+
+            # Only flag high-frequency failure modes (frequent in FDA enforcement = real risk)
+            frequency = fm.get("frequency", 0)
+            if frequency < 50:
+                continue
+
+            severity_range = fm.get("severity_range", ["medium"])
+            severity = severity_range[-1] if severity_range else "medium"  # use worst severity
+
+            top_cfr = fm.get("primary_cfr_citations", [])
+            citation = "; ".join(top_cfr[:2]) if top_cfr else "FDA Enforcement Intelligence"
+
+            companies = fm.get("affected_companies_count", 0)
+            evidence_indicators = fm.get("evidence_indicators", [])
+            evidence_text = evidence_indicators[0] if evidence_indicators else ""
+
+            findings.append(FindingResult(
+                level="L9",
+                severity=severity,
+                category=f"failure_mode_{fm['id'].lower().replace('-', '_')}",
+                title=f"Known failure pattern detected: {fm['name']}",
+                description=(
+                    f"This document contains terminology associated with the failure mode "
+                    f"'{fm['name']}'. This pattern was cited in {frequency} FDA enforcement "
+                    f"observations across {companies} companies. {fm['description']} "
+                    f"Common indicator: {evidence_text}"
+                ),
+                evidence=f"Matched keywords: {', '.join(matched_kws[:5])}. "
+                         f"Failure mode frequency: {frequency} enforcement observations.",
+                regulatory_citation=citation,
+                citation_type="traceability",
+                agency="FDA",
+                enforcement_match=True,
+                confidence_score=0.72,
+                validated=True,
+            ))
+
+        return findings

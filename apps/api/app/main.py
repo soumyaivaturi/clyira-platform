@@ -718,3 +718,103 @@ async def seed_regulatory_corpus(request: Request, background_tasks: BackgroundT
         "source": "regulatory_corpus.jsonl",
         "message": "Check server logs for progress.",
     }
+
+
+# Admin: seed failure_modes from bundled failure_modes.jsonl
+@app.post("/admin/seed-failure-modes")
+async def seed_failure_modes(request: Request, background_tasks: BackgroundTasks):
+    """
+    Populate failure_modes table from the bundled rag_index/failure_modes.jsonl.
+    Contains 20 named failure patterns clustered from 2,919 FDA enforcement observations.
+    Idempotent: upserts by id (FM-001, FM-002, …).
+    """
+    import os
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    async def _do_seed():
+        import json
+        from pathlib import Path
+        from app.core.database import AsyncSessionLocal
+        from app.models.regulatory import FailureMode
+
+        JSONL_PATHS = [
+            Path(__file__).parent.parent / "rag_index" / "failure_modes.jsonl",
+        ]
+        jsonl_path = next((p for p in JSONL_PATHS if p.exists()), None)
+        if not jsonl_path:
+            print("seed-failure-modes: failure_modes.jsonl not found")
+            return
+
+        records = []
+        with open(jsonl_path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        records.append(json.loads(line))
+                    except Exception:
+                        pass
+
+        print(f"seed-failure-modes: loaded {len(records)} failure modes from {jsonl_path}")
+
+        inserted = 0
+        updated = 0
+        async with AsyncSessionLocal() as db:
+            for r in records:
+                existing = await db.get(FailureMode, r["id"])
+                if existing:
+                    # Update in-place (frequency may change as corpus grows)
+                    existing.name = r["name"]
+                    existing.description = r["description"]
+                    existing.frequency = r.get("frequency", 0)
+                    existing.affected_companies_count = r.get("affected_companies_count", 0)
+                    existing.primary_cfr_citations = r.get("primary_cfr_citations", [])
+                    existing.observed_cfr_sections = r.get("observed_cfr_sections", [])
+                    existing.keywords = r.get("keywords", [])
+                    existing.severity_range = r.get("severity_range", [])
+                    existing.doc_categories = r.get("doc_categories", [])
+                    existing.sub_sectors = r.get("sub_sectors", [])
+                    existing.root_cause_categories = r.get("root_cause_categories", [])
+                    existing.evidence_indicators = r.get("evidence_indicators", [])
+                    existing.example_observation_ids = r.get("example_observation_ids", [])
+                    existing.observation_years = r.get("observation_years", [])
+                    existing.offices = r.get("offices", {})
+                    updated += 1
+                else:
+                    fm = FailureMode(
+                        id=r["id"],
+                        name=r["name"],
+                        description=r["description"],
+                        frequency=r.get("frequency", 0),
+                        affected_companies_count=r.get("affected_companies_count", 0),
+                        primary_cfr_citations=r.get("primary_cfr_citations", []),
+                        observed_cfr_sections=r.get("observed_cfr_sections", []),
+                        keywords=r.get("keywords", []),
+                        severity_range=r.get("severity_range", []),
+                        doc_categories=r.get("doc_categories", []),
+                        sub_sectors=r.get("sub_sectors", []),
+                        root_cause_categories=r.get("root_cause_categories", []),
+                        evidence_indicators=r.get("evidence_indicators", []),
+                        example_observation_ids=r.get("example_observation_ids", []),
+                        observation_years=r.get("observation_years", []),
+                        offices=r.get("offices", {}),
+                        agency=r.get("agency", "FDA"),
+                        is_current=r.get("is_current", True),
+                    )
+                    db.add(fm)
+                    inserted += 1
+
+            await db.commit()
+
+        print(f"seed-failure-modes: done — inserted={inserted}, updated={updated}")
+
+    background_tasks.add_task(_do_seed)
+    return {
+        "status": "seeding_started",
+        "source": "failure_modes.jsonl",
+        "failure_modes_count": 20,
+        "message": "Check server logs for progress.",
+    }

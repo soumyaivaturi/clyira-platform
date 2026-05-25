@@ -104,6 +104,7 @@ DEVIATION_DTAP = DTAPProfile(
                 "enforcement_pattern_match",
                 "repeat_observation_risk",
                 "severity_elevation",
+                "failure_mode_match",
             ],
             required_context=["findings_so_far", "enforcement_records"],
         ),

@@ -151,6 +151,7 @@ ATM_DTAP = DTAPProfile(
                 "oos_enforcement_patterns",
                 "lab_data_integrity_citations",
                 "method_validation_deficiencies",
+                "failure_mode_match",
             ],
             required_context=["findings_so_far", "enforcement_records"],
         ),

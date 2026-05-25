@@ -35,6 +35,35 @@ class RegulatoryCorpus(Base, TimestampMixin):
     superseded_by = Column(String)
 
 
+class FailureMode(Base, TimestampMixin):
+    __tablename__ = "failure_modes"
+
+    id = Column(String(20), primary_key=True)  # FM-001, FM-002, …
+
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=False)
+
+    frequency = Column(Integer, default=0)
+    affected_companies_count = Column(Integer, default=0)
+
+    primary_cfr_citations = Column(JSONB, default=list)
+    observed_cfr_sections = Column(JSONB, default=list)
+    keywords = Column(JSONB, default=list)
+
+    severity_range = Column(JSONB, default=list)
+    doc_categories = Column(JSONB, default=list)
+    sub_sectors = Column(JSONB, default=list)
+    root_cause_categories = Column(JSONB, default=list)
+    evidence_indicators = Column(JSONB, default=list)
+
+    example_observation_ids = Column(JSONB, default=list)
+    observation_years = Column(JSONB, default=list)
+    offices = Column(JSONB, default=dict)
+
+    agency = Column(String(50), default="FDA")
+    is_current = Column(Boolean, default=True)
+
+
 class EnforcementRecord(Base, TimestampMixin):
     __tablename__ = "enforcement_records"
 

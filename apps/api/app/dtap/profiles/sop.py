@@ -143,6 +143,7 @@ SOP_DTAP = DTAPProfile(
                 "warning_letter_similarity",
                 "483_observation_alignment",
                 "severity_elevation_check",
+                "failure_mode_match",
             ],
             required_context=["findings_so_far", "enforcement_records"],
         ),

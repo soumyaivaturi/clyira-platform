@@ -158,6 +158,7 @@ CAPA_DTAP = DTAPProfile(
                 "repeat_observation_risk",
                 "severity_elevation",
                 "consent_decree_pattern",
+                "failure_mode_match",
             ],
             required_context=["findings_so_far", "enforcement_records"],
         ),
