@@ -8,6 +8,7 @@ import { AnimateIn } from "@/components/landing/animate-in";
 import { CountUp } from "@/components/landing/count-up";
 import { MarqueeStrip } from "@/components/landing/marquee-strip";
 import { LandingNav } from "@/components/landing/landing-nav";
+import { IntegrationsSection } from "@/components/landing/integrations-section";
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -619,66 +620,8 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── INTEGRATIONS ────────────────────────────────────────────────────── */}
-      <section className="py-24 px-6 bg-gray-50">
-        <div className="max-w-7xl mx-auto">
-          <AnimateIn>
-            <div className="text-center mb-14">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-clyira-50 text-clyira-700 text-xs font-semibold mb-4">
-                System integrations
-              </div>
-              <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">
-                One platform. Every system.
-              </h2>
-              <p className="text-gray-500 max-w-2xl mx-auto text-lg">
-                Your quality data lives in five different silos. Clyira connects them — so you get one unified view of compliance health across your entire operation.
-              </p>
-            </div>
-          </AnimateIn>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-12">
-            {[
-              { code: "MES", name: "Manufacturing Execution", desc: "Batch records, production orders, and in-process controls flow directly into Clyira assessments." },
-              { code: "LIMS", name: "Laboratory Information", desc: "OOS events, analytical results, and method validations pulled in automatically for L4 citation analysis." },
-              { code: "VLMS", name: "Vendor & Supplier Mgmt", desc: "Supplier qualifications, AVL status, and supplier audits referenced in every risk-level assessment." },
-              { code: "QMS", name: "Quality Management", desc: "CAPAs, deviations, and change controls bi-directionally synced — so findings map to live quality events." },
-              { code: "ERP", name: "Enterprise Resource Planning", desc: "Batch disposition, inventory, and release decisions included in your cross-document compliance picture." },
-              { code: "API", name: "Custom Integration", desc: "Any internal system connects via bearer-token REST API — create a key in Settings and start streaming data." },
-            ].map((s, i) => (
-              <AnimateIn key={s.code} delay={i * 60} direction="up">
-                <div className="bg-white border border-gray-100 rounded-xl p-5 hover:border-clyira-100 hover:shadow-md transition-all">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-xs font-bold px-2 py-1 rounded-md bg-clyira-50 text-clyira-700 uppercase tracking-wide">{s.code}</span>
-                  </div>
-                  <p className="text-sm font-semibold text-gray-900 mb-1">{s.name}</p>
-                  <p className="text-xs text-gray-500 leading-relaxed">{s.desc}</p>
-                </div>
-              </AnimateIn>
-            ))}
-          </div>
-
-          <AnimateIn delay={200}>
-            <div className="rounded-2xl bg-[#0d0d0d] p-10 flex flex-col md:flex-row items-center gap-8">
-              <div className="flex-1">
-                <p className="text-xs font-semibold uppercase tracking-widest text-clyira-400 mb-3">No more silos</p>
-                <h3 className="text-2xl font-bold text-white mb-4">
-                  One quality truth.<br />Across every system.
-                </h3>
-                <p className="text-gray-400 text-sm leading-relaxed">
-                  When your MES flags a deviation, your LIMS logs an OOS event, and your QMS raises a CAPA — Clyira sees all three. It correlates signals across systems and surfaces a single, complete compliance picture you can walk into any inspection with.
-                </p>
-              </div>
-              <div className="flex-shrink-0">
-                <Link href="/auth/register"
-                  className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-clyira-600 text-white font-semibold text-sm hover:bg-clyira-700 transition-colors shadow-sm">
-                  Connect your systems
-                  <ArrowRight className="w-4 h-4" />
-                </Link>
-              </div>
-            </div>
-          </AnimateIn>
-        </div>
-      </section>
+      {/* ── INTEGRATIONS (Evidence Fabric + 60+ Systems Grid) ──────────────── */}
+      <IntegrationsSection />
 
       {/* ── HOW IT WORKS ────────────────────────────────────────────────────── */}
       <section id="how-it-works" className="py-24 px-6 bg-white">
@@ -865,7 +808,7 @@ export default function LandingPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
             <div className="col-span-2 md:col-span-1">
               <Link href="/" className="flex items-center gap-2.5 mb-4">
-                <img src="/clyira-logo.png" alt="Clyira" className="w-10 h-10 object-contain" />
+                <img src="/clyira-logo.svg" alt="Clyira" className="w-10 h-10 object-contain" />
                 <span className="font-bold text-white tracking-tight">
                   CLYIRA<span style={{ color: "#7654c9", fontSize: "1.4em", lineHeight: 1 }}>.</span>AI
                 </span>

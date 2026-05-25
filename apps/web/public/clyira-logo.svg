@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <!-- Outer rounded frame — open at bottom-right corner -->
+  <path
+    d="M 68 10 Q 90 10 90 32 L 90 56"
+    stroke="#7654c9" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"
+  />
+  <path
+    d="M 32 10 Q 10 10 10 32 L 10 68 Q 10 90 32 90 L 68 90"
+    stroke="#7654c9" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"
+  />
+  <!-- Inner C shape -->
+  <path
+    d="M 68 36 A 26 26 0 1 0 68 64"
+    stroke="#7654c9" stroke-width="6.5" stroke-linecap="round"
+  />
+  <!-- Connector line from outer frame to dot -->
+  <line x1="82" y1="44" x2="74" y2="36" stroke="#7654c9" stroke-width="5" stroke-linecap="round"/>
+  <!-- Node dot -->
+  <circle cx="86" cy="40" r="5.5" fill="#7654c9"/>
+</svg>

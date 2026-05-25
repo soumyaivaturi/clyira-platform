@@ -1,5 +1,7 @@
 """AuditLog model — immutable record of all significant platform events (21 CFR Part 11 §11.10(e))."""
-from sqlalchemy import Column, String
+from datetime import datetime, timezone
+
+from sqlalchemy import Column, String, event
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models.base import Base, TimestampMixin, generate_uuid
@@ -34,3 +36,25 @@ class AuditLog(Base, TimestampMixin):
     # Session and network context
     ip_address = Column(String(45))
     session_id = Column(String(64), nullable=True)
+
+    # Tamper-evident hash — computed from immutable fields at insert time (Part 11 §11.10(e))
+    entry_hash = Column(String(64), nullable=True)
+
+
+@event.listens_for(AuditLog, "before_insert")
+def _stamp_audit_hash(mapper, connection, target):  # noqa: ARG001
+    from app.services.integrity import compute_hash
+    if not target.created_at:
+        target.created_at = datetime.now(timezone.utc)
+    target.entry_hash = compute_hash({
+        "id": target.id,
+        "company_id": target.company_id,
+        "user_id": target.user_id,
+        "user_email": target.user_email,
+        "event_type": target.event_type,
+        "action": target.action,
+        "resource_type": target.resource_type,
+        "resource_id": target.resource_id,
+        "detail": target.detail,
+        "created_at": str(target.created_at),
+    })

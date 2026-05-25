@@ -9,6 +9,7 @@ from app.models.inspection import Inspection, InspectionRequest, InspectionLog
 from app.models.audit import AuditLog
 from app.models.api_key import APIKey
 from app.models.password_history import PasswordHistory
+from app.models.document_signature import DocumentSignature
 
 __all__ = [
     "Base",
@@ -27,4 +28,5 @@ __all__ = [
     "AuditLog",
     "APIKey",
     "PasswordHistory",
+    "DocumentSignature",
 ]

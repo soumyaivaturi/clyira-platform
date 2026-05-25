@@ -1,5 +1,5 @@
 """Assessment and Finding models"""
-from sqlalchemy import Column, String, Text, Integer, Float, ForeignKey, Boolean
+from sqlalchemy import Column, String, Text, Integer, Float, ForeignKey, Boolean, event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
@@ -51,6 +51,9 @@ class Assessment(Base, TimestampMixin):
     tokens_used = Column(Integer)
     model_version = Column(String(50))
     error_detail = Column(Text)  # Stores traceback on failure for debugging
+
+    # Tamper-evident hash of record content (Part 11 §11.10(e)) — set when status → completed
+    content_hash = Column(String(64), nullable=True)
 
     # Relationships
     document = relationship("Document", back_populates="assessments")
@@ -105,3 +108,28 @@ class Finding(Base, TimestampMixin):
 
     # Relationships
     assessment = relationship("Assessment", back_populates="findings")
+
+
+@event.listens_for(Assessment, "before_update")
+def _stamp_assessment_hash(mapper, connection, target):  # noqa: ARG001
+    """Compute tamper-evident hash when an assessment transitions to completed status."""
+    from sqlalchemy.orm import attributes
+    history = attributes.get_history(target, "status")
+    if history.added and "completed" in history.added:
+        from app.services.integrity import compute_hash
+        target.content_hash = compute_hash({
+            "id": target.id,
+            "document_id": target.document_id,
+            "company_id": target.company_id,
+            "triggered_by": target.triggered_by,
+            "clyira_score": target.clyira_score,
+            "score_band": target.score_band,
+            "findings_critical": target.findings_critical,
+            "findings_high": target.findings_high,
+            "findings_medium": target.findings_medium,
+            "findings_low": target.findings_low,
+            "findings_info": target.findings_info,
+            "dtap_id": target.dtap_id,
+            "levels_run": target.levels_run,
+            "completed_at": target.completed_at,
+        })

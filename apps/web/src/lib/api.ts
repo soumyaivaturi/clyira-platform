@@ -154,6 +154,13 @@ export const apiKeysApi = {
   revoke: (id: string) => api.delete(`/api-keys/${id}`),
 };
 
+// ── Electronic Signatures ─────────────────────────────────────────────────────
+export const signaturesApi = {
+  list: (documentId: string) => api.get(`/documents/${documentId}/signatures`),
+  sign: (documentId: string, meaning: "authored" | "reviewed" | "approved", password: string) =>
+    api.post(`/documents/${documentId}/signatures`, { meaning, password }),
+};
+
 // ── Inspections ───────────────────────────────────────────────────────────────
 export const inspectionsApi = {
   list: (status?: string) => api.get("/inspections", { params: status ? { insp_status: status } : {} }),

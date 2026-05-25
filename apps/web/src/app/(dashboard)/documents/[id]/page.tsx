@@ -8,9 +8,10 @@ import {
   CheckCircle2, ChevronDown, ChevronUp, BookOpen, Zap,
   Upload, Plus, X, FileUp, CheckSquare, Square, ShieldCheck,
   Download, MessageCircle, Send, History, Lock, CheckCheck,
-  ThumbsUp, Clock, Flag,
+  ThumbsUp, Clock, Flag, PenLine,
 } from "lucide-react";
-import { documentsApi, assessmentsApi, assistantApi, documentHistoryApi } from "@/lib/api";
+import { documentsApi, assessmentsApi, assistantApi, documentHistoryApi, signaturesApi } from "@/lib/api";
+import { SignatureModal } from "@/components/shared/signature-modal";
 import { ScoreRing, ScoreBadge } from "@/components/shared/score-display";
 import { SeverityBadge, LevelBadge, DocStatusBadge, FindingStatusBadge } from "@/components/shared/badges";
 import { formatDate, formatFileSize, getSeverityConfig, timeAgo } from "@/lib/utils";
@@ -49,6 +50,12 @@ interface HistoryEntry {
   id: string; clyira_score?: number; adjusted_score?: number;
   score_band?: string; findings_critical: number; findings_high: number;
   created_at: string; dtap_id?: string;
+}
+
+interface Signature {
+  id: string; user_full_name: string; user_email: string; user_role: string;
+  meaning: string; signed_at: string; is_voided: boolean; void_reason?: string;
+  document_version?: string; entry_hash?: string;
 }
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
@@ -799,11 +806,23 @@ export default function DocumentDetailPage() {
   const [showRefUpload, setShowRefUpload] = useState(false);
   const [error, setError] = useState("");
   const [selectedFrameworks, setSelectedFrameworks] = useState<string[]>(ALL_FRAMEWORK_CODES);
+  const [signatures, setSignatures] = useState<Signature[]>([]);
+  const [showSignModal, setShowSignModal] = useState(false);
+
+  const loadSignatures = async () => {
+    try {
+      const res = await signaturesApi.list(id);
+      setSignatures(res.data);
+    } catch { /* non-critical */ }
+  };
 
   const loadDoc = async () => {
     setLoading(true);
     try {
-      const res = await documentsApi.get(id);
+      const [res] = await Promise.all([
+        documentsApi.get(id),
+        loadSignatures(),
+      ]);
       setDoc(res.data);
       if (res.data.latest_assessment_id) {
         await loadAssessment(res.data.latest_assessment_id);
@@ -933,6 +952,14 @@ export default function DocumentDetailPage() {
           onSuccess={() => { setShowRefUpload(false); loadDoc(); }}
         />
       )}
+      {showSignModal && doc && (
+        <SignatureModal
+          documentId={id}
+          documentTitle={doc.title}
+          onClose={() => setShowSignModal(false)}
+          onSigned={() => { setShowSignModal(false); loadSignatures(); }}
+        />
+      )}
 
       {/* Breadcrumb */}
       <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -995,6 +1022,14 @@ export default function DocumentDetailPage() {
               </button>
             </>
           )}
+          <button
+            onClick={() => setShowSignModal(true)}
+            className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm font-medium hover:bg-accent transition-colors"
+            title="Electronically sign this document (21 CFR §11.50)"
+          >
+            <PenLine className="w-4 h-4" />
+            Sign
+          </button>
         <button onClick={runAssessment} disabled={assessing}
           className="flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 flex-shrink-0"
           title={`Assess against ${selectedFrameworks.length} frameworks`}>
@@ -1225,6 +1260,72 @@ export default function DocumentDetailPage() {
           </p>
         </div>
       )}
+
+      {/* Electronic Signature Manifest */}
+      <div className="bg-card border rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b">
+          <div className="flex items-center gap-2">
+            <PenLine className="w-4 h-4 text-muted-foreground" />
+            <h2 className="font-semibold text-sm">Electronic Signatures</h2>
+            <span className="text-[10px] text-muted-foreground">21 CFR Part 11 §11.50</span>
+          </div>
+          <button
+            onClick={() => setShowSignModal(true)}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 border rounded-md hover:bg-accent transition-colors font-medium"
+          >
+            <PenLine className="w-3 h-3" /> Sign document
+          </button>
+        </div>
+
+        {signatures.length === 0 ? (
+          <div className="px-5 py-8 text-center">
+            <p className="text-sm text-muted-foreground">No signatures applied yet.</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Electronically sign this document to create a tamper-evident, legally binding record.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y">
+            {signatures.map((sig) => (
+              <div key={sig.id} className={`px-5 py-4 flex items-start gap-4 ${sig.is_voided ? "opacity-50" : ""}`}>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                  sig.meaning === "approved" ? "bg-green-100" :
+                  sig.meaning === "reviewed" ? "bg-blue-100" : "bg-purple-100"
+                }`}>
+                  <PenLine className={`w-3.5 h-3.5 ${
+                    sig.meaning === "approved" ? "text-green-700" :
+                    sig.meaning === "reviewed" ? "text-blue-700" : "text-purple-700"
+                  }`} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-medium">{sig.user_full_name}</p>
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded capitalize ${
+                      sig.meaning === "approved" ? "bg-green-100 text-green-700" :
+                      sig.meaning === "reviewed" ? "bg-blue-100 text-blue-700" : "bg-purple-100 text-purple-700"
+                    }`}>
+                      {sig.meaning}
+                    </span>
+                    {sig.is_voided && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-700">VOIDED</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">{sig.user_email} · {sig.user_role}</p>
+                  {sig.void_reason && (
+                    <p className="text-xs text-red-600 mt-0.5">Voided: {sig.void_reason}</p>
+                  )}
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className="text-xs text-muted-foreground">{new Date(sig.signed_at).toLocaleString()}</p>
+                  {sig.document_version && (
+                    <p className="text-[10px] font-mono text-muted-foreground/60">v{sig.document_version}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

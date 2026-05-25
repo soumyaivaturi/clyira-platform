@@ -98,7 +98,7 @@ export default function DashboardLayout({
         <div className="h-16 flex items-center px-6 border-b">
           <Link href="/dashboard" className="flex items-center gap-2.5">
             <img
-              src="/clyira-logo.png"
+              src="/clyira-logo.svg"
               alt="Clyira"
               className="w-10 h-10 object-contain"
             />
