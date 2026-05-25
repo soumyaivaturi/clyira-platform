@@ -440,13 +440,17 @@ interface SearchResult {
 
 export default function DocumentsPage() {
   const router = useRouter();
+  // Read URL params for pre-filtering (e.g. from readiness department drill-down)
+  const searchParams = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search)
+    : null;
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState("");
-  const [deptFilter, setDeptFilter] = useState("");
+  const [deptFilter, setDeptFilter] = useState(searchParams?.get("department_owner") ?? "");
   const [showUpload, setShowUpload] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [loadError, setLoadError] = useState("");

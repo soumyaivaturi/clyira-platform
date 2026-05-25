@@ -225,14 +225,23 @@ export default function ReadinessPage() {
                 {[1,2,3,4,5].map(i => <div key={i} className="h-8 bg-muted animate-pulse rounded" />)}
               </div>
             ) : readiness?.departments.length ? (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {readiness.departments.sort((a, b) => b.score - a.score).map(d => (
-                  <ScoreBar
+                  <Link
                     key={d.department}
-                    label={d.department}
-                    score={d.score}
-                    weight={d.weight}
-                  />
+                    href={`/documents?department_owner=${encodeURIComponent(d.department)}`}
+                    className="block group hover:bg-muted/30 rounded-lg p-1 -mx-1 transition-colors"
+                    title={`View ${d.document_count} document${d.document_count !== 1 ? "s" : ""} in ${d.department}`}
+                  >
+                    <ScoreBar
+                      label={d.department}
+                      score={d.score}
+                      weight={d.weight}
+                    />
+                    <p className="text-[10px] text-muted-foreground ml-[148px] mt-0.5 group-hover:text-primary transition-colors">
+                      {d.document_count} document{d.document_count !== 1 ? "s" : ""} → view all
+                    </p>
+                  </Link>
                 ))}
               </div>
             ) : (
