@@ -72,6 +72,11 @@ class ReadinessService:
         dept_documents: dict[str, list] = {}
         data_integrity_holds = 0
         enforcement_match_count = 0
+        findings_critical_total = 0
+        findings_high_total = 0
+        findings_medium_total = 0
+        findings_low_total = 0
+        assessments_run_total = len(assessment_map)
 
         for doc in documents:
             dept = doc.department_owner or "Unassigned"
@@ -81,6 +86,11 @@ class ReadinessService:
                 data_integrity_holds += 1
             if a and a.enforcement_matches:
                 enforcement_match_count += a.enforcement_matches
+            if a:
+                findings_critical_total += a.findings_critical or 0
+                findings_high_total += a.findings_high or 0
+                findings_medium_total += a.findings_medium or 0
+                findings_low_total += a.findings_low or 0
 
             if dept not in dept_documents:
                 dept_documents[dept] = []
@@ -114,6 +124,11 @@ class ReadinessService:
             "total_documents": len(documents),
             "data_integrity_holds": data_integrity_holds,
             "enforcement_matches_total": enforcement_match_count,
+            "assessments_run_total": assessments_run_total,
+            "findings_critical_total": findings_critical_total,
+            "findings_high_total": findings_high_total,
+            "findings_medium_total": findings_medium_total,
+            "findings_low_total": findings_low_total,
         }
 
     # Review cycle thresholds by document category (days since last assessment)

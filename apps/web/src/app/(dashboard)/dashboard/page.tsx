@@ -3,9 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  FileText, Shield, Radio,
-  AlertTriangle, ChevronRight, Upload, Plus, RefreshCw, Lock, Zap,
-  ClipboardCheck,
+  FileText, Shield, AlertTriangle, ChevronRight,
+  Upload, RefreshCw, Lock, Zap, ClipboardCheck, TrendingUp,
 } from "lucide-react";
 import { readinessApi, documentsApi, assessmentsApi } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
@@ -22,6 +21,11 @@ interface ReadinessDashboard {
   gap_count: number;
   data_integrity_holds: number;
   enforcement_matches_total: number;
+  assessments_run_total: number;
+  findings_critical_total: number;
+  findings_high_total: number;
+  findings_medium_total: number;
+  findings_low_total: number;
 }
 
 interface DocSummary {
@@ -41,6 +45,24 @@ interface RecentAssessment {
   findings_high: number;
   data_integrity_hold: boolean;
   created_at: string;
+}
+
+function KpiCard({
+  label, value, sub, icon: Icon, alert = false, warn = false,
+}: {
+  label: string; value: string | number; sub?: string;
+  icon: React.ElementType; alert?: boolean; warn?: boolean;
+}) {
+  return (
+    <div className={`bg-card border rounded-xl p-5 ${alert ? "border-red-200 bg-red-50/30" : warn ? "border-amber-200 bg-amber-50/30" : ""}`}>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{label}</p>
+        <Icon className={`w-4 h-4 ${alert ? "text-red-500" : warn ? "text-amber-500" : "text-muted-foreground"}`} />
+      </div>
+      <p className={`text-2xl font-bold tabular-nums ${alert ? "text-red-600" : warn ? "text-amber-600" : ""}`}>{value}</p>
+      {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
+    </div>
+  );
 }
 
 export default function DashboardPage() {
@@ -64,7 +86,7 @@ export default function DashboardPage() {
       setRecentDocs((dRes.data.documents ?? []).slice(0, 6));
       setRecentAssessments(aRes.data.assessments ?? []);
     } catch {
-      setError("Could not load dashboard data. Please refresh the page or sign in again.");
+      setError("Could not load dashboard data. Please refresh or sign in again.");
     } finally {
       setLoading(false);
     }
@@ -73,6 +95,13 @@ export default function DashboardPage() {
   useEffect(() => { load(); }, []);
 
   const score = readiness?.company_score;
+  const totalFindings = (readiness?.findings_critical_total ?? 0)
+    + (readiness?.findings_high_total ?? 0)
+    + (readiness?.findings_medium_total ?? 0)
+    + (readiness?.findings_low_total ?? 0);
+
+  // Severity bar widths
+  const sevPct = (n: number) => totalFindings > 0 ? Math.round((n / totalFindings) * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -100,7 +129,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Data Integrity Hold Banner */}
+      {/* DI Hold Banner */}
       {(readiness?.data_integrity_holds ?? 0) > 0 && (
         <div className="bg-red-50 border border-red-300 rounded-lg px-4 py-3 flex items-start gap-3">
           <Lock className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
@@ -109,94 +138,97 @@ export default function DashboardPage() {
               {readiness!.data_integrity_holds} Data Integrity Hold{readiness!.data_integrity_holds > 1 ? "s" : ""} Active
             </p>
             <p className="text-xs text-red-700 mt-0.5">
-              Documents with critical data integrity findings have capped scores. Review findings and resolve to lift holds.
+              Documents with critical ALCOA+ findings have their scores capped at 50. Resolve findings to lift holds.
             </p>
           </div>
-          <Link href="/readiness" className="ml-auto text-xs text-red-700 hover:underline flex-shrink-0">
+          <Link href="/readiness" className="ml-auto text-xs text-red-700 hover:underline flex-shrink-0 whitespace-nowrap">
             View gaps →
           </Link>
         </div>
       )}
 
       {/* KPI Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Clyira Score */}
-        <div className="bg-card border rounded-xl p-5 flex items-center gap-4">
+        <div className="bg-card border rounded-xl p-5 flex items-center gap-4 lg:col-span-1">
           <ScoreRing score={score} size="sm" showBand={false} />
-          <div>
+          <div className="min-w-0">
             <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Clyira Score</p>
             <p className="text-2xl font-bold tabular-nums mt-0.5">
               {score != null ? score.toFixed(1) : "—"}
             </p>
-            <p className="text-xs text-muted-foreground mt-0.5">{readiness?.score_band ?? "Not assessed"}</p>
+            <p className="text-xs text-muted-foreground mt-0.5 truncate">{readiness?.score_band ?? "Not assessed"}</p>
           </div>
         </div>
 
-        {/* Documents */}
-        <div className="bg-card border rounded-xl p-5">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Documents</p>
-            <FileText className="w-4 h-4 text-muted-foreground" />
-          </div>
-          <p className="text-2xl font-bold tabular-nums">{readiness?.total_documents ?? "—"}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {readiness ? `${readiness.top_gaps.missing_assessments.length} pending assessment` : "Loading…"}
-          </p>
-        </div>
+        <KpiCard
+          label="Documents"
+          value={readiness?.total_documents ?? "—"}
+          sub={readiness ? `${readiness.top_gaps.missing_assessments.length} pending assessment` : "Loading…"}
+          icon={FileText}
+        />
 
-        {/* Data Integrity Holds */}
-        <div className={`bg-card border rounded-xl p-5 ${(readiness?.data_integrity_holds ?? 0) > 0 ? "border-red-200 bg-red-50/30" : ""}`}>
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">DI Holds</p>
-            <Lock className={`w-4 h-4 ${(readiness?.data_integrity_holds ?? 0) > 0 ? "text-red-500" : "text-muted-foreground"}`} />
-          </div>
-          <p className={`text-2xl font-bold tabular-nums ${(readiness?.data_integrity_holds ?? 0) > 0 ? "text-red-600" : ""}`}>
-            {readiness?.data_integrity_holds ?? "—"}
-          </p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {(readiness?.data_integrity_holds ?? 0) > 0 ? "Score caps applied" : "No active holds"}
-          </p>
-        </div>
+        <KpiCard
+          label="Assessments Run"
+          value={readiness?.assessments_run_total ?? "—"}
+          sub={`${readiness?.departments.length ?? 0} departments covered`}
+          icon={TrendingUp}
+        />
 
-        {/* Enforcement Matches */}
-        <div className={`bg-card border rounded-xl p-5 ${(readiness?.enforcement_matches_total ?? 0) > 0 ? "border-amber-200 bg-amber-50/30" : ""}`}>
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Enforcement Hits</p>
-            <Zap className={`w-4 h-4 ${(readiness?.enforcement_matches_total ?? 0) > 0 ? "text-amber-500" : "text-muted-foreground"}`} />
-          </div>
-          <p className={`text-2xl font-bold tabular-nums ${(readiness?.enforcement_matches_total ?? 0) > 0 ? "text-amber-600" : ""}`}>
-            {readiness?.enforcement_matches_total ?? "—"}
-          </p>
-          <p className="text-xs text-muted-foreground mt-0.5">FDA Warning Letter pattern matches</p>
-        </div>
+        <KpiCard
+          label="Enforcement Hits"
+          value={readiness?.enforcement_matches_total ?? "—"}
+          sub="FDA Warning Letter patterns"
+          icon={Zap}
+          warn={(readiness?.enforcement_matches_total ?? 0) > 0}
+        />
+
+        <KpiCard
+          label="DI Holds"
+          value={readiness?.data_integrity_holds ?? "—"}
+          sub={(readiness?.data_integrity_holds ?? 0) > 0 ? "Score caps applied" : "No active holds"}
+          icon={Lock}
+          alert={(readiness?.data_integrity_holds ?? 0) > 0}
+        />
       </div>
 
-      {/* Gap Count row - secondary */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Compliance Gaps */}
+      {/* Finding Severity Strip */}
+      {totalFindings > 0 && (
         <div className="bg-card border rounded-xl p-5">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Compliance Gaps</p>
-            <AlertTriangle className="w-4 h-4 text-score-moderate" />
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="font-semibold text-sm">Portfolio Finding Severity</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">{totalFindings} total findings across all assessed documents</p>
+            </div>
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span><span className="inline-block w-2 h-2 rounded-sm bg-red-600 mr-1" />{readiness!.findings_critical_total} Critical</span>
+              <span><span className="inline-block w-2 h-2 rounded-sm bg-orange-500 mr-1" />{readiness!.findings_high_total} High</span>
+              <span><span className="inline-block w-2 h-2 rounded-sm bg-amber-400 mr-1" />{readiness!.findings_medium_total} Medium</span>
+              <span><span className="inline-block w-2 h-2 rounded-sm bg-blue-400 mr-1" />{readiness!.findings_low_total} Low</span>
+            </div>
           </div>
-          <p className="text-2xl font-bold tabular-nums">{readiness?.gap_count ?? "—"}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {readiness?.top_gaps.poor_scores.length ? `${readiness.top_gaps.poor_scores.length} documents below threshold` : "Across all departments"}
-          </p>
-        </div>
-
-        {/* Departments */}
-        <div className="bg-card border rounded-xl p-5">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Depts Assessed</p>
-            <Shield className="w-4 h-4 text-primary" />
+          <div className="flex h-3 rounded-full overflow-hidden gap-0.5">
+            {sevPct(readiness!.findings_critical_total) > 0 && (
+              <div className="bg-red-600 rounded-l-full" style={{ width: `${sevPct(readiness!.findings_critical_total)}%` }} title={`Critical: ${readiness!.findings_critical_total}`} />
+            )}
+            {sevPct(readiness!.findings_high_total) > 0 && (
+              <div className="bg-orange-500" style={{ width: `${sevPct(readiness!.findings_high_total)}%` }} title={`High: ${readiness!.findings_high_total}`} />
+            )}
+            {sevPct(readiness!.findings_medium_total) > 0 && (
+              <div className="bg-amber-400" style={{ width: `${sevPct(readiness!.findings_medium_total)}%` }} title={`Medium: ${readiness!.findings_medium_total}`} />
+            )}
+            {sevPct(readiness!.findings_low_total) > 0 && (
+              <div className="bg-blue-400 rounded-r-full" style={{ width: `${sevPct(readiness!.findings_low_total)}%` }} title={`Low: ${readiness!.findings_low_total}`} />
+            )}
           </div>
-          <p className="text-2xl font-bold tabular-nums">{readiness?.departments.length ?? "—"}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {readiness?.departments.length ? "Department scores available" : "Upload documents to begin"}
-          </p>
+          {(readiness!.findings_critical_total > 0 || readiness!.findings_high_total > 0) && (
+            <p className="text-xs text-red-700 mt-2">
+              {readiness!.findings_critical_total + readiness!.findings_high_total} critical/high findings require attention.{" "}
+              <Link href="/readiness" className="underline">View gaps →</Link>
+            </p>
+          )}
         </div>
-      </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Department Heatmap */}
@@ -220,12 +252,12 @@ export default function DashboardPage() {
           ) : readiness?.departments.length ? (
             <div className="space-y-2.5">
               {readiness.departments
-                .sort((a, b) => b.score - a.score)
+                .sort((a, b) => a.score - b.score)
                 .map((d) => (
                   <ScoreBar
                     key={d.department}
                     score={d.score}
-                    label={d.department}
+                    label={`${d.department} (${d.document_count})`}
                     weight={d.weight}
                   />
                 ))}
@@ -234,12 +266,13 @@ export default function DashboardPage() {
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <Shield className="w-8 h-8 text-muted-foreground/40 mb-2" />
               <p className="text-sm text-muted-foreground">No department data yet.</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Upload and assess documents to see scores.</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Upload and assess documents to see scores by department.</p>
+              <Link href="/documents" className="mt-3 text-xs text-primary hover:underline">Upload a document →</Link>
             </div>
           )}
         </div>
 
-        {/* Quick Actions */}
+        {/* Quick Actions + Top Gaps */}
         <div className="space-y-4">
           <div className="bg-card border rounded-xl p-5">
             <h2 className="font-semibold text-sm mb-3">Quick Actions</h2>
@@ -251,16 +284,7 @@ export default function DashboardPage() {
                 <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
                   <Upload className="w-3.5 h-3.5 text-primary" />
                 </div>
-                <span>Upload a document</span>
-              </Link>
-              <Link
-                href="/documents"
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg border hover:bg-accent transition-colors text-sm"
-              >
-                <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <Plus className="w-3.5 h-3.5 text-primary" />
-                </div>
-                <span>AI Document Creator</span>
+                <span>Upload &amp; assess a document</span>
               </Link>
               <Link
                 href="/readiness"
@@ -276,14 +300,13 @@ export default function DashboardPage() {
                 className="flex items-center gap-3 px-3 py-2.5 rounded-lg border hover:bg-accent transition-colors text-sm"
               >
                 <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <Radio className="w-3.5 h-3.5 text-primary" />
+                  <ClipboardCheck className="w-3.5 h-3.5 text-primary" />
                 </div>
-                <span>Start new inspection</span>
+                <span>View inspections</span>
               </Link>
             </div>
           </div>
 
-          {/* Top Gaps */}
           {(readiness?.top_gaps.poor_scores.length ?? 0) > 0 && (
             <div className="bg-red-50 border border-red-200 rounded-xl p-5">
               <h2 className="font-semibold text-sm text-red-800 mb-3 flex items-center gap-1.5">
@@ -297,6 +320,22 @@ export default function DashboardPage() {
                       <span className="text-red-800 font-medium truncate mr-2">{g.title}</span>
                       <ScoreBadge score={g.score} />
                     </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(readiness?.top_gaps.missing_assessments.length ?? 0) > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+              <h2 className="font-semibold text-sm text-amber-800 mb-2 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Pending Assessment
+              </h2>
+              <div className="space-y-1.5">
+                {readiness!.top_gaps.missing_assessments.slice(0, 3).map((g: any) => (
+                  <Link key={g.document_id} href={`/documents/${g.document_id}`} className="block text-xs text-amber-800 hover:underline truncate">
+                    {g.title}
                   </Link>
                 ))}
               </div>
@@ -364,7 +403,7 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Recent Assessment Activity */}
+        {/* Recent Assessments */}
         <div className="bg-card border rounded-xl">
           <div className="px-5 py-4 border-b flex items-center justify-between">
             <div>
@@ -414,7 +453,9 @@ export default function DashboardPage() {
                       <span className="text-xs text-muted-foreground">{a.document_category ?? "—"}</span>
                       {(a.findings_critical > 0 || a.findings_high > 0) && (
                         <span className="text-[10px] font-medium text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded">
-                          {a.findings_critical > 0 ? `${a.findings_critical}C` : ""}{a.findings_critical > 0 && a.findings_high > 0 ? " " : ""}{a.findings_high > 0 ? `${a.findings_high}H` : ""}
+                          {a.findings_critical > 0 ? `${a.findings_critical}C` : ""}
+                          {a.findings_critical > 0 && a.findings_high > 0 ? " " : ""}
+                          {a.findings_high > 0 ? `${a.findings_high}H` : ""}
                         </span>
                       )}
                       {a.data_integrity_hold && (
