@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { CheckCircle, Loader2, ChevronRight, ChevronLeft, Building2, Globe, ShieldCheck, Sparkles } from "lucide-react";
 import { companiesApi } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
+import { ClyiraLogo } from "@/components/shared/clyira-logo";
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -231,7 +232,7 @@ export default function OnboardingPage() {
         {/* Header */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-2.5 mb-4">
-            <img src="/clyira-logo.svg" alt="Clyira" className="w-10 h-10 object-contain" />
+            <ClyiraLogo />
             <span className="text-2xl font-bold tracking-tight">
               CLYIRA<span style={{ color: "#7654c9", fontSize: "1.4em", lineHeight: 1 }}>.</span>AI
             </span>

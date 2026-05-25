@@ -16,6 +16,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { NotificationBell } from "@/components/shared/notification-bell";
 import { TermsModal } from "@/components/shared/terms-modal";
+import { ClyiraLogo } from "@/components/shared/clyira-logo";
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes — Part 11 §11.300
 
@@ -97,11 +98,7 @@ export default function DashboardLayout({
         {/* Logo */}
         <div className="h-16 flex items-center px-6 border-b">
           <Link href="/dashboard" className="flex items-center gap-2.5">
-            <img
-              src="/clyira-logo.svg"
-              alt="Clyira"
-              className="w-10 h-10 object-contain"
-            />
+            <ClyiraLogo />
             <span className="font-bold text-lg tracking-tight">
               CLYIRA<span style={{ color: "#7654c9", fontSize: "1.4em", lineHeight: 1 }}>.</span>AI
             </span>

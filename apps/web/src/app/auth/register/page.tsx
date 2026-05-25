@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Shield, Eye, EyeOff, Loader2, ChevronRight, ChevronLeft } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { ClyiraLogo } from "@/components/shared/clyira-logo";
 
 type Step = "account" | "company";
 
@@ -80,7 +81,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="flex items-center justify-center gap-2.5 mb-8">
-          <img src="/clyira-logo.svg" alt="Clyira" className="w-10 h-10 object-contain" />
+          <ClyiraLogo />
           <span className="text-2xl font-bold tracking-tight">
             CLYIRA<span style={{ color: "#7654c9", fontSize: "1.4em", lineHeight: 1 }}>.</span>AI
           </span>

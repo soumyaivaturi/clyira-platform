@@ -9,6 +9,7 @@ import { CountUp } from "@/components/landing/count-up";
 import { MarqueeStrip } from "@/components/landing/marquee-strip";
 import { LandingNav } from "@/components/landing/landing-nav";
 import { IntegrationsSection } from "@/components/landing/integrations-section";
+import { ClyiraLogo } from "@/components/shared/clyira-logo";
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -808,7 +809,7 @@ export default function LandingPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
             <div className="col-span-2 md:col-span-1">
               <Link href="/" className="flex items-center gap-2.5 mb-4">
-                <img src="/clyira-logo.svg" alt="Clyira" className="w-10 h-10 object-contain" />
+                <ClyiraLogo />
                 <span className="font-bold text-white tracking-tight">
                   CLYIRA<span style={{ color: "#7654c9", fontSize: "1.4em", lineHeight: 1 }}>.</span>AI
                 </span>

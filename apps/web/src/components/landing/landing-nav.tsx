@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { ClyiraLogo } from "@/components/shared/clyira-logo";
 
 export function LandingNav() {
   const [scrolled, setScrolled] = useState(false);
@@ -22,7 +23,7 @@ export function LandingNav() {
     >
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2.5">
-          <img src="/clyira-logo.svg" alt="Clyira" className="w-12 h-12 object-contain" />
+          <ClyiraLogo className="w-12 h-12" />
           <span className="font-extrabold text-xl tracking-tight text-gray-900">
             CLYIRA<span style={{ color: "#7654c9", fontSize: "1.4em", lineHeight: 1 }}>.</span>AI
           </span>
