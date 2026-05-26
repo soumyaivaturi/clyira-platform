@@ -6,6 +6,9 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
+import asyncio
+from collections import defaultdict
+
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
@@ -396,6 +399,14 @@ async def update_request(
         req.assigned_to_name = assigned_to_name
 
     await db.commit()
+    # Push real-time update to all war room clients
+    await ws_broadcast(inspection_id, {
+        "type": "request_update",
+        "inspection_id": inspection_id,
+        "request_id": request_id,
+        "status": req.status,
+        "fulfillment_progress": req.fulfillment_progress,
+    })
     return _request_out(req)
 
 
@@ -1098,6 +1109,94 @@ Be professional, factual, and concise. This will be read in the closing meeting 
         return {"inspection_id": inspection_id, "summary": None, "error": str(e)}
 
 
+@router.post("/{inspection_id}/cover-letter", response_model=dict)
+async def generate_cover_letter(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.engines.llm_engine import _llm_available, _call_llm
+
+    inspection = await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    if not _llm_available():
+        return {"inspection_id": inspection_id, "letter": None, "error": "llm_unavailable"}
+
+    obs_result = await db.execute(
+        select(InspectionObservation).where(InspectionObservation.inspection_id == inspection_id)
+    )
+    observations = obs_result.scalars().all()
+
+    commit_result = await db.execute(
+        select(InspectionCommitment).where(InspectionCommitment.inspection_id == inspection_id)
+    )
+    commitments = commit_result.scalars().all()
+
+    obs_blocks = "\n\n".join(
+        f"Observation {o.observation_number}: {o.observation_text}\n"
+        f"System Area: {o.system_area or 'General'}\n"
+        f"CFR Citations: {', '.join(o.cfr_citations or []) or 'Not specified'}\n"
+        f"Draft Response: {o.draft_response or 'Not yet drafted'}"
+        for o in observations
+    ) or "No formal 483 observations were issued."
+
+    commit_blocks = "\n".join(
+        f"- {c.commitment_text} (deadline: {c.deadline_at or 'TBD'})"
+        for c in commitments
+    ) or "No commitments made during inspection."
+
+    prompt = f"""Draft a formal FDA 483 Response Letter for the following inspection.
+
+Company: {inspection.company_id}
+Inspection Title: {inspection.title}
+Agency: {inspection.agency or 'FDA'}
+Inspection Type: {inspection.inspection_type or 'Routine GMP'}
+
+FORM 483 OBSERVATIONS:
+{obs_blocks}
+
+COMMITMENTS MADE DURING INSPECTION:
+{commit_blocks}
+
+Draft a professional, regulatory-compliant cover letter that:
+1. Opens with formal address to the FDA District Director
+2. States commitment to quality and regulatory compliance
+3. For each observation: acknowledges the finding, provides root cause analysis framework, describes corrective action plan, and states implementation timeline
+4. Closes with a statement of management commitment
+5. Uses 21 CFR Part 820 / 21 CFR Part 211 language as appropriate
+
+Format as a proper business letter. Use [COMPANY NAME], [SITE ADDRESS], [QA DIRECTOR NAME], [DATE] as placeholders where specific data is needed."""
+
+    try:
+        letter = await _call_llm(
+            "You are a regulatory affairs expert drafting a formal FDA 483 response letter on behalf of a pharmaceutical company.",
+            prompt,
+        )
+        return {
+            "inspection_id": inspection_id,
+            "letter": letter,
+            "observation_count": len(observations),
+            "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+    except Exception as e:
+        logger.warning(f"Cover letter generation failed: {e}")
+        return {"inspection_id": inspection_id, "letter": None, "error": str(e)}
+
+
+@router.post("/{inspection_id}/finalize", response_model=dict)
+async def finalize_inspection(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    inspection = await _verify_inspection(db, inspection_id, current_user.company_id)
+    if inspection.status not in ("post_inspection", "active"):
+        raise HTTPException(status_code=400, detail="Only post-inspection inspections can be finalized")
+    inspection.status = "closed"
+    await db.commit()
+    return _inspection_out(inspection)
+
+
 # ── Scribe ───────────────────────────────────────────────────────────────────────
 
 @router.post("/{inspection_id}/scribe", response_model=dict, status_code=status.HTTP_201_CREATED)
@@ -1259,14 +1358,101 @@ Be specific. Reference 21 CFR Part 211 or applicable regulations where relevant.
         }
 
 
-# ── WebSocket ────────────────────────────────────────────────────────────────────
+# ── WebSocket connection manager ─────────────────────────────────────────────────
+
+class _InspectionRoom:
+    """Per-inspection broadcast room. Thread-safe via asyncio single-thread guarantee."""
+    def __init__(self):
+        self._connections: list[WebSocket] = []
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self._connections.append(ws)
+
+    def disconnect(self, ws: WebSocket):
+        self._connections = [c for c in self._connections if c is not ws]
+
+    async def broadcast(self, message: dict):
+        dead = []
+        for ws in self._connections:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(ws)
+
+    @property
+    def count(self) -> int:
+        return len(self._connections)
+
+
+_rooms: dict[str, _InspectionRoom] = defaultdict(_InspectionRoom)
+
+
+async def ws_broadcast(inspection_id: str, message: dict):
+    """Call from any endpoint to push an event to all connected war room clients."""
+    if inspection_id in _rooms:
+        await _rooms[inspection_id].broadcast(message)
+
 
 @router.websocket("/{inspection_id}/ws")
 async def inspection_websocket(websocket: WebSocket, inspection_id: str):
-    await websocket.accept()
+    room = _rooms[inspection_id]
+    await room.connect(websocket)
     try:
+        # Send initial presence count
+        await websocket.send_json({
+            "type": "presence",
+            "inspection_id": inspection_id,
+            "connected": room.count,
+        })
+        # Broadcast join event to others
+        await room.broadcast({
+            "type": "presence",
+            "inspection_id": inspection_id,
+            "connected": room.count,
+        })
         while True:
-            data = await websocket.receive_text()
-            await websocket.send_json({"type": "ack", "inspection_id": inspection_id})
+            raw = await websocket.receive_text()
+            try:
+                import json
+                msg = json.loads(raw)
+                event_type = msg.get("type", "ping")
+                if event_type == "ping":
+                    await websocket.send_json({"type": "pong"})
+                elif event_type == "scribe_note":
+                    # Broadcast real-time scribe note to all room members
+                    await room.broadcast({
+                        "type": "scribe_note",
+                        "inspection_id": inspection_id,
+                        "content": msg.get("content", ""),
+                        "entry_type": msg.get("entry_type", "scribe_note"),
+                        "author": msg.get("author", "Team"),
+                        "timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+                    })
+                elif event_type == "request_update":
+                    await room.broadcast({
+                        "type": "request_update",
+                        "inspection_id": inspection_id,
+                        "request_id": msg.get("request_id"),
+                        "status": msg.get("status"),
+                        "fulfillment_progress": msg.get("fulfillment_progress"),
+                    })
+                elif event_type == "sla_alert":
+                    await room.broadcast({
+                        "type": "sla_alert",
+                        "inspection_id": inspection_id,
+                        "request_id": msg.get("request_id"),
+                        "request_text": msg.get("request_text", ""),
+                        "criticality": msg.get("criticality", "medium"),
+                    })
+            except Exception:
+                pass
     except WebSocketDisconnect:
-        pass
+        room.disconnect(websocket)
+        await room.broadcast({
+            "type": "presence",
+            "inspection_id": inspection_id,
+            "connected": room.count,
+        })

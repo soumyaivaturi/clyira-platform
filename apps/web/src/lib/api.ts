@@ -39,6 +39,8 @@ export const authApi = {
   register: (email: string, password: string, full_name: string, company_name: string) =>
     api.post("/auth/register", { email, password, full_name, company_name }),
   me: () => api.get("/auth/me"),
+  updateProfile: (data: { full_name?: string; department?: string }) =>
+    api.patch("/auth/me", data),
   changePassword: (current_password: string, new_password: string) =>
     api.patch("/auth/password", { current_password, new_password }),
   acceptTerms: () => api.post("/auth/accept-terms"),
@@ -157,6 +159,20 @@ export const apiKeysApi = {
   revoke: (id: string) => api.delete(`/api-keys/${id}`),
 };
 
+// ── Evidence Fabric ───────────────────────────────────────────────────────────
+export const evidenceApi = {
+  upload: (formData: FormData) =>
+    api.post("/evidence/import", formData, { headers: { "Content-Type": "multipart/form-data" } }),
+  mapColumns: (importId: string, entity_type: string, column_mapping: Record<string, string>) =>
+    api.post(`/evidence/import/${importId}/map`, { entity_type, column_mapping }),
+  ingest: (importId: string, rows: Record<string, string>[]) =>
+    api.post(`/evidence/ingest/${importId}`, rows),
+  listImports: () => api.get("/evidence/imports"),
+  listObjects: (importId: string, limit = 100, offset = 0) =>
+    api.get(`/evidence/imports/${importId}/objects`, { params: { limit, offset } }),
+  deleteImport: (importId: string) => api.delete(`/evidence/imports/${importId}`),
+};
+
 // ── Electronic Signatures ─────────────────────────────────────────────────────
 export const signaturesApi = {
   list: (documentId: string) => api.get(`/documents/${documentId}/signatures`),
@@ -243,6 +259,10 @@ export const inspectionsApi = {
     api.post(`/inspections/${id}/risk-analysis`, {}, { timeout: 90000 }),
   generateClosingSummary: (id: string) =>
     api.post(`/inspections/${id}/closing-summary`, {}, { timeout: 90000 }),
+  generateCoverLetter: (id: string) =>
+    api.post(`/inspections/${id}/cover-letter`, {}, { timeout: 90000 }),
+  finalizeInspection: (id: string) =>
+    api.post(`/inspections/${id}/finalize`),
 
   // Scribe + log
   addScribeEntry: (id: string, data: { content: string; entry_type?: string; tags?: string[] }) =>

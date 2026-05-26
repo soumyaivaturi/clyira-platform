@@ -12,6 +12,7 @@ from app.models.inspection_delivery import InspectionDeliveryLog
 from app.models.inspection_inspector import InspectionInspector
 from app.models.inspection_request_document import InspectionRequestDocument
 from app.models.inspection_request_comment import InspectionRequestComment
+from app.models.evidence import EvidenceImport, EvidenceObject
 from app.models.audit import AuditLog
 from app.models.api_key import APIKey
 from app.models.password_history import PasswordHistory
@@ -37,6 +38,8 @@ __all__ = [
     "InspectionInspector",
     "InspectionRequestDocument",
     "InspectionRequestComment",
+    "EvidenceImport",
+    "EvidenceObject",
     "AuditLog",
     "APIKey",
     "PasswordHistory",

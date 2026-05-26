@@ -17,6 +17,7 @@ import {
 import { inspectionsApi } from "@/lib/api";
 import { InspStatusBadge } from "@/components/shared/badges";
 import { timeAgo } from "@/lib/utils";
+import { useInspectionWs } from "@/hooks/use-inspection-ws";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Inspection {
@@ -903,8 +904,12 @@ export default function WarRoomPage() {
   const [savingInspector, setSavingInspector] = useState(false);
 
   const [draftingObs, setDraftingObs] = useState<string | null>(null);
+  const [connectedUsers, setConnectedUsers] = useState(1);
+  const [wsToasts, setWsToasts] = useState<{ id: string; message: string; type: string }[]>([]);
 
   const logEndRef = useRef<HTMLDivElement>(null);
+  // Stable ref so the WS callback can call the latest loadAll without a circular dep
+  const loadAllRef = useRef<() => void>(() => {});
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -937,6 +942,28 @@ export default function WarRoomPage() {
       }
     } catch { /* tab data missing is non-fatal */ }
   }, [id]);
+
+  // Keep ref current so WS callback always calls the latest version
+  loadAllRef.current = loadAll;
+
+  const addToast = useCallback((message: string, type: string = "info") => {
+    const tid = Math.random().toString(36).slice(2);
+    setWsToasts(t => [...t.slice(-2), { id: tid, message, type }]);
+    setTimeout(() => setWsToasts(t => t.filter(x => x.id !== tid)), 4000);
+  }, []);
+
+  useInspectionWs(id, useCallback((event) => {
+    if (event.type === "presence") {
+      setConnectedUsers(event.connected);
+    } else if (event.type === "request_update") {
+      loadAllRef.current();
+    } else if (event.type === "scribe_note") {
+      addToast(`${event.author}: ${event.content.slice(0, 60)}${event.content.length > 60 ? "…" : ""}`, "note");
+      loadAllRef.current();
+    } else if (event.type === "sla_alert") {
+      addToast(`SLA breach: ${event.request_text.slice(0, 50)}…`, "alert");
+    }
+  }, [addToast]));
 
   useEffect(() => { loadAll(); }, [loadAll]);
   useEffect(() => { loadTabData(tab); }, [tab, loadTabData]);
@@ -1080,6 +1107,19 @@ export default function WarRoomPage() {
 
   return (
     <div className="space-y-5">
+      {/* WebSocket toast notifications */}
+      {wsToasts.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none">
+          {wsToasts.map(t => (
+            <div key={t.id} className={`px-4 py-3 rounded-xl border shadow-lg text-sm max-w-xs backdrop-blur-sm ${
+              t.type === "alert" ? "bg-red-50 border-red-200 text-red-800" : "bg-card border-border"
+            }`}>
+              {t.message}
+            </div>
+          ))}
+        </div>
+      )}
+
       {showAddRequest && (
         <AddRequestModal onClose={() => setShowAddRequest(false)} onAdd={handleAddRequest} />
       )}
@@ -1118,6 +1158,12 @@ export default function WarRoomPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {inspection.status === "active" && (
+              <div className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-xs font-medium text-muted-foreground">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                {connectedUsers} live
+              </div>
+            )}
             <button onClick={loadAll} disabled={loading}
               className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent disabled:opacity-50">
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -1717,15 +1763,22 @@ export default function WarRoomPage() {
             </div>
           </div>
 
-          {inspection.status === "active" && (
-            <div className="flex justify-end">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            {inspection.status === "active" && (
               <button onClick={handleClose} disabled={closing}
                 className="flex items-center gap-2 px-5 py-2.5 bg-muted border rounded-xl text-sm font-medium hover:bg-accent disabled:opacity-60">
                 {closing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
                 Close Inspection
               </button>
-            </div>
-          )}
+            )}
+            {inspection.status === "post_inspection" && (
+              <Link href={`/inspections/${id}/response`}
+                className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90">
+                <ArrowRight className="w-4 h-4" />
+                Go to Post-Inspection Response
+              </Link>
+            )}
+          </div>
         </div>
       )}
     </div>

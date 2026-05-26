@@ -536,8 +536,85 @@ function IntegrationsTab() {
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 
+function ProfileTab({ user, onUpdate }: { user: any; onUpdate: () => void }) {
+  const [fullName, setFullName] = useState(user?.full_name ?? "");
+  const [department, setDepartment] = useState(user?.department ?? "");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  const isDirty = fullName !== (user?.full_name ?? "") || department !== (user?.department ?? "");
+
+  const handleSave = async () => {
+    if (!fullName.trim()) { setError("Name cannot be empty"); return; }
+    setSaving(true); setError("");
+    try {
+      await authApi.updateProfile({ full_name: fullName, department: department || undefined });
+      onUpdate();
+      setSaved(true); setTimeout(() => setSaved(false), 3000);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? "Save failed. Please try again.");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="bg-card border rounded-xl p-6 space-y-5">
+      <div className="flex items-center justify-between">
+        <h2 className="font-semibold text-sm">Profile Information</h2>
+        <div className="flex items-center gap-2">
+          {saved && <span className="flex items-center gap-1 text-xs text-green-600 font-medium"><CheckCircle className="w-3.5 h-3.5" /> Saved</span>}
+          <button onClick={handleSave} disabled={!isDirty || saving}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            Save
+          </button>
+        </div>
+      </div>
+      <div className="flex items-center gap-4">
+        <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+          <span className="text-xl font-bold text-primary">
+            {(fullName || user?.full_name || "?").split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)}
+          </span>
+        </div>
+        <div>
+          <p className="font-semibold">{fullName || user?.full_name}</p>
+          <p className="text-sm text-muted-foreground capitalize">{user?.role ?? ""}</p>
+        </div>
+      </div>
+      {error && (
+        <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+          <X className="w-4 h-4 flex-shrink-0" />{error}
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Full Name</label>
+          <input value={fullName} onChange={e => setFullName(e.target.value)}
+            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Email</label>
+          <input defaultValue={user?.email ?? ""} readOnly
+            className="w-full border rounded-lg px-3 py-2 text-sm bg-muted/30 text-muted-foreground cursor-not-allowed" />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Department</label>
+          <input value={department} onChange={e => setDepartment(e.target.value)}
+            placeholder="e.g. Quality Assurance"
+            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Role</label>
+          <input defaultValue={user?.role ?? ""} readOnly
+            className="w-full border rounded-lg px-3 py-2 text-sm bg-muted/30 text-muted-foreground cursor-not-allowed capitalize" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
-  const { user } = useAuth();
+  const { user, refreshMe } = useAuth();
   const [tab, setTab] = useState("profile");
 
   return (
@@ -562,40 +639,7 @@ export default function SettingsPage() {
 
         <div className="flex-1 space-y-4">
           {tab === "profile" && (
-            <div className="bg-card border rounded-xl p-6 space-y-5">
-              <h2 className="font-semibold text-sm">Profile Information</h2>
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
-                  <span className="text-xl font-bold text-primary">
-                    {user?.full_name?.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2) ?? "?"}
-                  </span>
-                </div>
-                <div>
-                  <p className="font-semibold">{user?.full_name ?? "—"}</p>
-                  <p className="text-sm text-muted-foreground capitalize">{user?.role ?? ""}</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Full Name</label>
-                  <input defaultValue={user?.full_name ?? ""} readOnly
-                    className="w-full border rounded-lg px-3 py-2 text-sm bg-muted/30 text-muted-foreground cursor-not-allowed" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Email</label>
-                  <input defaultValue={user?.email ?? ""} readOnly
-                    className="w-full border rounded-lg px-3 py-2 text-sm bg-muted/30 text-muted-foreground cursor-not-allowed" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Role</label>
-                  <input defaultValue={user?.role ?? ""} readOnly
-                    className="w-full border rounded-lg px-3 py-2 text-sm bg-muted/30 text-muted-foreground cursor-not-allowed capitalize" />
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
-                Profile editing will be available in a future release. Contact your administrator to update profile details.
-              </p>
-            </div>
+            <ProfileTab user={user} onUpdate={refreshMe} />
           )}
 
           {tab === "company" && <CompanyTab />}

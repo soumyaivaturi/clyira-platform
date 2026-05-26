@@ -12,6 +12,7 @@ import {
   LogOut,
   ChevronDown,
   ClipboardList,
+  Layers,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { NotificationBell } from "@/components/shared/notification-bell";
@@ -43,6 +44,12 @@ const navigation = [
     href: "/inspections",
     icon: Radio,
     description: "Real-time audit support",
+  },
+  {
+    name: "Evidence Fabric",
+    href: "/evidence",
+    icon: Layers,
+    description: "Import quality system data",
   },
   {
     name: "Audit Trail",

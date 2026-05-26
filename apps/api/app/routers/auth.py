@@ -91,6 +91,11 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class UpdateProfileRequest(BaseModel):
+    full_name: Optional[str] = None
+    department: Optional[str] = None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _user_out(user: User, onboarding_complete: bool = False) -> UserOut:
@@ -188,6 +193,26 @@ async def login(data: LoginRequest, request: Request, db: AsyncSession = Depends
 async def get_me(current_user: User = Depends(get_current_user)):
     onboarding_complete = current_user.company.onboarding_complete if current_user.company else False
     return _user_out(current_user, onboarding_complete)
+
+
+@router.patch("/me", response_model=UserOut)
+async def update_profile(
+    data: UpdateProfileRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if data.full_name is not None:
+        if not data.full_name.strip():
+            raise HTTPException(status_code=422, detail="Name cannot be empty")
+        current_user.full_name = data.full_name.strip()
+    if data.department is not None:
+        current_user.department = data.department.strip() or None
+    await _audit(db, current_user.company_id, current_user.id, current_user.email,
+                 "profile_updated", action="UPDATE")
+    await db.commit()
+    await db.refresh(current_user)
+    onboarding = current_user.company.onboarding_complete if current_user.company else False
+    return _user_out(current_user, onboarding)
 
 
 @router.patch("/password", status_code=204)
