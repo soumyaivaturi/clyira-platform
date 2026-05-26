@@ -25,4 +25,9 @@ class InspectionObservation(Base, TimestampMixin):
 
     status = Column(String(20), default="draft")  # draft | under_review | submitted | closed
 
+    verbal_concern = Column(Boolean, default=False)      # flagged verbally, not yet in writing
+    verbal_concern_notes = Column(Text)
+    root_cause_hypothesis = Column(Text)                 # working hypothesis before full CAPA
+    factual_accuracy_confirmed = Column(Boolean, default=False)  # team verified facts cited
+
     created_by = Column(String, ForeignKey("users.id"))

@@ -60,6 +60,9 @@ class Inspection(Base, TimestampMixin):
     commitments_made = Column(JSONB, default=list)
     observations_noted = Column(JSONB, default=list)
 
+    # Inspector-safe mode flag (hides internal-only data)
+    inspector_safe_mode = Column(Boolean, default=False)
+
     # Post-inspection (Section 18)
     outcome = Column(String(50))           # no_action | warning_letter_risk | 483_issued | eir_pending | closed_satisfactorily
     final_483_count = Column(Integer, default=0)

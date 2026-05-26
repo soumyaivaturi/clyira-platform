@@ -233,9 +233,6 @@ export const inspectionsApi = {
     response_deadline?: string;
   }) => api.post(`/inspections/${id}/observations`, data),
   listObservations: (id: string) => api.get(`/inspections/${id}/observations`),
-  updateObservation: (id: string, obsId: string, data: {
-    draft_response?: string; status?: string; legal_review_required?: boolean;
-  }) => api.patch(`/inspections/${id}/observations/${obsId}`, data),
   draftObservationResponse: (id: string, obsId: string) =>
     api.post(`/inspections/${id}/observations/${obsId}/draft-response`, {}, { timeout: 90000 }),
 
@@ -376,4 +373,36 @@ export const inspectionsApi = {
     api.get(`/inspections/${id}/chat`, { params: room ? { room } : {} }),
   convertMessageToRequest: (id: string, messageId: string) =>
     api.post(`/inspections/${id}/chat/${messageId}/convert`),
+
+  // §9 Binder
+  listBinder: (id: string) => api.get(`/inspections/${id}/binder`),
+  seedBinder: (id: string) => api.post(`/inspections/${id}/binder/seed`),
+  addBinderDoc: (id: string, data: { title: string; category?: string; filename?: string; version?: string; required?: boolean; notes?: string }) =>
+    api.post(`/inspections/${id}/binder`, data),
+  updateBinderDoc: (id: string, docId: string, data: Partial<{ title: string; status: string; filename: string; version: string; notes: string; delivered_to: string }>) =>
+    api.patch(`/inspections/${id}/binder/${docId}`, data),
+  deleteBinderDoc: (id: string, docId: string) => api.delete(`/inspections/${id}/binder/${docId}`),
+
+  // §15 Enhanced observations
+  updateObservation: (id: string, obsId: string, data: Partial<{
+    obs_status: string; draft_response: string; legal_review_required: boolean;
+    verbal_concern: boolean; verbal_concern_notes: string;
+    root_cause_hypothesis: string; factual_accuracy_confirmed: boolean;
+  }>) => api.patch(`/inspections/${id}/observations/${obsId}`, null, { params: data }),
+
+  // §19 Lessons Learned
+  getLessons: (id: string) => api.get(`/inspections/${id}/lessons`),
+  addLesson: (id: string, lesson: string) => api.post(`/inspections/${id}/lessons`, { lesson }),
+  deleteLesson: (id: string, index: number) => api.delete(`/inspections/${id}/lessons/${index}`),
+
+  // §21 Safe Mode
+  toggleSafeMode: (id: string) => api.post(`/inspections/${id}/safe-mode`),
+
+  // §22 Alerts
+  getAlerts: (id: string) => api.get(`/inspections/${id}/alerts`),
+
+  // §23 Exports
+  exportRequestsCsv: (id: string) => api.get(`/inspections/${id}/export/requests-csv`, { responseType: "blob" }),
+  exportScribeTxt: (id: string) => api.get(`/inspections/${id}/export/scribe-txt`, { responseType: "blob" }),
+  exportCommitmentsCsv: (id: string) => api.get(`/inspections/${id}/export/commitments-csv`, { responseType: "blob" }),
 };

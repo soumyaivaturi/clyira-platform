@@ -30,6 +30,7 @@ from app.models.inspection_potential_finding import InspectionPotentialFinding
 from app.models.inspection_evidence_package import InspectionEvidencePackage
 from app.models.inspection_sme import InspectionSME
 from app.models.inspection_capa import InspectionCAPA
+from app.models.inspection_binder_doc import InspectionBinderDoc
 from app.models.user import User
 from app.models.base import generate_uuid
 
@@ -697,6 +698,10 @@ def _obs_out(obs: InspectionObservation) -> dict:
         "response_deadline": obs.response_deadline,
         "legal_review_required": obs.legal_review_required,
         "status": obs.status,
+        "verbal_concern": obs.verbal_concern or False,
+        "verbal_concern_notes": obs.verbal_concern_notes,
+        "root_cause_hypothesis": obs.root_cause_hypothesis,
+        "factual_accuracy_confirmed": obs.factual_accuracy_confirmed or False,
         "created_at": str(obs.created_at),
     }
 
@@ -723,6 +728,10 @@ async def update_observation(
     draft_response: Optional[str] = None,
     supporting_evidence: Optional[list[str]] = None,
     legal_review_required: Optional[bool] = None,
+    verbal_concern: Optional[bool] = None,
+    verbal_concern_notes: Optional[str] = None,
+    root_cause_hypothesis: Optional[str] = None,
+    factual_accuracy_confirmed: Optional[bool] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -743,6 +752,14 @@ async def update_observation(
         obs.supporting_evidence = supporting_evidence
     if legal_review_required is not None:
         obs.legal_review_required = legal_review_required
+    if verbal_concern is not None:
+        obs.verbal_concern = verbal_concern
+    if verbal_concern_notes is not None:
+        obs.verbal_concern_notes = verbal_concern_notes
+    if root_cause_hypothesis is not None:
+        obs.root_cause_hypothesis = root_cause_hypothesis
+    if factual_accuracy_confirmed is not None:
+        obs.factual_accuracy_confirmed = factual_accuracy_confirmed
     await db.commit()
     return _obs_out(obs)
 
@@ -2975,6 +2992,502 @@ async def convert_chat_to_request(
     })
 
     return {"request_id": new_req.id, "request_number": new_req.request_number}
+
+
+# ── §9 Inspection Binder ──────────────────────────────────────────────────────────
+
+class BinderDocCreate(BaseModel):
+    title: str
+    category: Optional[str] = "other"
+    filename: Optional[str] = None
+    version: Optional[str] = None
+    document_date: Optional[str] = None
+    required: bool = True
+    notes: Optional[str] = None
+    linked_request_id: Optional[str] = None
+
+
+class BinderDocUpdate(BaseModel):
+    title: Optional[str] = None
+    status: Optional[str] = None
+    filename: Optional[str] = None
+    version: Optional[str] = None
+    notes: Optional[str] = None
+    staged_at: Optional[str] = None
+    staged_by_name: Optional[str] = None
+    delivered_at: Optional[str] = None
+    delivered_to: Optional[str] = None
+
+
+def _binder_out(doc: InspectionBinderDoc) -> dict:
+    return {
+        "id": doc.id,
+        "inspection_id": doc.inspection_id,
+        "category": doc.category,
+        "title": doc.title,
+        "filename": doc.filename,
+        "version": doc.version,
+        "document_date": doc.document_date,
+        "status": doc.status,
+        "required": doc.required,
+        "notes": doc.notes,
+        "linked_request_id": doc.linked_request_id,
+        "staged_by_name": doc.staged_by_name,
+        "staged_at": doc.staged_at,
+        "delivered_at": doc.delivered_at,
+        "delivered_to": doc.delivered_to,
+        "created_at": str(doc.created_at),
+    }
+
+
+_DEFAULT_BINDER_DOCS = [
+    ("company_profile", "Company Profile / Site Overview"),
+    ("org_chart", "Organizational Chart"),
+    ("sop_index", "SOP Master Index"),
+    ("site_master_file", "Site Master File"),
+    ("capa_summary", "CAPA Summary / Status Report"),
+    ("deviation_log", "Deviation / Exception Log"),
+    ("training_records", "Training Records Summary"),
+    ("batch_records", "Batch Record Index"),
+    ("validation_summary", "Validation Master Plan / Summary"),
+    ("equipment_list", "Equipment List / Qualification Status"),
+    ("calibration_log", "Calibration Log"),
+    ("environmental_monitoring", "Environmental Monitoring Data"),
+    ("supplier_qualification", "Approved Supplier List"),
+    ("change_control", "Change Control Log"),
+    ("complaint_log", "Complaint / OOS Log"),
+]
+
+
+@router.get("/{inspection_id}/binder", response_model=dict)
+async def list_binder_docs(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionBinderDoc).where(InspectionBinderDoc.inspection_id == inspection_id)
+        .order_by(InspectionBinderDoc.created_at.asc())
+    )
+    docs = result.scalars().all()
+    return {"inspection_id": inspection_id, "binder_docs": [_binder_out(d) for d in docs]}
+
+
+@router.post("/{inspection_id}/binder/seed", response_model=dict, status_code=201)
+async def seed_binder(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pre-populate binder with standard required documents for a pharma inspection."""
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    count_res = await db.execute(
+        select(func.count()).select_from(InspectionBinderDoc)
+        .where(InspectionBinderDoc.inspection_id == inspection_id)
+    )
+    if (count_res.scalar_one() or 0) > 0:
+        return {"seeded": False, "message": "Binder already has documents"}
+
+    now = datetime.utcnow().isoformat()
+    docs = [
+        InspectionBinderDoc(
+            id=generate_uuid(), inspection_id=inspection_id,
+            category=cat, title=title, required=True,
+        )
+        for cat, title in _DEFAULT_BINDER_DOCS
+    ]
+    db.add_all(docs)
+    await db.commit()
+    return {"seeded": True, "count": len(docs)}
+
+
+@router.post("/{inspection_id}/binder", response_model=dict, status_code=201)
+async def add_binder_doc(
+    inspection_id: str,
+    data: BinderDocCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    doc = InspectionBinderDoc(
+        id=generate_uuid(),
+        inspection_id=inspection_id,
+        category=data.category,
+        title=data.title,
+        filename=data.filename,
+        version=data.version,
+        document_date=data.document_date,
+        required=data.required,
+        notes=data.notes,
+        linked_request_id=data.linked_request_id,
+    )
+    db.add(doc)
+    await db.commit()
+    await db.refresh(doc)
+    return _binder_out(doc)
+
+
+@router.patch("/{inspection_id}/binder/{doc_id}", response_model=dict)
+async def update_binder_doc(
+    inspection_id: str,
+    doc_id: str,
+    data: BinderDocUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(InspectionBinderDoc).where(
+            InspectionBinderDoc.id == doc_id,
+            InspectionBinderDoc.inspection_id == inspection_id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Binder document not found")
+    now = datetime.utcnow().isoformat()
+    for field, value in data.model_dump(exclude_none=True).items():
+        setattr(doc, field, value)
+    if data.status == "staged" and not doc.staged_at:
+        doc.staged_at = now
+        doc.staged_by_name = current_user.full_name or current_user.email
+    if data.status == "delivered" and not doc.delivered_at:
+        doc.delivered_at = now
+    await db.commit()
+    return _binder_out(doc)
+
+
+@router.delete("/{inspection_id}/binder/{doc_id}", status_code=204)
+async def delete_binder_doc(
+    inspection_id: str,
+    doc_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(InspectionBinderDoc).where(
+            InspectionBinderDoc.id == doc_id,
+            InspectionBinderDoc.inspection_id == inspection_id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not found")
+    await db.delete(doc)
+    await db.commit()
+
+
+# ── §19 Lessons Learned ───────────────────────────────────────────────────────────
+
+class LessonAdd(BaseModel):
+    lesson: str
+
+
+@router.get("/{inspection_id}/lessons", response_model=dict)
+async def get_lessons(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    insp = await _verify_inspection(db, inspection_id, current_user.company_id)
+    return {"inspection_id": inspection_id, "lessons": insp.lessons_learned or []}
+
+
+@router.post("/{inspection_id}/lessons", response_model=dict, status_code=201)
+async def add_lesson(
+    inspection_id: str,
+    data: LessonAdd,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    insp = await _verify_inspection(db, inspection_id, current_user.company_id)
+    lessons = list(insp.lessons_learned or [])
+    lessons.append(data.lesson)
+    insp.lessons_learned = lessons
+    await db.commit()
+    return {"inspection_id": inspection_id, "lessons": lessons}
+
+
+@router.delete("/{inspection_id}/lessons/{index}", response_model=dict)
+async def delete_lesson(
+    inspection_id: str,
+    index: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    insp = await _verify_inspection(db, inspection_id, current_user.company_id)
+    lessons = list(insp.lessons_learned or [])
+    if index < 0 or index >= len(lessons):
+        raise HTTPException(status_code=404, detail="Index out of range")
+    lessons.pop(index)
+    insp.lessons_learned = lessons
+    await db.commit()
+    return {"inspection_id": inspection_id, "lessons": lessons}
+
+
+# ── §21 Inspector-Safe Mode ───────────────────────────────────────────────────────
+
+@router.post("/{inspection_id}/safe-mode", response_model=dict)
+async def toggle_safe_mode(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle inspector-safe mode — hides internal AI analysis and war-room notes."""
+    insp = await _verify_inspection(db, inspection_id, current_user.company_id)
+    insp.inspector_safe_mode = not (insp.inspector_safe_mode or False)
+    await db.commit()
+    return {"inspection_id": inspection_id, "inspector_safe_mode": insp.inspector_safe_mode}
+
+
+# ── §22 Alerts ────────────────────────────────────────────────────────────────────
+
+@router.get("/{inspection_id}/alerts", response_model=dict)
+async def get_alerts(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compute live inspection alerts: SLA breaches, QA pending, commitment overdue, 483 deadlines."""
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    now = datetime.utcnow()
+    alerts = []
+
+    # SLA overdue requests
+    req_result = await db.execute(
+        select(InspectionRequest).where(
+            InspectionRequest.inspection_id == inspection_id,
+            InspectionRequest.status.not_in(["fulfilled", "declined", "withdrawn", "closed"]),
+        )
+    )
+    for req in req_result.scalars().all():
+        if req.due_at:
+            try:
+                due = datetime.fromisoformat(req.due_at.replace("Z", "+00:00").replace("+00:00", ""))
+                minutes_overdue = int((now - due).total_seconds() / 60)
+                if minutes_overdue > 0:
+                    alerts.append({
+                        "type": "sla_overdue",
+                        "severity": "critical" if req.criticality in ("critical", "high") else "warning",
+                        "title": f"REQ-{str(req.request_number).zfill(3)} SLA Breached",
+                        "body": f"{req.request_text[:80]}… — {minutes_overdue} min overdue",
+                        "request_id": req.id,
+                        "created_at": now.isoformat(),
+                    })
+                elif minutes_overdue > -15:
+                    alerts.append({
+                        "type": "sla_warning",
+                        "severity": "warning",
+                        "title": f"REQ-{str(req.request_number).zfill(3)} SLA Expiring Soon",
+                        "body": f"{req.request_text[:80]}… — {abs(minutes_overdue)} min remaining",
+                        "request_id": req.id,
+                        "created_at": now.isoformat(),
+                    })
+            except Exception:
+                pass
+        if req.status == "qa_review":
+            alerts.append({
+                "type": "qa_pending",
+                "severity": "info",
+                "title": f"REQ-{str(req.request_number).zfill(3)} Awaiting QA Review",
+                "body": req.request_text[:80],
+                "request_id": req.id,
+                "created_at": now.isoformat(),
+            })
+
+    # Commitment overdue
+    comm_result = await db.execute(
+        select(InspectionCommitment).where(
+            InspectionCommitment.inspection_id == inspection_id,
+            InspectionCommitment.status.in_(["open", "in_progress"]),
+        )
+    )
+    for c in comm_result.scalars().all():
+        if c.deadline_at:
+            try:
+                deadline = datetime.fromisoformat(c.deadline_at)
+                if now > deadline:
+                    alerts.append({
+                        "type": "commitment_overdue",
+                        "severity": "warning",
+                        "title": "Commitment Overdue",
+                        "body": c.commitment_text[:80],
+                        "created_at": now.isoformat(),
+                    })
+            except Exception:
+                pass
+
+    # 483 response deadlines
+    obs_result = await db.execute(
+        select(InspectionObservation).where(
+            InspectionObservation.inspection_id == inspection_id,
+            InspectionObservation.status.in_(["draft", "under_review"]),
+        )
+    )
+    for obs in obs_result.scalars().all():
+        if obs.response_deadline:
+            try:
+                deadline = datetime.fromisoformat(obs.response_deadline)
+                days_left = (deadline - now).days
+                if days_left <= 3:
+                    alerts.append({
+                        "type": "483_deadline",
+                        "severity": "critical" if days_left <= 0 else "warning",
+                        "title": f"483 Response {'Overdue' if days_left <= 0 else f'Due in {days_left}d'}",
+                        "body": obs.observation_text[:80],
+                        "created_at": now.isoformat(),
+                    })
+            except Exception:
+                pass
+
+    # High-confidence unresponded potential findings
+    pf_result = await db.execute(
+        select(InspectionPotentialFinding).where(
+            InspectionPotentialFinding.inspection_id == inspection_id,
+            InspectionPotentialFinding.status == "tracking",
+            InspectionPotentialFinding.confidence.in_(["high", "certain"]),
+        )
+    )
+    pf_list = pf_result.scalars().all()
+    if pf_list:
+        alerts.append({
+            "type": "high_risk_finding",
+            "severity": "critical",
+            "title": f"{len(pf_list)} High-Risk Potential Finding(s)",
+            "body": "Unresponded findings with high/certain confidence — immediate attention needed",
+            "created_at": now.isoformat(),
+        })
+
+    alerts.sort(key=lambda a: {"critical": 0, "warning": 1, "info": 2}.get(a["severity"], 3))
+    return {"inspection_id": inspection_id, "alerts": alerts, "count": len(alerts)}
+
+
+# ── §23 Reports & Exports ─────────────────────────────────────────────────────────
+
+import csv
+import io
+
+from fastapi.responses import Response as FastAPIResponse
+
+
+@router.get("/{inspection_id}/export/requests-csv")
+async def export_requests_csv(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export all requests for this inspection as CSV."""
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionRequest).where(InspectionRequest.inspection_id == inspection_id)
+        .order_by(InspectionRequest.request_number.asc())
+    )
+    reqs = result.scalars().all()
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=[
+        "request_number", "request_text", "criticality", "category",
+        "status", "fulfillment_progress", "inspector_name", "inspector_department",
+        "location", "assigned_to_name", "due_at", "response_text", "created_at",
+    ])
+    writer.writeheader()
+    for r in reqs:
+        writer.writerow({
+            "request_number": f"REQ-{str(r.request_number).zfill(3)}" if r.request_number else "",
+            "request_text": r.request_text,
+            "criticality": r.criticality,
+            "category": r.category or "",
+            "status": r.status,
+            "fulfillment_progress": r.fulfillment_progress,
+            "inspector_name": r.inspector_name or "",
+            "inspector_department": r.inspector_department or "",
+            "location": r.location or "",
+            "assigned_to_name": r.assigned_to_name or "",
+            "due_at": r.due_at or "",
+            "response_text": r.response_text or "",
+            "created_at": str(r.created_at),
+        })
+
+    content = output.getvalue()
+    return FastAPIResponse(
+        content=content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="requests-{inspection_id[:8]}.csv"'},
+    )
+
+
+@router.get("/{inspection_id}/export/scribe-txt")
+async def export_scribe_txt(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export scribe log as plain text for debrief / legal review."""
+    insp = await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionLog).where(InspectionLog.inspection_id == inspection_id)
+        .order_by(InspectionLog.created_at.asc())
+    )
+    entries = result.scalars().all()
+
+    lines = [
+        f"INSPECTION SCRIBE LOG",
+        f"Inspection: {insp.title}",
+        f"Agency: {insp.agency or 'N/A'}",
+        f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+        "=" * 60,
+        "",
+    ]
+    for e in entries:
+        lines.append(f"[{str(e.created_at)[:16]}] [{e.entry_type.upper()}]")
+        lines.append(e.content)
+        if e.tags:
+            lines.append(f"Tags: {', '.join(e.tags)}")
+        lines.append("")
+
+    content = "\n".join(lines)
+    return FastAPIResponse(
+        content=content,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="scribe-{inspection_id[:8]}.txt"'},
+    )
+
+
+@router.get("/{inspection_id}/export/commitments-csv")
+async def export_commitments_csv(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export commitment tracker as CSV."""
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionCommitment).where(InspectionCommitment.inspection_id == inspection_id)
+        .order_by(InspectionCommitment.created_at.asc())
+    )
+    comms = result.scalars().all()
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=[
+        "commitment_text", "committed_to", "deadline_at", "status", "delivery_note", "created_at",
+    ])
+    writer.writeheader()
+    for c in comms:
+        writer.writerow({
+            "commitment_text": c.commitment_text,
+            "committed_to": c.committed_to or "",
+            "deadline_at": c.deadline_at or "",
+            "status": c.status,
+            "delivery_note": c.delivery_note or "",
+            "created_at": str(c.created_at),
+        })
+
+    content = output.getvalue()
+    return FastAPIResponse(
+        content=content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="commitments-{inspection_id[:8]}.csv"'},
+    )
 
 
 # ── WebSocket connection manager ─────────────────────────────────────────────────

@@ -14,6 +14,8 @@ import {
   Mic, ClipboardList, ChevronDown, ExternalLink, Trash2,
   Edit3, Eye, Lock, Unlock, CheckSquare, Circle,
   Hash, AtSign, ArrowUpRight, Flame,
+  Bell, Download, GitMerge, Database, BookMarked,
+  ShieldCheck, ShieldOff, AlertCircle,
 } from "lucide-react";
 import { inspectionsApi } from "@/lib/api";
 import { InspStatusBadge } from "@/components/shared/badges";
@@ -85,6 +87,37 @@ interface Observation {
   status: string;
   response_deadline: string | null;
   legal_review_required: boolean;
+  verbal_concern: boolean;
+  verbal_concern_notes: string | null;
+  root_cause_hypothesis: string | null;
+  factual_accuracy_confirmed: boolean;
+  created_at: string;
+}
+
+interface BinderDoc {
+  id: string;
+  category: string;
+  title: string;
+  filename: string | null;
+  version: string | null;
+  document_date: string | null;
+  status: string;
+  required: boolean;
+  notes: string | null;
+  linked_request_id: string | null;
+  staged_by_name: string | null;
+  staged_at: string | null;
+  delivered_at: string | null;
+  delivered_to: string | null;
+  created_at: string;
+}
+
+interface InspectionAlert {
+  type: string;
+  severity: string;
+  title: string;
+  body: string;
+  request_id?: string;
   created_at: string;
 }
 
@@ -251,9 +284,17 @@ const CRITICALITY_BADGE: Record<string, string> = {
 
 const REQUEST_STATUS_STYLES: Record<string, { label: string; className: string; icon: any }> = {
   open: { label: "Open", className: "text-amber-700 bg-amber-50 border-amber-200", icon: AlertTriangle },
+  triage: { label: "Triage", className: "text-orange-700 bg-orange-50 border-orange-200", icon: AlertCircle },
+  assigned: { label: "Assigned", className: "text-blue-700 bg-blue-50 border-blue-200", icon: User },
   in_progress: { label: "In Progress", className: "text-blue-700 bg-blue-50 border-blue-200", icon: Clock },
+  evidence_gathering: { label: "Gathering Evidence", className: "text-indigo-700 bg-indigo-50 border-indigo-200", icon: FileText },
+  qa_review: { label: "QA Review", className: "text-purple-700 bg-purple-50 border-purple-200", icon: Shield },
+  approved: { label: "QA Approved", className: "text-violet-700 bg-violet-50 border-violet-200", icon: CheckSquare },
+  released: { label: "Released", className: "text-emerald-700 bg-emerald-50 border-emerald-200", icon: ArrowUpRight },
   fulfilled: { label: "Fulfilled", className: "text-emerald-700 bg-emerald-50 border-emerald-200", icon: CheckCircle2 },
   declined: { label: "Declined", className: "text-red-700 bg-red-50 border-red-200", icon: XCircle },
+  withdrawn: { label: "Withdrawn", className: "text-gray-600 bg-gray-50 border-gray-200", icon: XCircle },
+  closed: { label: "Closed", className: "text-gray-600 bg-gray-50 border-gray-200", icon: CheckCircle2 },
 };
 
 const LOG_TYPE_CONFIG: Record<string, { label: string; color: string }> = {
@@ -538,6 +579,8 @@ function RequestDetailModal({
   );
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [progress, setProgress] = useState(req.fulfillment_progress);
+  const [qaing, setQaing] = useState(false);
+  const [converting, setConverting] = useState<string | null>(null);
 
   const loadDocs = useCallback(async () => {
     setLoadingDocs(true);
@@ -567,6 +610,36 @@ function RequestDetailModal({
       onUpdate();
       onClose();
     } finally { setUpdatingStatus(false); }
+  };
+
+  const handleQaAction = async (action: string) => {
+    setQaing(true);
+    try {
+      await inspectionsApi.qaActionRequest(inspectionId, req.id, action);
+      onUpdate();
+      onClose();
+    } finally { setQaing(false); }
+  };
+
+  const handleConvert = async (to: "commitment" | "finding" | "capa") => {
+    setConverting(to);
+    try {
+      if (to === "commitment") {
+        await inspectionsApi.createCommitment(inspectionId, { commitment_text: req.request_text });
+      } else if (to === "finding") {
+        await inspectionsApi.createPotentialFinding(inspectionId, {
+          title: req.request_text.slice(0, 120),
+          inspector_framing: req.request_text,
+          linked_request_ids: [req.id],
+        });
+      } else if (to === "capa") {
+        await inspectionsApi.createCAPA(inspectionId, {
+          title: req.request_text.slice(0, 120),
+          linked_request_id: req.id,
+        });
+      }
+      onUpdate();
+    } finally { setConverting(null); }
   };
 
   const handleAnalyze = async () => {
@@ -872,19 +945,60 @@ function RequestDetailModal({
         </div>
 
         {/* Action bar */}
-        {req.status !== "fulfilled" && req.status !== "declined" && (
-          <div className="border-t px-5 py-3 flex gap-2 flex-wrap flex-shrink-0">
-            {req.status === "open" && (
-              <button onClick={() => handleStatusUpdate("in_progress")} disabled={updatingStatus}
-                className="px-3 py-1.5 text-xs font-medium border rounded-lg hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors disabled:opacity-50">
-                Mark In Progress
+        {req.status !== "fulfilled" && req.status !== "declined" && req.status !== "withdrawn" && (
+          <div className="border-t px-4 py-3 flex-shrink-0 space-y-2">
+            {/* QA Gate workflow row */}
+            <div className="flex gap-2 flex-wrap">
+              {req.status === "open" && (
+                <button onClick={() => handleStatusUpdate("in_progress")} disabled={updatingStatus}
+                  className="px-3 py-1.5 text-xs font-medium border rounded-lg hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors disabled:opacity-50">
+                  Mark In Progress
+                </button>
+              )}
+              {(req.status === "open" || req.status === "in_progress" || req.status === "evidence_gathering") && (
+                <button onClick={() => handleQaAction("send_to_qa")} disabled={qaing}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-purple-200 text-purple-700 rounded-lg hover:bg-purple-50 disabled:opacity-50">
+                  {qaing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
+                  Send to QA
+                </button>
+              )}
+              {req.status === "qa_review" && (
+                <>
+                  <button onClick={() => handleQaAction("approve")} disabled={qaing}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-emerald-200 text-emerald-700 rounded-lg hover:bg-emerald-50 disabled:opacity-50">
+                    {qaing ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                    QA Approve
+                  </button>
+                  <button onClick={() => handleQaAction("reject")} disabled={qaing}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-red-200 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-50">
+                    Return
+                  </button>
+                </>
+              )}
+              {req.status === "approved" && (
+                <button onClick={() => handleQaAction("release")} disabled={qaing}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+                  {qaing ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowUpRight className="w-3 h-3" />}
+                  Release to Inspector
+                </button>
+              )}
+              <button onClick={() => handleStatusUpdate("fulfilled")} disabled={updatingStatus}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 ml-auto">
+                {updatingStatus ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                Fulfilled
               </button>
-            )}
-            <button onClick={() => handleStatusUpdate("fulfilled")} disabled={updatingStatus}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 ml-auto">
-              {updatingStatus ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
-              Mark Fulfilled
-            </button>
+            </div>
+            {/* Convert to row */}
+            <div className="flex gap-2 flex-wrap">
+              <span className="text-[10px] text-muted-foreground self-center">Convert to:</span>
+              {(["commitment", "finding", "capa"] as const).map(target => (
+                <button key={target} onClick={() => handleConvert(target)} disabled={converting === target}
+                  className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium border rounded-md hover:bg-muted disabled:opacity-50">
+                  {converting === target ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}
+                  {target === "commitment" ? "Commitment" : target === "finding" ? "Finding" : "CAPA"}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -1075,6 +1189,26 @@ export default function WarRoomPage() {
   const [convertingMsg, setConvertingMsg] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Binder state
+  const [binderDocs, setBinderDocs] = useState<BinderDoc[]>([]);
+  const [showAddBinder, setShowAddBinder] = useState(false);
+  const [newBinderDoc, setNewBinderDoc] = useState({ title: "", category: "other", filename: "", version: "" });
+  const [savingBinder, setSavingBinder] = useState(false);
+  const [seedingBinder, setSeedingBinder] = useState(false);
+
+  // Alerts
+  const [alerts, setAlerts] = useState<InspectionAlert[]>([]);
+  const [showAlerts, setShowAlerts] = useState(false);
+
+  // Safe mode
+  const [safeMode, setSafeMode] = useState(false);
+  const [togglingMode, setTogglingMode] = useState(false);
+
+  // Lessons learned
+  const [lessons, setLessons] = useState<string[]>([]);
+  const [newLesson, setNewLesson] = useState("");
+  const [savingLesson, setSavingLesson] = useState(false);
+
   const logEndRef = useRef<HTMLDivElement>(null);
   // Stable ref so the WS callback can call the latest loadAll without a circular dep
   const loadAllRef = useRef<() => void>(() => {});
@@ -1102,8 +1236,12 @@ export default function WarRoomPage() {
         const r = await inspectionsApi.listObservations(id);
         setObservations(r.data.observations ?? []);
       } else if (t === "binder") {
-        const r = await inspectionsApi.listDeliveries(id);
-        setDeliveries(r.data.deliveries ?? []);
+        const [binderRes, deliveriesRes] = await Promise.all([
+          inspectionsApi.listBinder(id),
+          inspectionsApi.listDeliveries(id),
+        ]);
+        setBinderDocs(binderRes.data.binder_docs ?? []);
+        setDeliveries(deliveriesRes.data.deliveries ?? []);
       } else if (t === "people") {
         const r = await inspectionsApi.listInspectors(id);
         setInspectors(r.data.inspectors ?? []);
@@ -1123,11 +1261,19 @@ export default function WarRoomPage() {
         const r = await inspectionsApi.listCAPAs(id);
         setCAPAs(r.data.capas ?? []);
       } else if (t === "intel") {
-        const r = await inspectionsApi.getMetrics(id);
-        setMetrics(r.data);
+        const [metricsRes, alertsRes] = await Promise.all([
+          inspectionsApi.getMetrics(id),
+          inspectionsApi.getAlerts(id),
+        ]);
+        setMetrics(metricsRes.data);
+        setAlerts(alertsRes.data.alerts ?? []);
       } else if (t === "post") {
-        const r = await inspectionsApi.getPostInspectionSummary(id);
-        setPostSummary(r.data);
+        const [postRes, lessonsRes] = await Promise.all([
+          inspectionsApi.getPostInspectionSummary(id),
+          inspectionsApi.getLessons(id),
+        ]);
+        setPostSummary(postRes.data);
+        setLessons(lessonsRes.data.lessons ?? []);
       }
     } catch { /* tab data missing is non-fatal */ }
   }, [id]);
@@ -1532,6 +1678,71 @@ export default function WarRoomPage() {
                 {connectedUsers} live
               </div>
             )}
+            {/* Alert Bell */}
+            <div className="relative">
+              <button
+                onClick={async () => {
+                  setShowAlerts(f => !f);
+                  if (!showAlerts) {
+                    try {
+                      const r = await inspectionsApi.getAlerts(id);
+                      setAlerts(r.data.alerts ?? []);
+                    } catch {}
+                  }
+                }}
+                className="relative flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent"
+                title="Alerts"
+              >
+                <Bell className="w-3.5 h-3.5" />
+                {alerts.filter(a => a.severity === "critical").length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                    {alerts.filter(a => a.severity === "critical").length}
+                  </span>
+                )}
+              </button>
+              {showAlerts && (
+                <div className="absolute right-0 top-10 z-50 w-80 bg-card border rounded-xl shadow-xl overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2.5 border-b">
+                    <span className="text-xs font-semibold">Live Alerts ({alerts.length})</span>
+                    <button onClick={() => setShowAlerts(false)}><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto">
+                    {alerts.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-6">No active alerts</p>
+                    ) : (
+                      <div className="divide-y">
+                        {alerts.map((a, i) => (
+                          <div key={i} className={`px-4 py-3 ${
+                            a.severity === "critical" ? "bg-red-50" : a.severity === "warning" ? "bg-amber-50" : "bg-blue-50"
+                          }`}>
+                            <p className="text-xs font-semibold">{a.title}</p>
+                            <p className="text-[11px] text-muted-foreground mt-0.5">{a.body}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* Safe Mode Toggle */}
+            <button
+              onClick={async () => {
+                setTogglingMode(true);
+                try {
+                  const r = await inspectionsApi.toggleSafeMode(id);
+                  setSafeMode(r.data.inspector_safe_mode);
+                } finally { setTogglingMode(false); }
+              }}
+              disabled={togglingMode}
+              title={safeMode ? "Inspector-safe mode ON — click to show internal data" : "Show internal-only data — click to enable safe mode"}
+              className={`flex items-center gap-1.5 px-3 py-2 border rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${
+                safeMode ? "bg-amber-50 border-amber-300 text-amber-800" : "hover:bg-accent text-muted-foreground"
+              }`}
+            >
+              {safeMode ? <ShieldOff className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+              {safeMode ? "Safe" : "Internal"}
+            </button>
             <button onClick={loadAll} disabled={loading}
               className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent disabled:opacity-50">
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -2341,47 +2552,108 @@ export default function WarRoomPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {observations.map(obs => (
-                <div key={obs.id} className="bg-card border rounded-xl overflow-hidden">
-                  <div className="px-4 py-3 border-b bg-amber-50/50">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <span className="text-[10px] font-bold text-amber-800 font-mono">OBS-{String(obs.observation_number).padStart(3, "0")}</span>
-                        {obs.system_area && <span className="text-[10px] text-muted-foreground ml-2">· {obs.system_area}</span>}
+              {observations.map(obs => {
+                const daysLeft = obs.response_deadline
+                  ? Math.ceil((new Date(obs.response_deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+                  : null;
+                return (
+                  <div key={obs.id} className="bg-card border rounded-xl overflow-hidden">
+                    <div className="px-4 py-3 border-b bg-amber-50/50">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-bold text-amber-800 font-mono">OBS-{String(obs.observation_number).padStart(3, "0")}</span>
+                          {obs.system_area && <span className="text-[10px] text-muted-foreground">· {obs.system_area}</span>}
+                          {obs.verbal_concern && (
+                            <span className="text-[10px] font-bold bg-orange-100 text-orange-800 border border-orange-200 px-1.5 py-0.5 rounded flex items-center gap-1">
+                              <Mic className="w-2.5 h-2.5" /> Verbal Concern
+                            </span>
+                          )}
+                          {obs.factual_accuracy_confirmed && (
+                            <span className="text-[10px] font-semibold text-emerald-700 flex items-center gap-0.5">
+                              <CheckCircle2 className="w-2.5 h-2.5" /> Facts Verified
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {daysLeft !== null && (
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                              daysLeft <= 0 ? "bg-red-100 text-red-800 border-red-300" :
+                              daysLeft <= 5 ? "bg-amber-100 text-amber-800 border-amber-300" :
+                              "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            }`}>
+                              {daysLeft <= 0 ? "OVERDUE" : `${daysLeft}d left`}
+                            </span>
+                          )}
+                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${
+                            obs.status === "submitted" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                            obs.status === "under_review" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                            "bg-muted text-muted-foreground border-border"
+                          }`}>{obs.status.replace("_", " ")}</span>
+                        </div>
                       </div>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${
-                        obs.status === "submitted" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                        obs.status === "under_review" ? "bg-blue-50 text-blue-700 border-blue-200" :
-                        "bg-muted text-muted-foreground border-border"
-                      }`}>{obs.status.replace("_", " ")}</span>
+                      <p className="text-sm font-medium mt-1.5 leading-snug">{obs.observation_text}</p>
+                      {obs.cfr_citations?.length > 0 && (
+                        <div className="flex gap-1 flex-wrap mt-2">
+                          {obs.cfr_citations.map(c => (
+                            <span key={c} className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded border border-amber-200 font-mono">{c}</span>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <p className="text-sm font-medium mt-1.5 leading-snug">{obs.observation_text}</p>
-                    {obs.cfr_citations?.length > 0 && (
-                      <div className="flex gap-1 flex-wrap mt-2">
-                        {obs.cfr_citations.map(c => (
-                          <span key={c} className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded border border-amber-200 font-mono">{c}</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="px-4 py-3">
-                    {obs.draft_response ? (
+                    <div className="px-4 py-3 space-y-3">
+                      {/* Root cause hypothesis */}
                       <div>
-                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Draft Response</p>
-                        <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">{obs.draft_response}</p>
+                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Root Cause Hypothesis</p>
+                        <textarea rows={2} defaultValue={obs.root_cause_hypothesis ?? ""}
+                          onBlur={async e => {
+                            if (e.target.value !== obs.root_cause_hypothesis) {
+                              await inspectionsApi.updateObservation(id, obs.id, { root_cause_hypothesis: e.target.value });
+                              const r = await inspectionsApi.listObservations(id);
+                              setObservations(r.data.observations ?? []);
+                            }
+                          }}
+                          placeholder="Working hypothesis about root cause — update as investigation progresses…"
+                          className="w-full border rounded-lg px-3 py-2 text-xs bg-background focus:outline-none resize-none" />
                       </div>
-                    ) : (
-                      <button
-                        onClick={() => handleDraftObsResponse(obs.id)}
-                        disabled={draftingObs === obs.id}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border rounded-lg hover:bg-primary/5 hover:border-primary/40 hover:text-primary transition-colors disabled:opacity-50">
-                        {draftingObs === obs.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
-                        {draftingObs === obs.id ? "Drafting…" : "AI Draft Response"}
-                      </button>
-                    )}
+                      {/* Quick toggles */}
+                      <div className="flex gap-3 flex-wrap">
+                        <button onClick={async () => {
+                          await inspectionsApi.updateObservation(id, obs.id, { verbal_concern: !obs.verbal_concern });
+                          const r = await inspectionsApi.listObservations(id);
+                          setObservations(r.data.observations ?? []);
+                        }} className={`text-[11px] flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-medium transition-colors ${
+                          obs.verbal_concern ? "bg-orange-100 text-orange-800 border-orange-300" : "bg-muted text-muted-foreground border-border hover:bg-orange-50"
+                        }`}>
+                          <Mic className="w-3 h-3" /> {obs.verbal_concern ? "Verbal concern flagged" : "Flag as verbal concern"}
+                        </button>
+                        <button onClick={async () => {
+                          await inspectionsApi.updateObservation(id, obs.id, { factual_accuracy_confirmed: !obs.factual_accuracy_confirmed });
+                          const r = await inspectionsApi.listObservations(id);
+                          setObservations(r.data.observations ?? []);
+                        }} className={`text-[11px] flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-medium transition-colors ${
+                          obs.factual_accuracy_confirmed ? "bg-emerald-100 text-emerald-800 border-emerald-300" : "bg-muted text-muted-foreground border-border hover:bg-emerald-50"
+                        }`}>
+                          <CheckSquare className="w-3 h-3" /> {obs.factual_accuracy_confirmed ? "Facts verified" : "Verify facts"}
+                        </button>
+                      </div>
+                      {obs.draft_response ? (
+                        <div>
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Draft Response</p>
+                          <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">{obs.draft_response}</p>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleDraftObsResponse(obs.id)}
+                          disabled={draftingObs === obs.id}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border rounded-lg hover:bg-primary/5 hover:border-primary/40 hover:text-primary transition-colors disabled:opacity-50">
+                          {draftingObs === obs.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                          {draftingObs === obs.id ? "Drafting…" : "AI Draft Response"}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -2484,14 +2756,169 @@ export default function WarRoomPage() {
       {/* ── Binder / Document Delivery Tab ────────────────────────────────────── */}
       {tab === "binder" && (
         <div className="space-y-5">
-          <p className="text-sm text-muted-foreground">Document delivery log — every hand-off to the inspector, timestamped and receipted.</p>
+          {/* Header */}
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h2 className="font-semibold flex items-center gap-2"><BookMarked className="w-4 h-4 text-primary" /> Inspection Binder</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Pre-stage required documents, track readiness, and log every hand-off with chain of custody.</p>
+            </div>
+            <div className="flex gap-2">
+              {binderDocs.length === 0 && (
+                <button onClick={async () => {
+                  setSeedingBinder(true);
+                  try {
+                    await inspectionsApi.seedBinder(id);
+                    const r = await inspectionsApi.listBinder(id);
+                    setBinderDocs(r.data.binder_docs ?? []);
+                  } finally { setSeedingBinder(false); }
+                }} disabled={seedingBinder}
+                  className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent disabled:opacity-60">
+                  {seedingBinder ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                  Pre-fill Standard Docs
+                </button>
+              )}
+              <button onClick={() => setShowAddBinder(f => !f)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+                <Plus className="w-3.5 h-3.5" /> Add Document
+              </button>
+            </div>
+          </div>
+
+          {/* Add form */}
+          {showAddBinder && (
+            <div className="bg-card border rounded-xl p-4 space-y-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Add Binder Document</p>
+              <div className="grid grid-cols-2 gap-3">
+                <input value={newBinderDoc.title} onChange={e => setNewBinderDoc(f => ({ ...f, title: e.target.value }))}
+                  placeholder="Document title *"
+                  className="col-span-2 border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                <select value={newBinderDoc.category} onChange={e => setNewBinderDoc(f => ({ ...f, category: e.target.value }))}
+                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none">
+                  {[["company_profile","Company Profile"],["org_chart","Org Chart"],["sop_index","SOP Index"],["site_master_file","Site Master File"],
+                    ["capa_summary","CAPA Summary"],["deviation_log","Deviation Log"],["training_records","Training Records"],["batch_records","Batch Records"],
+                    ["validation_summary","Validation Summary"],["equipment_list","Equipment List"],["calibration_log","Calibration Log"],
+                    ["environmental_monitoring","Environmental Monitoring"],["supplier_qualification","Supplier List"],["change_control","Change Control"],
+                    ["complaint_log","Complaint / OOS Log"],["other","Other"]].map(([v, l]) => (
+                    <option key={v} value={v}>{l}</option>
+                  ))}
+                </select>
+                <input value={newBinderDoc.version} onChange={e => setNewBinderDoc(f => ({ ...f, version: e.target.value }))}
+                  placeholder="Version (e.g. v3.2)"
+                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none" />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowAddBinder(false)} className="px-3 py-1.5 text-sm border rounded-lg hover:bg-accent">Cancel</button>
+                <button disabled={savingBinder || !newBinderDoc.title.trim()} onClick={async () => {
+                  setSavingBinder(true);
+                  try {
+                    await inspectionsApi.addBinderDoc(id, {
+                      title: newBinderDoc.title,
+                      category: newBinderDoc.category,
+                      version: newBinderDoc.version || undefined,
+                    });
+                    const r = await inspectionsApi.listBinder(id);
+                    setBinderDocs(r.data.binder_docs ?? []);
+                    setNewBinderDoc({ title: "", category: "other", filename: "", version: "" });
+                    setShowAddBinder(false);
+                  } finally { setSavingBinder(false); }
+                }}
+                  className="flex items-center gap-1.5 px-4 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-60">
+                  {savingBinder ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Save
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Binder completeness summary */}
+          {binderDocs.length > 0 && (() => {
+            const required = binderDocs.filter(d => d.required);
+            const ready = required.filter(d => d.status === "ready" || d.status === "delivered");
+            const pct = required.length > 0 ? Math.round((ready.length / required.length) * 100) : 100;
+            return (
+              <div className="bg-card border rounded-xl px-4 py-3 flex items-center gap-4">
+                <div className="flex-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-semibold">Binder Completeness</span>
+                    <span className="text-xs font-bold">{pct}%</span>
+                  </div>
+                  <ProgressBar value={pct} />
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className="text-sm font-bold">{ready.length}<span className="text-muted-foreground font-normal">/{required.length}</span></p>
+                  <p className="text-[10px] text-muted-foreground">required ready</p>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Document checklist */}
+          {binderDocs.length === 0 ? (
+            <div className="bg-muted/30 border border-dashed rounded-xl px-6 py-10 text-center">
+              <BookMarked className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
+              <p className="text-sm font-medium mb-1">Binder is empty</p>
+              <p className="text-xs text-muted-foreground">Click "Pre-fill Standard Docs" to load the standard pharma inspection document checklist.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {binderDocs.map(doc => (
+                <div key={doc.id} className={`border rounded-xl px-4 py-3 flex items-center gap-3 ${
+                  doc.status === "delivered" ? "bg-emerald-50 border-emerald-200" :
+                  doc.status === "ready" ? "bg-blue-50 border-blue-200" :
+                  doc.status === "staged" ? "bg-amber-50 border-amber-200" :
+                  "bg-card"
+                }`}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{doc.title}</span>
+                      {doc.version && <span className="text-[10px] text-muted-foreground">{doc.version}</span>}
+                      {doc.required && <span className="text-[10px] text-red-600 font-semibold">required</span>}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] text-muted-foreground capitalize">{doc.category.replace(/_/g, " ")}</span>
+                      {doc.delivered_to && <span className="text-[10px] text-muted-foreground">· Delivered to {doc.delivered_to}</span>}
+                    </div>
+                  </div>
+                  <select value={doc.status} onChange={async e => {
+                    const newStatus = e.target.value;
+                    await inspectionsApi.updateBinderDoc(id, doc.id, { status: newStatus });
+                    const r = await inspectionsApi.listBinder(id);
+                    setBinderDocs(r.data.binder_docs ?? []);
+                  }} className={`text-[11px] font-semibold px-2 py-1 rounded border cursor-pointer ${
+                    doc.status === "delivered" ? "bg-emerald-100 text-emerald-800 border-emerald-300" :
+                    doc.status === "ready" ? "bg-blue-100 text-blue-800 border-blue-300" :
+                    doc.status === "staged" ? "bg-amber-100 text-amber-800 border-amber-300" :
+                    "bg-muted text-muted-foreground border-border"
+                  }`}>
+                    <option value="missing">Missing</option>
+                    <option value="staged">Staged</option>
+                    <option value="ready">Ready</option>
+                    <option value="delivered">Delivered</option>
+                  </select>
+                  <button onClick={async () => {
+                    await inspectionsApi.deleteBinderDoc(id, doc.id);
+                    setBinderDocs(prev => prev.filter(d => d.id !== doc.id));
+                  }} className="text-muted-foreground hover:text-red-600 transition-colors flex-shrink-0">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Divider */}
+          <div className="border-t pt-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
+              <Package className="w-3.5 h-3.5" /> Delivery Log
+            </p>
+          </div>
+
           <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-xs text-blue-800">
-            <p className="font-semibold mb-1 flex items-center gap-1.5"><Info className="w-3.5 h-3.5" /> Best practice</p>
-            <p>Always get verbal acknowledgment when handing over documents. Log the investigator's name and method. This creates an auditable chain of custody if the FDA claims a document was "not provided."</p>
+            <p className="font-semibold mb-1 flex items-center gap-1.5"><Info className="w-3.5 h-3.5" /> Chain of custody</p>
+            <p>Always get verbal acknowledgment when handing over documents. Log the investigator's name and method — this is your defence if FDA claims a document was "not provided."</p>
           </div>
 
           {deliveries.length === 0 ? (
-            <div className="bg-muted/30 border border-dashed rounded-xl px-6 py-8 text-center">
+            <div className="bg-muted/30 border border-dashed rounded-xl px-6 py-6 text-center">
               <Package className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
               <p className="text-sm text-muted-foreground">No deliveries logged yet</p>
             </div>
@@ -2545,6 +2972,35 @@ export default function WarRoomPage() {
               </button>
             </div>
           </form>
+
+          {/* Exports */}
+          <div className="bg-card border rounded-xl p-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
+              <Download className="w-3.5 h-3.5" /> Export Reports
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {[
+                { label: "Requests CSV", fn: () => inspectionsApi.exportRequestsCsv(id), filename: "requests.csv" },
+                { label: "Scribe Log TXT", fn: () => inspectionsApi.exportScribeTxt(id), filename: "scribe.txt" },
+                { label: "Commitments CSV", fn: () => inspectionsApi.exportCommitmentsCsv(id), filename: "commitments.csv" },
+              ].map(exp => (
+                <button key={exp.label} onClick={async () => {
+                  try {
+                    const r = await exp.fn();
+                    const url = window.URL.createObjectURL(new Blob([r.data]));
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = exp.filename;
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                  } catch {}
+                }}
+                  className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-xs font-medium hover:bg-muted transition-colors">
+                  <Download className="w-3 h-3" /> {exp.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -3264,29 +3720,82 @@ export default function WarRoomPage() {
             </div>
           )}
 
-          {/* Post-inspection checklist */}
+          {/* Formal Readiness Checklist */}
           <div className="bg-card border rounded-xl p-5">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
-              <ClipboardList className="w-3.5 h-3.5 text-primary" /> Post-Inspection Checklist
+              <ClipboardList className="w-3.5 h-3.5 text-primary" /> Closing Meeting Readiness
             </p>
             <div className="space-y-2">
               {[
-                { text: "All open requests fulfilled or formally declined", done: openRequests.length === 0 },
-                { text: "All verbal commitments logged with deadlines", done: commitments.length > 0 },
-                { text: "483 observations documented with response drafts", done: observations.length > 0 },
+                { text: "All open requests fulfilled or formally declined", done: openRequests.length === 0, note: openRequests.length > 0 ? `${openRequests.length} still open` : undefined },
+                { text: "All verbal commitments logged with deadlines", done: commitments.length > 0, note: commitments.length === 0 ? "No commitments logged" : `${commitments.filter(c => c.status === "pending").length} pending` },
+                { text: "483 observations documented with response drafts", done: observations.length > 0 && observations.every(o => o.draft_response), note: observations.filter(o => !o.draft_response).length > 0 ? `${observations.filter(o => !o.draft_response).length} missing draft` : undefined },
                 { text: "Document delivery log complete with receipts", done: deliveries.length > 0 },
+                { text: "Binder completeness ≥ 80%", done: (() => { const req = binderDocs.filter(d => d.required); const ready = req.filter(d => d.status === "ready" || d.status === "delivered"); return req.length === 0 || ready.length / req.length >= 0.8; })() },
+                { text: "Potential findings reviewed and responded to", done: potentialFindings.filter(f => f.status === "tracking").length === 0, note: potentialFindings.filter(f => f.status === "tracking").length > 0 ? `${potentialFindings.filter(f => f.status === "tracking").length} unaddressed` : undefined },
+                { text: "All potential 483 items have root cause hypothesis", done: observations.every(o => o.root_cause_hypothesis) },
                 { text: "Inspection log reviewed and complete", done: log.length > 0 },
+                { text: "Post-inspection CAPAs identified", done: capas.length > 0 },
               ].map(item => (
-                <div key={item.text} className="flex items-center gap-2.5">
+                <div key={item.text} className="flex items-start gap-2.5">
                   {item.done
-                    ? <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                    : <Circle className="w-4 h-4 text-muted-foreground/40 flex-shrink-0" />
+                    ? <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
+                    : <Circle className="w-4 h-4 text-muted-foreground/40 flex-shrink-0 mt-0.5" />
                   }
-                  <span className={`text-sm ${item.done ? "text-foreground" : "text-muted-foreground"}`}>{item.text}</span>
+                  <div className="min-w-0">
+                    <span className={`text-sm ${item.done ? "text-foreground" : "text-muted-foreground"}`}>{item.text}</span>
+                    {(item as any).note && <span className="text-[10px] text-red-600 ml-2">— {(item as any).note}</span>}
+                  </div>
                 </div>
               ))}
             </div>
           </div>
+
+          {/* Leadership Talking Points */}
+          <div className="bg-card border rounded-xl p-5">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
+              <AtSign className="w-3.5 h-3.5 text-primary" /> Leadership Talking Points
+            </p>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <div className="flex items-start gap-2">
+                <span className="text-primary font-bold flex-shrink-0">1.</span>
+                <span>Acknowledge the inspector's findings professionally — avoid defensiveness or minimising observations.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-primary font-bold flex-shrink-0">2.</span>
+                <span>For each 483 observation: "We appreciate the observation. We have begun an investigation and will provide a comprehensive written response within 15 business days."</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-primary font-bold flex-shrink-0">3.</span>
+                <span>Commitments made during inspection: confirm all deadlines and who is responsible — name names, not teams.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-primary font-bold flex-shrink-0">4.</span>
+                <span>Do NOT volunteer corrective actions that are not yet planned or approved — only confirm what you have already committed to.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-primary font-bold flex-shrink-0">5.</span>
+                <span>Close with management commitment statement: "Quality is our highest priority. We are committed to continuous improvement and regulatory compliance."</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Unfulfilled commitments */}
+          {commitments.filter(c => c.status === "pending").length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                <BadgeCheck className="w-3.5 h-3.5" /> Open Commitments to Address
+              </p>
+              <ul className="space-y-1.5">
+                {commitments.filter(c => c.status === "pending").map(c => (
+                  <li key={c.id} className="flex items-start gap-2 text-sm text-amber-900">
+                    <span className="text-amber-500 font-bold flex-shrink-0">·</span>
+                    <span>{c.commitment_text}{c.deadline_at ? ` (due ${new Date(c.deadline_at).toLocaleDateString()})` : ""}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="flex items-center justify-between flex-wrap gap-3">
             {inspection.status === "active" && (
@@ -3406,6 +3915,95 @@ export default function WarRoomPage() {
                 ))}
               </ul>
             )}
+          </div>
+
+          {/* §19 Lessons Learned */}
+          <div className="bg-card border rounded-xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <BookMarked className="w-4 h-4 text-primary" /> Lessons Learned
+              </h3>
+              <span className="text-xs text-muted-foreground">{lessons.length} captured</span>
+            </div>
+            <div className="space-y-2 mb-4">
+              {lessons.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No lessons captured yet — add what this inspection taught your team.</p>
+              ) : (
+                lessons.map((lesson, idx) => (
+                  <div key={idx} className="flex items-start gap-2 bg-muted/30 border rounded-lg px-3 py-2.5">
+                    <span className="text-primary font-bold text-xs flex-shrink-0 mt-0.5">{idx + 1}.</span>
+                    <p className="text-sm flex-1 leading-relaxed">{lesson}</p>
+                    <button onClick={async () => {
+                      await inspectionsApi.deleteLesson(id, idx);
+                      const r = await inspectionsApi.getLessons(id);
+                      setLessons(r.data.lessons ?? []);
+                    }} className="text-muted-foreground hover:text-red-600 flex-shrink-0">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={newLesson}
+                onChange={e => setNewLesson(e.target.value)}
+                placeholder="Add a lesson learned…"
+                onKeyDown={async e => {
+                  if (e.key === "Enter" && newLesson.trim()) {
+                    setSavingLesson(true);
+                    try {
+                      await inspectionsApi.addLesson(id, newLesson);
+                      const r = await inspectionsApi.getLessons(id);
+                      setLessons(r.data.lessons ?? []);
+                      setNewLesson("");
+                    } finally { setSavingLesson(false); }
+                  }
+                }}
+                className="flex-1 border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+              <button disabled={savingLesson || !newLesson.trim()} onClick={async () => {
+                setSavingLesson(true);
+                try {
+                  await inspectionsApi.addLesson(id, newLesson);
+                  const r = await inspectionsApi.getLessons(id);
+                  setLessons(r.data.lessons ?? []);
+                  setNewLesson("");
+                } finally { setSavingLesson(false); }
+              }}
+                className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-60">
+                {savingLesson ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+              </button>
+            </div>
+          </div>
+
+          {/* §24 Integration stubs */}
+          <div className="bg-card border rounded-xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <GitMerge className="w-4 h-4 text-primary" /> Export to QMS / EDMS
+              </h3>
+              <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded">Coming soon</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {[
+                { name: "Veeva Vault QMS", icon: Database },
+                { name: "MasterControl", icon: Database },
+                { name: "TrackWise", icon: Database },
+                { name: "SharePoint", icon: Database },
+              ].map(sys => {
+                const Icon = sys.icon;
+                return (
+                  <div key={sys.name} className="flex items-center gap-2 bg-muted/40 border rounded-lg px-3 py-2.5 opacity-60">
+                    <Icon className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-xs font-medium">{sys.name}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-3">
+              One-click export of CAPAs, observations, and commitments to your QMS. Contact your Clyira rep to enable early access.
+            </p>
           </div>
         </div>
       )}

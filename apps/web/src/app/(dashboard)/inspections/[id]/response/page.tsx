@@ -140,7 +140,7 @@ function ObservationCard({
     if (!draftText.trim()) return;
     setSubmitting(true);
     try {
-      await inspectionsApi.updateObservation(inspectionId, obs.id, { status: "submitted" });
+      await inspectionsApi.updateObservation(inspectionId, obs.id, { obs_status: "submitted" });
       onUpdate();
     } finally { setSubmitting(false); }
   };

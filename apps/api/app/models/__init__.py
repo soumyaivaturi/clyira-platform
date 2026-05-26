@@ -17,6 +17,7 @@ from app.models.inspection_potential_finding import InspectionPotentialFinding
 from app.models.inspection_evidence_package import InspectionEvidencePackage
 from app.models.inspection_sme import InspectionSME
 from app.models.inspection_capa import InspectionCAPA
+from app.models.inspection_binder_doc import InspectionBinderDoc
 from app.models.evidence import EvidenceImport, EvidenceObject
 from app.models.audit import AuditLog
 from app.models.api_key import APIKey
@@ -48,6 +49,7 @@ __all__ = [
     "InspectionEvidencePackage",
     "InspectionSME",
     "InspectionCAPA",
+    "InspectionBinderDoc",
     "EvidenceImport",
     "EvidenceObject",
     "AuditLog",
