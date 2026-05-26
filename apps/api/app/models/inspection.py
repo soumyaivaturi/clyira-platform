@@ -1,5 +1,5 @@
 """Inspection, InspectionRequest, and InspectionLog models"""
-from sqlalchemy import Column, String, Text, Integer, ForeignKey
+from sqlalchemy import Boolean, Column, String, Text, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
