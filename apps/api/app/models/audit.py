@@ -45,7 +45,7 @@ class AuditLog(Base, TimestampMixin):
 def _stamp_audit_hash(mapper, connection, target):  # noqa: ARG001
     from app.services.integrity import compute_hash
     if not target.created_at:
-        target.created_at = datetime.now(timezone.utc)
+        target.created_at = datetime.utcnow()  # naive — column is TIMESTAMP WITHOUT TIME ZONE
     target.entry_hash = compute_hash({
         "id": target.id,
         "company_id": target.company_id,
