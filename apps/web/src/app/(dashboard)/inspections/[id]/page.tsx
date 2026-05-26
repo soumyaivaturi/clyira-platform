@@ -11,7 +11,7 @@ import {
   ChevronRight, Calendar, MapPin, User, ArrowRight,
   Flag, Paperclip, MessageCircle, Activity, Star,
   TriangleAlert, BadgeCheck, Timer, TrendingUp, Info,
-  Mic, ClipboardList, ChevronDown, ExternalLink, Trash2,
+  Mic, MicOff, ClipboardList, ChevronDown, ExternalLink, Trash2,
   Edit3, Eye, Lock, Unlock, CheckSquare, Circle,
   Hash, AtSign, ArrowUpRight, Flame,
   Bell, Download, GitMerge, Database, BookMarked,
@@ -1105,6 +1105,14 @@ export default function WarRoomPage() {
   const [scribeText, setScribeText] = useState("");
   const [scribeType, setScribeType] = useState("scribe_note");
   const [sendingScribe, setSendingScribe] = useState(false);
+
+  // Voice scribe
+  const [isRecording, setIsRecording] = useState(false);
+  const [interimText, setInterimText] = useState("");
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const isRecordingRef = useRef(false);
+  const lastFinalRef = useRef("");
   const [activating, setActivating] = useState(false);
   const [closing, setClosing] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -1331,6 +1339,32 @@ export default function WarRoomPage() {
   useEffect(() => { loadTabData(tab); }, [tab, loadTabData]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
 
+  // Detect Web Speech API support (client-side only)
+  useEffect(() => {
+    setVoiceSupported(
+      typeof window !== "undefined" &&
+      !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
+    );
+  }, []);
+
+  // Stop recording when leaving the scribe tab
+  useEffect(() => {
+    if (tab !== "scribe" && isRecordingRef.current) {
+      isRecordingRef.current = false;
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      setInterimText("");
+    }
+  }, [tab]);
+
+  // Stop recording on unmount
+  useEffect(() => {
+    return () => {
+      isRecordingRef.current = false;
+      recognitionRef.current?.stop();
+    };
+  }, []);
+
   const handleAddRequest = async (data: any) => {
     await inspectionsApi.createRequest(id, data);
     const res = await inspectionsApi.get(id);
@@ -1340,12 +1374,87 @@ export default function WarRoomPage() {
   const handleScribe = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!scribeText.trim()) return;
+    // Stop voice if running before saving
+    if (isRecordingRef.current) {
+      isRecordingRef.current = false;
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      setInterimText("");
+    }
     setSendingScribe(true);
     try {
       const res = await inspectionsApi.addScribeEntry(id, { content: scribeText, entry_type: scribeType });
       setLog(l => [...l, res.data]);
       setScribeText("");
+      lastFinalRef.current = "";
     } finally { setSendingScribe(false); }
+  };
+
+  const toggleRecording = () => {
+    if (isRecordingRef.current) {
+      isRecordingRef.current = false;
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      setInterimText("");
+      return;
+    }
+
+    const SR: any = typeof window !== "undefined" &&
+      ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+    if (!SR) return;
+
+    const recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event: any) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript: string = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          // Capitalise first char and ensure space separator
+          const segment = transcript.trim().replace(/^./, c => c.toUpperCase()) + " ";
+          lastFinalRef.current = segment;
+          setScribeText(prev => prev + segment);
+        } else {
+          interim += transcript;
+        }
+      }
+      setInterimText(interim);
+    };
+
+    recognition.onerror = (event: any) => {
+      // "no-speech" is normal (silence timeout) — restart silently
+      if (event.error !== "no-speech") {
+        isRecordingRef.current = false;
+        setIsRecording(false);
+      }
+      setInterimText("");
+    };
+
+    recognition.onend = () => {
+      setInterimText("");
+      // Chrome stops after ~60s of silence — restart automatically if still in recording mode
+      if (isRecordingRef.current) {
+        try { recognition.start(); } catch {}
+      }
+    };
+
+    recognitionRef.current = recognition;
+    isRecordingRef.current = true;
+    setIsRecording(true);
+    recognition.start();
+  };
+
+  const handleRedoLast = () => {
+    if (!lastFinalRef.current) return;
+    setScribeText(prev => {
+      const idx = prev.lastIndexOf(lastFinalRef.current);
+      if (idx >= 0) return prev.slice(0, idx) + prev.slice(idx + lastFinalRef.current.length);
+      return prev;
+    });
+    lastFinalRef.current = "";
   };
 
   const handleSendChat = async (e: React.FormEvent) => {
@@ -3625,10 +3734,29 @@ export default function WarRoomPage() {
       {/* ── Scribe Tab ────────────────────────────────────────────────────────── */}
       {tab === "scribe" && (
         <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Real-time scribe — capture every observation, question, and action item as it happens.
-          </p>
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              Real-time scribe — capture every observation, question, and action item as it happens.
+              {voiceSupported
+                ? " Tap the mic to dictate, review the transcript, then save."
+                : " (Voice input not available in this browser — Chrome or Edge recommended.)"}
+            </p>
+            {voiceSupported && (
+              <div className={`flex-shrink-0 flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full border ${
+                isRecording
+                  ? "bg-red-50 border-red-200 text-red-700"
+                  : "bg-muted border-border text-muted-foreground"
+              }`}>
+                {isRecording
+                  ? <><span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" /> Recording</>
+                  : <><Mic className="w-3 h-3" /> Voice ready</>
+                }
+              </div>
+            )}
+          </div>
+
           <form onSubmit={handleScribe} className="bg-card border rounded-xl p-5 space-y-4">
+            {/* Entry type selector */}
             <div className="flex gap-2 flex-wrap">
               {ENTRY_TYPES.map(t => (
                 <button key={t.value} type="button" onClick={() => setScribeType(t.value)}
@@ -3641,16 +3769,80 @@ export default function WarRoomPage() {
                 </button>
               ))}
             </div>
-            <textarea rows={4}
-              placeholder={`Enter ${ENTRY_TYPES.find(t => t.value === scribeType)?.label.toLowerCase() ?? "note"}…`}
-              value={scribeText}
-              onChange={e => setScribeText(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none" />
-            <div className="flex justify-end">
+
+            {/* Mic controls row (voice browsers only) */}
+            {voiceSupported && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">
+                  {isRecording ? "Listening — speak normally, you can still edit below" : "Click mic to start dictating"}
+                </span>
+                <div className="flex items-center gap-2">
+                  {lastFinalRef.current && (
+                    <button type="button" onClick={handleRedoLast}
+                      className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
+                      ↩ Undo last
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={toggleRecording}
+                    title={isRecording ? "Stop recording" : "Start voice capture"}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all shadow-sm ${
+                      isRecording
+                        ? "bg-red-500 border-red-500 text-white shadow-red-200 shadow-md"
+                        : "bg-background border-border hover:border-primary hover:text-primary hover:shadow"
+                    }`}
+                  >
+                    {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Textarea — always editable */}
+            <div className="space-y-1.5">
+              <textarea
+                rows={isRecording ? 3 : 4}
+                placeholder={
+                  voiceSupported
+                    ? `Dictate or type ${ENTRY_TYPES.find(t => t.value === scribeType)?.label.toLowerCase() ?? "note"}… transcript appears here`
+                    : `Enter ${ENTRY_TYPES.find(t => t.value === scribeType)?.label.toLowerCase() ?? "note"}…`
+                }
+                value={scribeText}
+                onChange={e => setScribeText(e.target.value)}
+                className={`w-full border rounded-lg px-3 py-2.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none transition-colors ${
+                  isRecording ? "border-red-200 ring-1 ring-red-100" : ""
+                }`}
+              />
+
+              {/* Live interim transcript — shows in-progress words before they're confirmed */}
+              {interimText && (
+                <div className="flex items-start gap-2 px-3 py-2 border border-dashed border-primary/30 rounded-lg bg-primary/5">
+                  <span className="text-[10px] font-bold text-primary/60 uppercase tracking-wide flex-shrink-0 mt-0.5">live</span>
+                  <p className="text-sm italic text-muted-foreground/80 leading-relaxed">{interimText}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Review note when recording */}
+            {isRecording && (
+              <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 -mt-1">
+                <Info className="w-3 h-3 flex-shrink-0" />
+                Always review the transcript — voice can mis-hear names, numbers, and regulatory terms. Edit directly above before saving.
+              </p>
+            )}
+
+            <div className="flex items-center justify-between">
+              {scribeText.trim() && (
+                <button type="button" onClick={() => { setScribeText(""); lastFinalRef.current = ""; }}
+                  className="text-xs text-muted-foreground hover:text-red-600 transition-colors">
+                  Clear
+                </button>
+              )}
               <button type="submit" disabled={sendingScribe || !scribeText.trim()}
-                className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
+                className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 ml-auto">
                 {sendingScribe ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                {sendingScribe ? "Saving…" : "Add Entry"}
+                {sendingScribe ? "Saving…" : "Save Entry"}
               </button>
             </div>
           </form>
