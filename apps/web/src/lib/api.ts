@@ -268,4 +268,8 @@ export const inspectionsApi = {
   addScribeEntry: (id: string, data: { content: string; entry_type?: string; tags?: string[] }) =>
     api.post(`/inspections/${id}/scribe`, data),
   getLog: (id: string) => api.get(`/inspections/${id}/log`),
+
+  // Inspector briefing
+  briefInspector: (inspectionId: string, inspectorId: string) =>
+    api.post(`/inspections/${inspectionId}/inspectors/${inspectorId}/brief`, {}, { timeout: 90000 }),
 };

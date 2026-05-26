@@ -905,6 +905,9 @@ export default function WarRoomPage() {
 
   const [draftingObs, setDraftingObs] = useState<string | null>(null);
   const [connectedUsers, setConnectedUsers] = useState(1);
+  const [inspectorBriefs, setInspectorBriefs] = useState<Record<string, any>>({});
+  const [briefingInspector, setBriefingInspector] = useState<string | null>(null);
+  const [expandedBrief, setExpandedBrief] = useState<string | null>(null);
   const [wsToasts, setWsToasts] = useState<{ id: string; message: string; type: string }[]>([]);
 
   const logEndRef = useRef<HTMLDivElement>(null);
@@ -1311,32 +1314,180 @@ export default function WarRoomPage() {
                 <p className="text-sm text-muted-foreground">No investigators added yet</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-                {inspectors.map(insp => (
-                  <div key={insp.id} className="bg-card border rounded-xl px-4 py-3">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="font-medium text-sm">{insp.name}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {insp.role} {insp.fda_district && `· ${insp.fda_district}`}
-                        </p>
-                        {insp.email && <p className="text-xs text-primary mt-0.5">{insp.email}</p>}
-                        {insp.focus_areas?.length > 0 && (
-                          <div className="flex gap-1 flex-wrap mt-1.5">
-                            {insp.focus_areas.map(a => (
-                              <span key={a} className="text-[10px] px-1.5 py-0.5 bg-amber-50 border border-amber-200 rounded text-amber-800">{a}</span>
-                            ))}
+              <div className="space-y-3 mb-4">
+                {inspectors.map(insp => {
+                  const brief = inspectorBriefs[insp.id];
+                  const isExpanded = expandedBrief === insp.id;
+                  const isBriefing = briefingInspector === insp.id;
+                  return (
+                    <div key={insp.id} className="bg-card border rounded-xl overflow-hidden">
+                      {/* Inspector card header */}
+                      <div className="px-4 py-3 flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-semibold text-sm">{insp.name}</p>
+                            <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 border border-amber-200 rounded text-amber-800 capitalize">{insp.role.replace("_", " ")}</span>
                           </div>
-                        )}
-                        {insp.notes && <p className="text-xs text-muted-foreground mt-1 italic">{insp.notes}</p>}
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {insp.fda_district || "District not specified"}
+                            {insp.email && ` · ${insp.email}`}
+                          </p>
+                          {insp.focus_areas?.length > 0 && (
+                            <div className="flex gap-1 flex-wrap mt-1.5">
+                              {insp.focus_areas.map(a => (
+                                <span key={a} className="text-[10px] px-1.5 py-0.5 bg-primary/10 border border-primary/20 rounded text-primary">{a}</span>
+                              ))}
+                            </div>
+                          )}
+                          {insp.notes && <p className="text-xs text-muted-foreground mt-1 italic">{insp.notes}</p>}
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <button
+                            onClick={async () => {
+                              if (brief) {
+                                setExpandedBrief(isExpanded ? null : insp.id);
+                                return;
+                              }
+                              setBriefingInspector(insp.id);
+                              setExpandedBrief(insp.id);
+                              try {
+                                const res = await inspectionsApi.briefInspector(id, insp.id);
+                                setInspectorBriefs(b => ({ ...b, [insp.id]: res.data.brief }));
+                              } catch {
+                                setInspectorBriefs(b => ({ ...b, [insp.id]: null }));
+                              } finally {
+                                setBriefingInspector(null);
+                              }
+                            }}
+                            disabled={isBriefing}
+                            title="AI Inspector Brief"
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors disabled:opacity-60 ${
+                              brief
+                                ? "bg-primary/10 border-primary/20 text-primary hover:bg-primary/20"
+                                : "bg-muted border-border text-muted-foreground hover:text-foreground hover:bg-accent"
+                            }`}>
+                            {isBriefing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                            {isBriefing ? "Briefing…" : brief ? (isExpanded ? "Hide Brief" : "View Brief") : "AI Brief"}
+                          </button>
+                          <button onClick={async () => { await inspectionsApi.deleteInspector(id, insp.id); await loadTabData("people"); }}
+                            className="text-muted-foreground hover:text-red-500 transition-colors p-1">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
-                      <button onClick={async () => { await inspectionsApi.deleteInspector(id, insp.id); await loadTabData("people"); }}
-                        className="text-muted-foreground hover:text-red-500 transition-colors">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+
+                      {/* Briefing panel */}
+                      {isExpanded && (
+                        <div className="border-t bg-gradient-to-b from-muted/20 to-background px-4 py-4 space-y-4">
+                          {isBriefing || (!brief && briefingInspector === insp.id) ? (
+                            <div className="flex items-center gap-3 text-sm text-muted-foreground py-4">
+                              <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                              Researching inspector background and district enforcement patterns…
+                            </div>
+                          ) : brief ? (
+                            <>
+                              {/* District profile + inspector style */}
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {brief.district_profile && (
+                                  <div className="bg-card border rounded-lg px-3 py-2.5">
+                                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-1 flex items-center gap-1">
+                                      <MapPin className="w-3 h-3" /> District Profile
+                                    </p>
+                                    <p className="text-xs leading-relaxed">{brief.district_profile}</p>
+                                  </div>
+                                )}
+                                {brief.inspector_style && (
+                                  <div className="bg-card border rounded-lg px-3 py-2.5">
+                                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-1 flex items-center gap-1">
+                                      <User className="w-3 h-3" /> Inspection Style
+                                    </p>
+                                    <p className="text-xs leading-relaxed">{brief.inspector_style}</p>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Likely focus areas */}
+                              {brief.likely_focus_areas?.length > 0 && (
+                                <div>
+                                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1">
+                                    <Flag className="w-3 h-3 text-amber-500" /> Expected Focus Areas
+                                  </p>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {brief.likely_focus_areas.map((f: string, i: number) => (
+                                      <span key={i} className="text-xs px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-amber-800 font-medium">{f}</span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Common citations */}
+                              {brief.common_citations?.length > 0 && (
+                                <div>
+                                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1">
+                                    <BookOpen className="w-3 h-3 text-primary" /> Common Citation Areas
+                                  </p>
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    {brief.common_citations.map((c: any, i: number) => (
+                                      <div key={i} className="bg-primary/5 border border-primary/10 rounded-lg px-3 py-2">
+                                        <p className="text-[10px] font-bold text-primary font-mono">{c.cfr}</p>
+                                        <p className="text-[10px] text-muted-foreground mt-0.5">{c.topic}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Opening meeting tips */}
+                              {brief.opening_meeting_tips?.length > 0 && (
+                                <div>
+                                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1">
+                                    <MessageCircle className="w-3 h-3 text-blue-500" /> Opening Meeting Tips
+                                  </p>
+                                  <ul className="space-y-1.5">
+                                    {brief.opening_meeting_tips.map((tip: string, i: number) => (
+                                      <li key={i} className="flex items-start gap-2 text-xs">
+                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mt-0.5 flex-shrink-0" />
+                                        {tip}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+
+                              {/* Red flags + overall */}
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {brief.red_flags?.length > 0 && (
+                                  <div className="bg-red-50 border border-red-100 rounded-lg px-3 py-2.5">
+                                    <p className="text-[10px] font-bold text-red-700 uppercase tracking-wide mb-1.5 flex items-center gap-1">
+                                      <TriangleAlert className="w-3 h-3" /> Prepare These Areas
+                                    </p>
+                                    <ul className="space-y-1">
+                                      {brief.red_flags.map((f: string, i: number) => (
+                                        <li key={i} className="text-xs text-red-800 flex items-start gap-1.5">
+                                          <span className="text-red-400 mt-0.5">•</span>{f}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                                {brief.overall_assessment && (
+                                  <div className="bg-card border rounded-lg px-3 py-2.5">
+                                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-1 flex items-center gap-1">
+                                      <Activity className="w-3 h-3 text-primary" /> Overall Assessment
+                                    </p>
+                                    <p className="text-xs leading-relaxed">{brief.overall_assessment}</p>
+                                  </div>
+                                )}
+                              </div>
+                            </>
+                          ) : (
+                            <p className="text-xs text-muted-foreground py-2">Brief generation failed. Try again.</p>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
             <form onSubmit={handleSaveInspector} className="bg-card border rounded-xl p-4 space-y-3">

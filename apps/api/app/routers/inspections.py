@@ -936,6 +936,110 @@ async def remove_inspector(
     await db.commit()
 
 
+# ── AI Inspector Briefing ─────────────────────────────────────────────────────────
+
+@router.post("/{inspection_id}/inspectors/{inspector_id}/brief", response_model=dict)
+async def generate_inspector_brief(
+    inspection_id: str,
+    inspector_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate an AI briefing on the inspector — district patterns, known focus areas, prep guidance."""
+    from app.engines.llm_engine import _llm_available, _call_llm
+    import json, re
+
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    result = await db.execute(
+        select(InspectionInspector).where(
+            InspectionInspector.id == inspector_id,
+            InspectionInspector.inspection_id == inspection_id,
+        )
+    )
+    inspector = result.scalar_one_or_none()
+    if not inspector:
+        raise HTTPException(status_code=404, detail="Inspector not found")
+
+    insp_result = await db.execute(
+        select(Inspection).where(Inspection.id == inspection_id)
+    )
+    inspection = insp_result.scalar_one_or_none()
+
+    if not _llm_available():
+        return {
+            "inspector_id": inspector_id,
+            "brief": None,
+            "error": "llm_unavailable",
+            "message": "Configure an LLM API key to enable AI briefings.",
+        }
+
+    focus_str = ", ".join(inspector.focus_areas) if inspector.focus_areas else "not specified"
+    agency = inspection.agency if inspection else "FDA"
+
+    prompt = f"""You are a regulatory intelligence expert briefing a pharmaceutical quality team before an FDA inspection.
+
+Inspector details:
+- Name: {inspector.name}
+- Agency/District: {inspector.fda_district or agency}
+- Role: {inspector.role}
+- Known focus areas: {focus_str}
+- Notes: {inspector.notes or "none"}
+
+Inspection type: {inspection.inspection_type if inspection else "routine"} — Agency: {agency}
+
+Generate a pre-inspection intelligence brief. Respond with ONLY valid JSON:
+{{
+  "district_profile": "<2-3 sentences on the FDA district office known inspection approach and priorities>",
+  "inspector_style": "<1-2 sentences on likely inspection style based on role and focus areas>",
+  "likely_focus_areas": [
+    "<specific system or topic area 1>",
+    "<specific system or topic area 2>",
+    "<specific system or topic area 3>",
+    "<specific system or topic area 4>"
+  ],
+  "common_citations": [
+    {{"cfr": "<e.g. 21 CFR 211.68>", "topic": "<brief description>"}},
+    {{"cfr": "<citation>", "topic": "<description>"}},
+    {{"cfr": "<citation>", "topic": "<description>"}}
+  ],
+  "opening_meeting_tips": [
+    "<actionable tip for opening meeting 1>",
+    "<actionable tip 2>",
+    "<actionable tip 3>"
+  ],
+  "red_flags": [
+    "<document type or system area to have fully prepared>",
+    "<potential risk area to review before inspection starts>"
+  ],
+  "overall_assessment": "<1-2 sentence overall risk level and recommended posture for this inspector>"
+}}"""
+
+    try:
+        raw = await _call_llm(
+            "You are a pharmaceutical regulatory intelligence expert.",
+            prompt,
+        )
+        json_match = re.search(r'\{[\s\S]*\}', raw)
+        if not json_match:
+            raise ValueError("No JSON in LLM response")
+        brief_data = json.loads(json_match.group())
+        return {
+            "inspector_id": inspector_id,
+            "inspector_name": inspector.name,
+            "brief": brief_data,
+            "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+    except Exception as e:
+        logger.warning(f"Inspector brief generation failed: {e}")
+        return {
+            "inspector_id": inspector_id,
+            "brief": None,
+            "error": str(e),
+            "message": "Brief generation failed. Please retry.",
+        }
+
+
 # ── Cross-request risk analysis ────────────────────────────────────────────────────
 
 @router.post("/{inspection_id}/risk-analysis", response_model=dict)
