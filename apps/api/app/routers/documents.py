@@ -112,7 +112,7 @@ async def search_documents(
     return {"results": rows, "query": q, "count": len(rows)}
 
 
-@router.get("/", response_model=dict)
+@router.get("", response_model=dict)
 async def list_documents(
     document_category: Optional[str] = None,
     department_owner: Optional[str] = None,

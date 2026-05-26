@@ -170,7 +170,7 @@ def _compute_due_at(criticality: str) -> tuple[int, str]:
 
 # ── Inspection lifecycle ─────────────────────────────────────────────────────────
 
-@router.get("/", response_model=dict)
+@router.get("", response_model=dict)
 async def list_inspections(
     insp_status: Optional[str] = None,
     current_user: User = Depends(get_current_user),
@@ -185,7 +185,7 @@ async def list_inspections(
     return {"inspections": [_inspection_out(i) for i in inspections], "total": len(inspections)}
 
 
-@router.post("/", response_model=dict, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def create_inspection(
     data: InspectionCreate,
     current_user: User = Depends(get_current_user),

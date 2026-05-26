@@ -54,8 +54,9 @@ function CreateModal({ onClose, onCreate }: { onClose: () => void; onCreate: (da
     try {
       await onCreate({ ...form, agency: form.agency || undefined, start_date: form.start_date || undefined });
       onClose();
-    } catch {
-      setError("Failed to create inspection. Please try again.");
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail;
+      setError(detail ? `Error: ${detail}` : "Failed to create inspection. Please try again.");
     } finally {
       setSaving(false);
     }
