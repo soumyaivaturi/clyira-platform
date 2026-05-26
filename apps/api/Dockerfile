@@ -15,9 +15,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY apps/api/ .
 
-# Create storage directory
-RUN mkdir -p /app/storage
+# Create storage directory and make startup script executable
+RUN mkdir -p /app/storage && chmod +x /app/start.sh
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["/app/start.sh"]
