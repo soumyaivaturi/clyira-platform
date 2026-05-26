@@ -18,11 +18,18 @@ if not raw_url:
 url = raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 MIGRATIONS = [
+    # users — Part 11 security columns missing from baseline
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP WITHOUT TIME ZONE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS force_password_change BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMP WITHOUT TIME ZONE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP WITHOUT TIME ZONE",
+    # audit_logs — columns missing from baseline (cause login 500 via aborted transaction)
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS action VARCHAR(20)",
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS before_state JSONB",
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS after_state JSONB",
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS session_id VARCHAR(64)",
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS entry_hash VARCHAR(64)",
 ]
 
 async def main():
