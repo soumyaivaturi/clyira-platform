@@ -13,6 +13,7 @@ import {
   TriangleAlert, BadgeCheck, Timer, TrendingUp, Info,
   Mic, ClipboardList, ChevronDown, ExternalLink, Trash2,
   Edit3, Eye, Lock, Unlock, CheckSquare, Circle,
+  Hash, AtSign, ArrowUpRight, Flame,
 } from "lucide-react";
 import { inspectionsApi } from "@/lib/api";
 import { InspStatusBadge } from "@/components/shared/badges";
@@ -119,6 +120,19 @@ interface Comment {
   id: string;
   author_name: string | null;
   content: string;
+  created_at: string;
+}
+
+interface ChatMessage {
+  id: string;
+  sender_id: string;
+  sender_name: string;
+  content: string;
+  room: string;
+  message_type: string;
+  linked_request_id: string | null;
+  linked_commitment_id: string | null;
+  converted_to_request_id: string | null;
   created_at: string;
 }
 
@@ -873,7 +887,7 @@ export default function WarRoomPage() {
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"requests" | "people" | "observations" | "commitments" | "binder" | "intel" | "scribe" | "closing">("requests");
+  const [tab, setTab] = useState<"requests" | "chat" | "people" | "observations" | "commitments" | "binder" | "intel" | "scribe" | "closing">("requests");
   const [showAddRequest, setShowAddRequest] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<InspRequest | null>(null);
   const [scribeText, setScribeText] = useState("");
@@ -910,6 +924,15 @@ export default function WarRoomPage() {
   const [expandedBrief, setExpandedBrief] = useState<string | null>(null);
   const [wsToasts, setWsToasts] = useState<{ id: string; message: string; type: string }[]>([]);
 
+  // Chat state
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatRoom, setChatRoom] = useState("all");
+  const [chatInput, setChatInput] = useState("");
+  const [chatType, setChatType] = useState("general");
+  const [sendingChat, setSendingChat] = useState(false);
+  const [convertingMsg, setConvertingMsg] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
   const logEndRef = useRef<HTMLDivElement>(null);
   // Stable ref so the WS callback can call the latest loadAll without a circular dep
   const loadAllRef = useRef<() => void>(() => {});
@@ -942,6 +965,9 @@ export default function WarRoomPage() {
       } else if (t === "people") {
         const r = await inspectionsApi.listInspectors(id);
         setInspectors(r.data.inspectors ?? []);
+      } else if (t === "chat") {
+        const r = await inspectionsApi.listMessages(id);
+        setChatMessages(r.data.messages ?? []);
       }
     } catch { /* tab data missing is non-fatal */ }
   }, [id]);
@@ -965,11 +991,20 @@ export default function WarRoomPage() {
       loadAllRef.current();
     } else if (event.type === "sla_alert") {
       addToast(`SLA breach: ${event.request_text.slice(0, 50)}…`, "alert");
+    } else if (event.type === "chat_message") {
+      setChatMessages(prev => {
+        if (prev.some(m => m.id === event.id)) return prev;
+        return [...prev, event as ChatMessage];
+      });
+    } else if (event.type === "request_created" && event.from_chat) {
+      loadAllRef.current();
+      addToast("Chat message converted to request", "info");
     }
   }, [addToast]));
 
   useEffect(() => { loadAll(); }, [loadAll]);
   useEffect(() => { loadTabData(tab); }, [tab, loadTabData]);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
 
   const handleAddRequest = async (data: any) => {
     await inspectionsApi.createRequest(id, data);
@@ -986,6 +1021,30 @@ export default function WarRoomPage() {
       setLog(l => [...l, res.data]);
       setScribeText("");
     } finally { setSendingScribe(false); }
+  };
+
+  const handleSendChat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+    setSendingChat(true);
+    try {
+      await inspectionsApi.sendMessage(id, {
+        content: chatInput.trim(),
+        room: chatRoom,
+        message_type: chatType,
+      });
+      setChatInput("");
+    } catch { /* ignore — WS will not fire but REST response is ok */ }
+    finally { setSendingChat(false); }
+  };
+
+  const handleConvertToRequest = async (msgId: string) => {
+    setConvertingMsg(msgId);
+    try {
+      await inspectionsApi.convertMessageToRequest(id, msgId);
+      setChatMessages(prev => prev.map(m => m.id === msgId ? { ...m, converted_to_request_id: "converted" } : m));
+    } catch { /* already converted or error */ }
+    finally { setConvertingMsg(null); }
   };
 
   const handleActivate = async () => {
@@ -1082,6 +1141,7 @@ export default function WarRoomPage() {
 
   const TABS = [
     { key: "requests", label: `Requests${openRequests.length ? ` (${openRequests.length})` : ""}`, icon: MessageSquare },
+    { key: "chat", label: `Chat${chatMessages.length ? ` (${chatMessages.length})` : ""}`, icon: Hash },
     { key: "people", label: "People", icon: Users },
     { key: "observations", label: "483s", icon: Shield },
     { key: "commitments", label: "Commitments", icon: BadgeCheck },
@@ -1295,6 +1355,137 @@ export default function WarRoomPage() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Chat Tab ──────────────────────────────────────────────────────────── */}
+      {tab === "chat" && (
+        <div className="flex flex-col h-[calc(100vh-280px)] min-h-[480px]">
+          {/* Internal-only banner */}
+          <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl mb-3 text-xs text-amber-800">
+            <Lock className="w-3.5 h-3.5 flex-shrink-0" />
+            <span><strong>Internal only</strong> — Messages in this channel are never visible to the inspector. Keep this channel for team coordination only.</span>
+          </div>
+
+          {/* Room filter */}
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            {[
+              { key: "all", label: "All Rooms" },
+              { key: "front", label: "Front Room" },
+              { key: "back", label: "Back Room" },
+              { key: "prep", label: "Prep Room" },
+            ].map(r => (
+              <button key={r.key} onClick={() => { setChatRoom(r.key); loadTabData("chat"); }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  chatRoom === r.key
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "border-border text-muted-foreground hover:text-foreground hover:bg-accent"
+                }`}>
+                {r.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Message list */}
+          <div className="flex-1 overflow-y-auto space-y-1 pr-1 mb-3">
+            {chatMessages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-center py-12">
+                <Hash className="w-8 h-8 text-muted-foreground/30 mb-3" />
+                <p className="text-sm text-muted-foreground">No messages yet</p>
+                <p className="text-xs text-muted-foreground mt-1">Use this channel to coordinate your team during the inspection</p>
+              </div>
+            ) : (
+              chatMessages
+                .filter(m => chatRoom === "all" || m.room === chatRoom || m.room === "all")
+                .map(m => {
+                  const typeConfig: Record<string, { label: string; color: string; icon: any }> = {
+                    general: { label: "General", color: "bg-muted text-muted-foreground", icon: MessageCircle },
+                    sme_call: { label: "SME Call", color: "bg-blue-100 text-blue-700", icon: AtSign },
+                    clarification: { label: "Clarification", color: "bg-purple-100 text-purple-700", icon: Info },
+                    urgent: { label: "Urgent", color: "bg-red-100 text-red-700", icon: Flame },
+                  };
+                  const cfg = typeConfig[m.message_type] ?? typeConfig.general;
+                  const MsgIcon = cfg.icon;
+                  const isConverted = !!m.converted_to_request_id;
+                  const isConverting = convertingMsg === m.id;
+
+                  return (
+                    <div key={m.id} className={`group flex gap-3 px-3 py-2.5 rounded-xl hover:bg-muted/40 transition-colors ${
+                      m.message_type === "urgent" ? "bg-red-50/50 border border-red-100" : ""
+                    }`}>
+                      <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <span className="text-[10px] font-bold text-primary">{m.sender_name.slice(0, 2).toUpperCase()}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-semibold">{m.sender_name}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${cfg.color}`}>
+                            {cfg.label}
+                          </span>
+                          {m.room !== "all" && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                              #{m.room}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-muted-foreground ml-auto">
+                            {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        </div>
+                        <p className="text-sm mt-0.5 leading-relaxed">{m.content}</p>
+                        {isConverted ? (
+                          <span className="text-[10px] text-emerald-600 flex items-center gap-1 mt-1">
+                            <CheckCircle2 className="w-3 h-3" /> Converted to request
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => handleConvertToRequest(m.id)}
+                            disabled={isConverting}
+                            className="opacity-0 group-hover:opacity-100 text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1 mt-1 transition-opacity">
+                            {isConverting ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowUpRight className="w-3 h-3" />}
+                            {isConverting ? "Converting…" : "Convert to request"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Compose bar */}
+          <form onSubmit={handleSendChat} className="flex gap-2 items-end border rounded-xl p-3 bg-card">
+            <div className="flex-1 space-y-2">
+              <div className="flex gap-2">
+                <select value={chatRoom} onChange={e => setChatRoom(e.target.value)}
+                  className="text-xs border rounded-lg px-2 py-1.5 bg-background">
+                  <option value="all">All rooms</option>
+                  <option value="front">Front room</option>
+                  <option value="back">Back room</option>
+                  <option value="prep">Prep room</option>
+                </select>
+                <select value={chatType} onChange={e => setChatType(e.target.value)}
+                  className="text-xs border rounded-lg px-2 py-1.5 bg-background">
+                  <option value="general">General</option>
+                  <option value="sme_call">SME Call</option>
+                  <option value="clarification">Clarification</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </div>
+              <textarea
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendChat(e as any); } }}
+                placeholder="Message the team… (Enter to send, Shift+Enter for new line)"
+                rows={2}
+                className="w-full text-sm border-0 bg-transparent resize-none focus:outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+            <button type="submit" disabled={sendingChat || !chatInput.trim()}
+              className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 self-end">
+              {sendingChat ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            </button>
+          </form>
         </div>
       )}
 

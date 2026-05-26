@@ -7,6 +7,8 @@ export type WsEvent =
   | { type: "request_update"; inspection_id: string; request_id: string; status: string; fulfillment_progress: number }
   | { type: "scribe_note"; inspection_id: string; content: string; entry_type: string; author: string; timestamp: string }
   | { type: "sla_alert"; inspection_id: string; request_id: string; request_text: string; criticality: string }
+  | { type: "chat_message"; id: string; inspection_id: string; sender_id: string; sender_name: string; content: string; room: string; message_type: string; linked_request_id: string | null; linked_commitment_id: string | null; converted_to_request_id: string | null; created_at: string }
+  | { type: "request_created"; inspection_id: string; request_id: string; from_chat: boolean }
   | { type: "pong" };
 
 type Handler = (event: WsEvent) => void;

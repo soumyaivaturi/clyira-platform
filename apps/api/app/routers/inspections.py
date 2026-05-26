@@ -25,6 +25,7 @@ from app.models.inspection_delivery import InspectionDeliveryLog
 from app.models.inspection_inspector import InspectionInspector
 from app.models.inspection_request_document import InspectionRequestDocument
 from app.models.inspection_request_comment import InspectionRequestComment
+from app.models.inspection_message import InspectionMessage
 from app.models.user import User
 from app.models.base import generate_uuid
 
@@ -1460,6 +1461,160 @@ Be specific. Reference 21 CFR Part 211 or applicable regulations where relevant.
             "ai_risk_assessment": "Analysis unavailable.",
             "error": str(e),
         }
+
+
+# ── Backroom Chat ────────────────────────────────────────────────────────────────
+
+class ChatMessageCreate(BaseModel):
+    content: str
+    room: str = "all"           # all | front | back | prep
+    message_type: str = "general"  # general | sme_call | clarification | urgent
+    linked_request_id: Optional[str] = None
+    linked_commitment_id: Optional[str] = None
+
+
+@router.post("/{inspection_id}/chat", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def send_chat_message(
+    inspection_id: str,
+    data: ChatMessageCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    msg = InspectionMessage(
+        id=generate_uuid(),
+        inspection_id=inspection_id,
+        sender_id=current_user.id,
+        sender_name=current_user.full_name or current_user.email,
+        content=data.content.strip(),
+        room=data.room,
+        message_type=data.message_type,
+        linked_request_id=data.linked_request_id,
+        linked_commitment_id=data.linked_commitment_id,
+        is_internal=True,
+    )
+    db.add(msg)
+    await db.commit()
+    await db.refresh(msg)
+
+    payload = {
+        "id": msg.id,
+        "inspection_id": inspection_id,
+        "sender_id": msg.sender_id,
+        "sender_name": msg.sender_name,
+        "content": msg.content,
+        "room": msg.room,
+        "message_type": msg.message_type,
+        "linked_request_id": msg.linked_request_id,
+        "linked_commitment_id": msg.linked_commitment_id,
+        "converted_to_request_id": msg.converted_to_request_id,
+        "created_at": str(msg.created_at),
+    }
+    await ws_broadcast(inspection_id, {"type": "chat_message", **payload})
+    return payload
+
+
+@router.get("/{inspection_id}/chat", response_model=dict)
+async def list_chat_messages(
+    inspection_id: str,
+    room: Optional[str] = None,
+    limit: int = 200,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    filters = [InspectionMessage.inspection_id == inspection_id]
+    if room and room != "all":
+        from sqlalchemy import or_
+        filters.append(
+            or_(InspectionMessage.room == room, InspectionMessage.room == "all")
+        )
+
+    result = await db.execute(
+        select(InspectionMessage)
+        .where(*filters)
+        .order_by(InspectionMessage.created_at.asc())
+        .limit(limit)
+    )
+    messages = result.scalars().all()
+
+    return {
+        "inspection_id": inspection_id,
+        "messages": [
+            {
+                "id": m.id,
+                "sender_id": m.sender_id,
+                "sender_name": m.sender_name,
+                "content": m.content,
+                "room": m.room,
+                "message_type": m.message_type,
+                "linked_request_id": m.linked_request_id,
+                "linked_commitment_id": m.linked_commitment_id,
+                "converted_to_request_id": m.converted_to_request_id,
+                "created_at": str(m.created_at),
+            }
+            for m in messages
+        ],
+    }
+
+
+@router.post("/{inspection_id}/chat/{message_id}/convert", response_model=dict)
+async def convert_chat_to_request(
+    inspection_id: str,
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Promote a chat message to an InspectionRequest."""
+    insp = await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    msg_result = await db.execute(
+        select(InspectionMessage).where(
+            InspectionMessage.id == message_id,
+            InspectionMessage.inspection_id == inspection_id,
+        )
+    )
+    msg = msg_result.scalar_one_or_none()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.converted_to_request_id:
+        raise HTTPException(status_code=409, detail="Already converted")
+
+    # Count existing requests for sequential numbering
+    count_res = await db.execute(
+        select(func.count()).select_from(InspectionRequest)
+        .where(InspectionRequest.inspection_id == inspection_id)
+    )
+    req_count = count_res.scalar_one() or 0
+
+    new_req = InspectionRequest(
+        id=generate_uuid(),
+        inspection_id=inspection_id,
+        request_number=req_count + 1,
+        request_text=msg.content,
+        criticality="medium",
+        category="question",
+        assigned_to=current_user.id,
+        assigned_to_name=current_user.full_name or current_user.email,
+    )
+    db.add(new_req)
+
+    msg.converted_to_request_id = new_req.id
+    insp.total_requests = (insp.total_requests or 0) + 1
+
+    await db.commit()
+    await db.refresh(new_req)
+
+    await ws_broadcast(inspection_id, {
+        "type": "request_created",
+        "inspection_id": inspection_id,
+        "request_id": new_req.id,
+        "from_chat": True,
+    })
+
+    return {"request_id": new_req.id, "request_number": new_req.request_number}
 
 
 # ── WebSocket connection manager ─────────────────────────────────────────────────

@@ -272,4 +272,14 @@ export const inspectionsApi = {
   // Inspector briefing
   briefInspector: (inspectionId: string, inspectorId: string) =>
     api.post(`/inspections/${inspectionId}/inspectors/${inspectorId}/brief`, {}, { timeout: 90000 }),
+
+  // Backroom chat
+  sendMessage: (id: string, data: {
+    content: string; room?: string; message_type?: string;
+    linked_request_id?: string; linked_commitment_id?: string;
+  }) => api.post(`/inspections/${id}/chat`, data),
+  listMessages: (id: string, room?: string) =>
+    api.get(`/inspections/${id}/chat`, { params: room ? { room } : {} }),
+  convertMessageToRequest: (id: string, messageId: string) =>
+    api.post(`/inspections/${id}/chat/${messageId}/convert`),
 };
