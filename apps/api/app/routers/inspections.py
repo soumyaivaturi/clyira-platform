@@ -26,6 +26,7 @@ from app.models.inspection_inspector import InspectionInspector
 from app.models.inspection_request_document import InspectionRequestDocument
 from app.models.inspection_request_comment import InspectionRequestComment
 from app.models.inspection_message import InspectionMessage
+from app.models.inspection_potential_finding import InspectionPotentialFinding
 from app.models.user import User
 from app.models.base import generate_uuid
 
@@ -1461,6 +1462,308 @@ Be specific. Reference 21 CFR Part 211 or applicable regulations where relevant.
             "ai_risk_assessment": "Analysis unavailable.",
             "error": str(e),
         }
+
+
+# ── Potential Findings ───────────────────────────────────────────────────────────
+
+class PotentialFindingCreate(BaseModel):
+    title: str
+    inspector_framing: Optional[str] = None
+    system_area: Optional[str] = None
+    cfr_citations: list[str] = []
+    confidence: str = "medium"
+    defense_summary: Optional[str] = None
+    linked_request_ids: list[str] = []
+    linked_document_ids: list[str] = []
+
+
+class PotentialFindingUpdate(BaseModel):
+    title: Optional[str] = None
+    inspector_framing: Optional[str] = None
+    system_area: Optional[str] = None
+    cfr_citations: Optional[list[str]] = None
+    confidence: Optional[str] = None
+    status: Optional[str] = None
+    defense_summary: Optional[str] = None
+    linked_request_ids: Optional[list[str]] = None
+    linked_document_ids: Optional[list[str]] = None
+
+
+def _pf_out(pf: InspectionPotentialFinding) -> dict:
+    return {
+        "id": pf.id,
+        "inspection_id": pf.inspection_id,
+        "title": pf.title,
+        "inspector_framing": pf.inspector_framing,
+        "system_area": pf.system_area,
+        "cfr_citations": pf.cfr_citations or [],
+        "confidence": pf.confidence,
+        "status": pf.status,
+        "defense_summary": pf.defense_summary,
+        "linked_request_ids": pf.linked_request_ids or [],
+        "linked_document_ids": pf.linked_document_ids or [],
+        "qa_reviewed": pf.qa_reviewed,
+        "qa_reviewed_by": pf.qa_reviewed_by,
+        "qa_reviewed_at": pf.qa_reviewed_at,
+        "ai_generated": pf.ai_generated,
+        "source": pf.source,
+        "created_at": str(pf.created_at),
+    }
+
+
+@router.post("/{inspection_id}/potential-findings", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def create_potential_finding(
+    inspection_id: str,
+    data: PotentialFindingCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    pf = InspectionPotentialFinding(
+        id=generate_uuid(),
+        inspection_id=inspection_id,
+        created_by=current_user.id,
+        title=data.title,
+        inspector_framing=data.inspector_framing,
+        system_area=data.system_area,
+        cfr_citations=data.cfr_citations,
+        confidence=data.confidence,
+        defense_summary=data.defense_summary,
+        linked_request_ids=data.linked_request_ids,
+        linked_document_ids=data.linked_document_ids,
+        source="manual",
+    )
+    db.add(pf)
+    await db.commit()
+    await db.refresh(pf)
+
+    out = _pf_out(pf)
+    await ws_broadcast(inspection_id, {"type": "potential_finding_added", **out})
+    return out
+
+
+@router.get("/{inspection_id}/potential-findings", response_model=dict)
+async def list_potential_findings(
+    inspection_id: str,
+    status_filter: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    filters = [InspectionPotentialFinding.inspection_id == inspection_id]
+    if status_filter:
+        filters.append(InspectionPotentialFinding.status == status_filter)
+
+    result = await db.execute(
+        select(InspectionPotentialFinding)
+        .where(*filters)
+        .order_by(InspectionPotentialFinding.created_at.desc())
+    )
+    findings = result.scalars().all()
+    return {"inspection_id": inspection_id, "findings": [_pf_out(f) for f in findings]}
+
+
+@router.patch("/{inspection_id}/potential-findings/{finding_id}", response_model=dict)
+async def update_potential_finding(
+    inspection_id: str,
+    finding_id: str,
+    data: PotentialFindingUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    result = await db.execute(
+        select(InspectionPotentialFinding).where(
+            InspectionPotentialFinding.id == finding_id,
+            InspectionPotentialFinding.inspection_id == inspection_id,
+        )
+    )
+    pf = result.scalar_one_or_none()
+    if not pf:
+        raise HTTPException(status_code=404, detail="Potential finding not found")
+
+    for field, val in data.model_dump(exclude_none=True).items():
+        setattr(pf, field, val)
+
+    await db.commit()
+    await db.refresh(pf)
+
+    out = _pf_out(pf)
+    await ws_broadcast(inspection_id, {"type": "potential_finding_updated", **out})
+    return out
+
+
+@router.post("/{inspection_id}/potential-findings/{finding_id}/qa-review", response_model=dict)
+async def qa_review_finding(
+    inspection_id: str,
+    finding_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    result = await db.execute(
+        select(InspectionPotentialFinding).where(
+            InspectionPotentialFinding.id == finding_id,
+            InspectionPotentialFinding.inspection_id == inspection_id,
+        )
+    )
+    pf = result.scalar_one_or_none()
+    if not pf:
+        raise HTTPException(status_code=404, detail="Potential finding not found")
+
+    pf.qa_reviewed = not pf.qa_reviewed
+    pf.qa_reviewed_by = current_user.id if pf.qa_reviewed else None
+    pf.qa_reviewed_at = datetime.utcnow().isoformat() if pf.qa_reviewed else None
+    await db.commit()
+    await db.refresh(pf)
+    return _pf_out(pf)
+
+
+@router.delete("/{inspection_id}/potential-findings/{finding_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_potential_finding(
+    inspection_id: str,
+    finding_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionPotentialFinding).where(
+            InspectionPotentialFinding.id == finding_id,
+            InspectionPotentialFinding.inspection_id == inspection_id,
+        )
+    )
+    pf = result.scalar_one_or_none()
+    if pf:
+        await db.delete(pf)
+        await db.commit()
+
+
+@router.post("/{inspection_id}/potential-findings/ai-scan", response_model=dict)
+async def ai_scan_for_findings(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    AI scans all open requests + scribe notes for the inspection and identifies
+    patterns that suggest the inspector is building toward a 483 observation.
+    Returns a list of potential findings to review and accept/dismiss.
+    """
+    from app.engines.llm_engine import _call_llm, _llm_available
+    import json, re
+
+    insp = await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    # Gather context: open requests and recent scribe notes
+    req_result = await db.execute(
+        select(InspectionRequest)
+        .where(InspectionRequest.inspection_id == inspection_id)
+        .order_by(InspectionRequest.created_at.asc())
+        .limit(50)
+    )
+    requests = req_result.scalars().all()
+
+    log_result = await db.execute(
+        select(InspectionLog)
+        .where(InspectionLog.inspection_id == inspection_id)
+        .order_by(InspectionLog.created_at.desc())
+        .limit(30)
+    )
+    log_entries = log_result.scalars().all()
+
+    if not requests and not log_entries:
+        return {"findings": [], "message": "No requests or scribe notes to analyze yet."}
+
+    req_context = "\n".join(
+        f"REQ-{r.request_number or '?'} [{r.criticality}] {r.request_text}"
+        for r in requests
+    )
+    log_context = "\n".join(
+        f"[{e.entry_type}] {e.content}"
+        for e in log_entries
+    ) if log_entries else "No scribe notes yet."
+
+    prompt = f"""You are an experienced FDA inspection host with 20 years of regulatory experience.
+
+Analyze the following inspection data and identify potential 483 observations the inspector may be building toward.
+
+INSPECTION: {insp.title}
+AGENCY: {insp.agency or "FDA"}
+
+INSPECTOR REQUESTS:
+{req_context}
+
+SCRIBE NOTES:
+{log_context}
+
+Based on patterns in these requests and observations, identify up to 5 potential 483 findings the inspector appears to be building toward.
+
+For each potential finding, respond with valid JSON array:
+[
+  {{
+    "title": "Short descriptive title (max 60 chars)",
+    "inspector_framing": "How inspector would write this in a 483 observation (1-2 sentences, formal regulatory language)",
+    "system_area": "Regulatory system area (e.g. Batch Records, Sterility Assurance, Equipment Qualification)",
+    "cfr_citations": ["21 CFR 211.XX", ...],
+    "confidence": "low|medium|high|certain",
+    "defense_summary": "Key defense points and documents that rebut this finding",
+    "linked_request_numbers": [1, 3, 5]
+  }}
+]
+
+Only return the JSON array. If no patterns suggest a 483, return [].
+"""
+
+    if not _llm_available():
+        return {"findings": [], "message": "LLM not available. Configure GROQ_API_KEY or GEMINI_API_KEY."}
+
+    raw = await _call_llm(prompt, max_tokens=2000)
+
+    # Parse JSON from response
+    try:
+        match = re.search(r'\[.*\]', raw, re.DOTALL)
+        if not match:
+            return {"findings": [], "message": "AI did not return parseable findings."}
+        items = json.loads(match.group())
+    except Exception:
+        return {"findings": [], "message": "AI response could not be parsed."}
+
+    # Build request number → id map
+    req_num_map = {r.request_number: r.id for r in requests if r.request_number}
+
+    # Persist findings and return
+    created = []
+    for item in items[:5]:
+        linked_ids = [req_num_map[n] for n in item.get("linked_request_numbers", []) if n in req_num_map]
+        pf = InspectionPotentialFinding(
+            id=generate_uuid(),
+            inspection_id=inspection_id,
+            created_by=current_user.id,
+            title=item.get("title", "Untitled Finding"),
+            inspector_framing=item.get("inspector_framing"),
+            system_area=item.get("system_area"),
+            cfr_citations=item.get("cfr_citations", []),
+            confidence=item.get("confidence", "medium"),
+            defense_summary=item.get("defense_summary"),
+            linked_request_ids=linked_ids,
+            ai_generated=True,
+            source="ai_scan",
+        )
+        db.add(pf)
+        created.append(pf)
+
+    await db.commit()
+    for pf in created:
+        await db.refresh(pf)
+
+    out = [_pf_out(pf) for pf in created]
+    await ws_broadcast(inspection_id, {"type": "ai_scan_complete", "inspection_id": inspection_id, "count": len(out)})
+    return {"findings": out, "count": len(out)}
 
 
 # ── Backroom Chat ────────────────────────────────────────────────────────────────

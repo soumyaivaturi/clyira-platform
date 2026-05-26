@@ -9,6 +9,9 @@ export type WsEvent =
   | { type: "sla_alert"; inspection_id: string; request_id: string; request_text: string; criticality: string }
   | { type: "chat_message"; id: string; inspection_id: string; sender_id: string; sender_name: string; content: string; room: string; message_type: string; linked_request_id: string | null; linked_commitment_id: string | null; converted_to_request_id: string | null; created_at: string }
   | { type: "request_created"; inspection_id: string; request_id: string; from_chat: boolean }
+  | { type: "potential_finding_added"; id: string; inspection_id: string; [key: string]: unknown }
+  | { type: "potential_finding_updated"; id: string; inspection_id: string; [key: string]: unknown }
+  | { type: "ai_scan_complete"; inspection_id: string; count: number }
   | { type: "pong" };
 
 type Handler = (event: WsEvent) => void;

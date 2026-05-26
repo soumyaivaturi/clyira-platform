@@ -123,6 +123,25 @@ interface Comment {
   created_at: string;
 }
 
+interface PotentialFinding {
+  id: string;
+  title: string;
+  inspector_framing: string | null;
+  system_area: string | null;
+  cfr_citations: string[];
+  confidence: string;
+  status: string;
+  defense_summary: string | null;
+  linked_request_ids: string[];
+  linked_document_ids: string[];
+  qa_reviewed: boolean;
+  qa_reviewed_by: string | null;
+  qa_reviewed_at: string | null;
+  ai_generated: boolean;
+  source: string;
+  created_at: string;
+}
+
 interface ChatMessage {
   id: string;
   sender_id: string;
@@ -887,7 +906,7 @@ export default function WarRoomPage() {
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"requests" | "chat" | "people" | "observations" | "commitments" | "binder" | "intel" | "scribe" | "closing">("requests");
+  const [tab, setTab] = useState<"requests" | "findings" | "chat" | "people" | "observations" | "commitments" | "binder" | "intel" | "scribe" | "closing">("requests");
   const [showAddRequest, setShowAddRequest] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<InspRequest | null>(null);
   const [scribeText, setScribeText] = useState("");
@@ -923,6 +942,16 @@ export default function WarRoomPage() {
   const [briefingInspector, setBriefingInspector] = useState<string | null>(null);
   const [expandedBrief, setExpandedBrief] = useState<string | null>(null);
   const [wsToasts, setWsToasts] = useState<{ id: string; message: string; type: string }[]>([]);
+
+  // Potential findings state
+  const [potentialFindings, setPotentialFindings] = useState<PotentialFinding[]>([]);
+  const [showAddFinding, setShowAddFinding] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [newFinding, setNewFinding] = useState({ title: "", inspector_framing: "", system_area: "", cfr_citations: "", confidence: "medium", defense_summary: "" });
+  const [savingFinding, setSavingFinding] = useState(false);
+  const [expandedFinding, setExpandedFinding] = useState<string | null>(null);
+  const [editingFinding, setEditingFinding] = useState<string | null>(null);
+  const [editFindingData, setEditFindingData] = useState<Partial<PotentialFinding>>({});
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -968,6 +997,9 @@ export default function WarRoomPage() {
       } else if (t === "chat") {
         const r = await inspectionsApi.listMessages(id);
         setChatMessages(r.data.messages ?? []);
+      } else if (t === "findings") {
+        const r = await inspectionsApi.listPotentialFindings(id);
+        setPotentialFindings(r.data.findings ?? []);
       }
     } catch { /* tab data missing is non-fatal */ }
   }, [id]);
@@ -999,6 +1031,16 @@ export default function WarRoomPage() {
     } else if (event.type === "request_created" && event.from_chat) {
       loadAllRef.current();
       addToast("Chat message converted to request", "info");
+    } else if (event.type === "potential_finding_added") {
+      setPotentialFindings(prev => {
+        if (prev.some(f => f.id === (event as any).id)) return prev;
+        return [event as unknown as PotentialFinding, ...prev];
+      });
+    } else if (event.type === "potential_finding_updated") {
+      setPotentialFindings(prev => prev.map(f => f.id === (event as any).id ? event as unknown as PotentialFinding : f));
+    } else if (event.type === "ai_scan_complete") {
+      loadTabData("findings");
+      addToast(`AI scan complete — ${(event as any).count} potential finding${(event as any).count !== 1 ? "s" : ""} identified`, "info");
     }
   }, [addToast]));
 
@@ -1036,6 +1078,54 @@ export default function WarRoomPage() {
       setChatInput("");
     } catch { /* ignore — WS will not fire but REST response is ok */ }
     finally { setSendingChat(false); }
+  };
+
+  const handleAiScan = async () => {
+    setScanning(true);
+    try {
+      await inspectionsApi.aiScanFindings(id);
+      await loadTabData("findings");
+    } finally { setScanning(false); }
+  };
+
+  const handleSaveFinding = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newFinding.title.trim()) return;
+    setSavingFinding(true);
+    try {
+      const res = await inspectionsApi.createPotentialFinding(id, {
+        ...newFinding,
+        cfr_citations: newFinding.cfr_citations.split(",").map(s => s.trim()).filter(Boolean),
+      });
+      setPotentialFindings(prev => [res.data, ...prev]);
+      setNewFinding({ title: "", inspector_framing: "", system_area: "", cfr_citations: "", confidence: "medium", defense_summary: "" });
+      setShowAddFinding(false);
+    } finally { setSavingFinding(false); }
+  };
+
+  const handleQaFinding = async (fid: string) => {
+    const res = await inspectionsApi.qaPotentialFinding(id, fid);
+    setPotentialFindings(prev => prev.map(f => f.id === fid ? res.data : f));
+  };
+
+  const handleUpdateFinding = async (fid: string) => {
+    const payload: Parameters<typeof inspectionsApi.updatePotentialFinding>[2] = {};
+    if (editFindingData.title !== undefined) payload.title = editFindingData.title;
+    if (editFindingData.inspector_framing != null) payload.inspector_framing = editFindingData.inspector_framing;
+    if (editFindingData.defense_summary != null) payload.defense_summary = editFindingData.defense_summary;
+    if (editFindingData.system_area != null) payload.system_area = editFindingData.system_area;
+    if (editFindingData.confidence !== undefined) payload.confidence = editFindingData.confidence;
+    if (editFindingData.cfr_citations !== undefined) payload.cfr_citations = editFindingData.cfr_citations;
+    if (editFindingData.linked_request_ids !== undefined) payload.linked_request_ids = editFindingData.linked_request_ids;
+    const res = await inspectionsApi.updatePotentialFinding(id, fid, payload);
+    setPotentialFindings(prev => prev.map(f => f.id === fid ? res.data : f));
+    setEditingFinding(null);
+  };
+
+  const handleDeleteFinding = async (fid: string) => {
+    if (!confirm("Remove this potential finding?")) return;
+    await inspectionsApi.deletePotentialFinding(id, fid);
+    setPotentialFindings(prev => prev.filter(f => f.id !== fid));
   };
 
   const handleConvertToRequest = async (msgId: string) => {
@@ -1141,6 +1231,7 @@ export default function WarRoomPage() {
 
   const TABS = [
     { key: "requests", label: `Requests${openRequests.length ? ` (${openRequests.length})` : ""}`, icon: MessageSquare },
+    { key: "findings", label: `Findings${potentialFindings.filter(f => f.status === "tracking").length ? ` (${potentialFindings.filter(f => f.status === "tracking").length})` : ""}`, icon: TriangleAlert },
     { key: "chat", label: `Chat${chatMessages.length ? ` (${chatMessages.length})` : ""}`, icon: Hash },
     { key: "people", label: "People", icon: Users },
     { key: "observations", label: "483s", icon: Shield },
@@ -1353,6 +1444,304 @@ export default function WarRoomPage() {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Potential Findings Tab ────────────────────────────────────────────── */}
+      {tab === "findings" && (
+        <div className="space-y-4">
+          {/* Header */}
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h2 className="font-semibold flex items-center gap-2">
+                <TriangleAlert className="w-4 h-4 text-amber-500" />
+                Potential 483 Tracker
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Track patterns the inspector may be building toward. Internal only — never shown to the inspector.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleAiScan}
+                disabled={scanning}
+                className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent disabled:opacity-50">
+                {scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-primary" />}
+                {scanning ? "Scanning…" : "AI Scan"}
+              </button>
+              <button
+                onClick={() => setShowAddFinding(f => !f)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+                <Plus className="w-3.5 h-3.5" />
+                Add Finding
+              </button>
+            </div>
+          </div>
+
+          {/* Add finding form */}
+          {showAddFinding && (
+            <form onSubmit={handleSaveFinding} className="bg-card border rounded-xl p-5 space-y-3">
+              <h3 className="text-sm font-semibold">New Potential Finding</h3>
+              <input
+                placeholder="Title (e.g. Batch Record Completeness)"
+                value={newFinding.title}
+                onChange={e => setNewFinding(f => ({ ...f, title: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  placeholder="System area (e.g. Batch Records)"
+                  value={newFinding.system_area}
+                  onChange={e => setNewFinding(f => ({ ...f, system_area: e.target.value }))}
+                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                />
+                <select
+                  value={newFinding.confidence}
+                  onChange={e => setNewFinding(f => ({ ...f, confidence: e.target.value }))}
+                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary">
+                  <option value="low">Low confidence</option>
+                  <option value="medium">Medium confidence</option>
+                  <option value="high">High confidence</option>
+                  <option value="certain">Certain</option>
+                </select>
+              </div>
+              <textarea
+                placeholder="How inspector would write this in a 483 (optional)"
+                value={newFinding.inspector_framing}
+                onChange={e => setNewFinding(f => ({ ...f, inspector_framing: e.target.value }))}
+                rows={2}
+                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
+              />
+              <textarea
+                placeholder="Internal defense notes"
+                value={newFinding.defense_summary}
+                onChange={e => setNewFinding(f => ({ ...f, defense_summary: e.target.value }))}
+                rows={2}
+                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
+              />
+              <input
+                placeholder="CFR citations (comma-separated, e.g. 21 CFR 211.68, 21 CFR 211.100)"
+                value={newFinding.cfr_citations}
+                onChange={e => setNewFinding(f => ({ ...f, cfr_citations: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              />
+              <div className="flex gap-2 justify-end">
+                <button type="button" onClick={() => setShowAddFinding(false)}
+                  className="px-3 py-2 text-sm border rounded-lg hover:bg-accent">Cancel</button>
+                <button type="submit" disabled={savingFinding}
+                  className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-60">
+                  {savingFinding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  {savingFinding ? "Saving…" : "Save Finding"}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Finding cards */}
+          {potentialFindings.length === 0 ? (
+            <div className="bg-card border rounded-xl py-12 text-center">
+              <TriangleAlert className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
+              <p className="text-sm text-muted-foreground">No potential findings tracked yet</p>
+              <p className="text-xs text-muted-foreground mt-1">Add manually or run an AI scan to identify patterns from inspector requests</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {potentialFindings.map(pf => {
+                const confColors: Record<string, string> = {
+                  low: "bg-blue-50 border-blue-200 text-blue-700",
+                  medium: "bg-amber-50 border-amber-200 text-amber-700",
+                  high: "bg-orange-50 border-orange-200 text-orange-700",
+                  certain: "bg-red-50 border-red-200 text-red-700",
+                };
+                const statusColors: Record<string, string> = {
+                  tracking: "bg-amber-100 text-amber-800",
+                  responded: "bg-blue-100 text-blue-800",
+                  resolved: "bg-emerald-100 text-emerald-800",
+                  escalated_to_483: "bg-red-100 text-red-800",
+                };
+                const confColor = confColors[pf.confidence] ?? confColors.medium;
+                const isExpanded = expandedFinding === pf.id;
+                const isEditing = editingFinding === pf.id;
+
+                return (
+                  <div key={pf.id} className={`bg-card border rounded-xl overflow-hidden ${
+                    pf.confidence === "certain" ? "border-red-200" : pf.confidence === "high" ? "border-orange-200" : ""
+                  }`}>
+                    {/* Card header */}
+                    <div className="flex items-start gap-3 p-4">
+                      <div className={`mt-0.5 px-2 py-0.5 rounded border text-xs font-semibold flex-shrink-0 ${confColor}`}>
+                        {pf.confidence.charAt(0).toUpperCase() + pf.confidence.slice(1)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-semibold">{pf.title}</p>
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              {pf.system_area && (
+                                <span className="text-[10px] px-1.5 py-0.5 bg-muted rounded text-muted-foreground">{pf.system_area}</span>
+                              )}
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${statusColors[pf.status] ?? statusColors.tracking}`}>
+                                {pf.status.replace(/_/g, " ")}
+                              </span>
+                              {pf.ai_generated && (
+                                <span className="text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded flex items-center gap-0.5">
+                                  <Zap className="w-2.5 h-2.5" /> AI
+                                </span>
+                              )}
+                              {pf.qa_reviewed && (
+                                <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded flex items-center gap-0.5">
+                                  <BadgeCheck className="w-2.5 h-2.5" /> QA Reviewed
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button
+                              onClick={() => handleQaFinding(pf.id)}
+                              title={pf.qa_reviewed ? "Remove QA review" : "Mark QA reviewed"}
+                              className={`p-1.5 rounded-lg text-xs border transition-colors ${
+                                pf.qa_reviewed
+                                  ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                  : "border-border text-muted-foreground hover:text-emerald-600 hover:border-emerald-300"
+                              }`}>
+                              <BadgeCheck className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (isEditing) { setEditingFinding(null); return; }
+                                setEditingFinding(pf.id);
+                                setEditFindingData({ ...pf, cfr_citations: pf.cfr_citations });
+                              }}
+                              className="p-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setExpandedFinding(isExpanded ? null : pf.id)}
+                              className="p-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+                              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                            </button>
+                            <button onClick={() => handleDeleteFinding(pf.id)}
+                              className="p-1.5 rounded-lg border border-border text-muted-foreground hover:text-red-500 transition-colors">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Expanded detail */}
+                    {isExpanded && !isEditing && (
+                      <div className="border-t px-4 py-3 space-y-3 bg-muted/20">
+                        {pf.inspector_framing && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">How Inspector Would Write It</p>
+                            <p className="text-xs text-muted-foreground italic border-l-2 border-amber-300 pl-3">{pf.inspector_framing}</p>
+                          </div>
+                        )}
+                        {pf.defense_summary && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Internal Defense</p>
+                            <p className="text-xs">{pf.defense_summary}</p>
+                          </div>
+                        )}
+                        {pf.cfr_citations?.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">CFR Citations</p>
+                            <div className="flex flex-wrap gap-1">
+                              {pf.cfr_citations.map(c => (
+                                <span key={c} className="text-[10px] px-2 py-0.5 bg-primary/10 border border-primary/20 text-primary rounded font-mono">{c}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {pf.linked_request_ids?.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+                              Linked Requests ({pf.linked_request_ids.length})
+                            </p>
+                            <div className="flex flex-wrap gap-1">
+                              {pf.linked_request_ids.map(rid => {
+                                const req = (inspection?.requests ?? []).find(r => r.id === rid);
+                                return (
+                                  <span key={rid} className="text-[10px] px-2 py-0.5 bg-amber-50 border border-amber-200 text-amber-700 rounded">
+                                    {req ? `REQ-${String(req.request_number).padStart(3, "0")}` : rid.slice(0, 8)}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        {/* Status change */}
+                        <div className="flex gap-2 pt-1">
+                          {["tracking", "responded", "resolved", "escalated_to_483"].map(s => (
+                            <button key={s} onClick={() => inspectionsApi.updatePotentialFinding(id, pf.id, { status: s }).then(r => setPotentialFindings(prev => prev.map(f => f.id === pf.id ? r.data : f)))}
+                              className={`text-[10px] px-2 py-1 rounded border font-medium transition-colors ${
+                                pf.status === s
+                                  ? "bg-primary text-primary-foreground border-primary"
+                                  : "border-border text-muted-foreground hover:text-foreground hover:bg-accent"
+                              }`}>
+                              {s.replace(/_/g, " ")}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Edit form */}
+                    {isEditing && (
+                      <div className="border-t px-4 py-3 space-y-3 bg-muted/20">
+                        <textarea
+                          placeholder="How inspector would write this"
+                          value={(editFindingData.inspector_framing as string) ?? ""}
+                          onChange={e => setEditFindingData(d => ({ ...d, inspector_framing: e.target.value }))}
+                          rows={2}
+                          className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none resize-none"
+                        />
+                        <textarea
+                          placeholder="Internal defense notes"
+                          value={(editFindingData.defense_summary as string) ?? ""}
+                          onChange={e => setEditFindingData(d => ({ ...d, defense_summary: e.target.value }))}
+                          rows={2}
+                          className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none resize-none"
+                        />
+                        <div className="grid grid-cols-2 gap-3">
+                          <input
+                            placeholder="System area"
+                            value={(editFindingData.system_area as string) ?? ""}
+                            onChange={e => setEditFindingData(d => ({ ...d, system_area: e.target.value }))}
+                            className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none"
+                          />
+                          <select
+                            value={(editFindingData.confidence as string) ?? "medium"}
+                            onChange={e => setEditFindingData(d => ({ ...d, confidence: e.target.value }))}
+                            className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none">
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="certain">Certain</option>
+                          </select>
+                        </div>
+                        <input
+                          placeholder="CFR citations (comma-separated)"
+                          value={Array.isArray(editFindingData.cfr_citations) ? editFindingData.cfr_citations.join(", ") : ""}
+                          onChange={e => setEditFindingData(d => ({ ...d, cfr_citations: e.target.value.split(",").map(s => s.trim()).filter(Boolean) }))}
+                          className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none"
+                        />
+                        <div className="flex gap-2 justify-end">
+                          <button type="button" onClick={() => setEditingFinding(null)}
+                            className="px-3 py-1.5 text-sm border rounded-lg hover:bg-accent">Cancel</button>
+                          <button type="button" onClick={() => handleUpdateFinding(pf.id)}
+                            className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90">
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

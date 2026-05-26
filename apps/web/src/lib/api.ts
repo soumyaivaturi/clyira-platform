@@ -273,6 +273,26 @@ export const inspectionsApi = {
   briefInspector: (inspectionId: string, inspectorId: string) =>
     api.post(`/inspections/${inspectionId}/inspectors/${inspectorId}/brief`, {}, { timeout: 90000 }),
 
+  // Potential findings tracker
+  listPotentialFindings: (id: string, status?: string) =>
+    api.get(`/inspections/${id}/potential-findings`, { params: status ? { status_filter: status } : {} }),
+  createPotentialFinding: (id: string, data: {
+    title: string; inspector_framing?: string; system_area?: string;
+    cfr_citations?: string[]; confidence?: string; defense_summary?: string;
+    linked_request_ids?: string[];
+  }) => api.post(`/inspections/${id}/potential-findings`, data),
+  updatePotentialFinding: (id: string, fid: string, data: Partial<{
+    title: string; inspector_framing: string; system_area: string;
+    cfr_citations: string[]; confidence: string; status: string;
+    defense_summary: string; linked_request_ids: string[];
+  }>) => api.patch(`/inspections/${id}/potential-findings/${fid}`, data),
+  qaPotentialFinding: (id: string, fid: string) =>
+    api.post(`/inspections/${id}/potential-findings/${fid}/qa-review`),
+  deletePotentialFinding: (id: string, fid: string) =>
+    api.delete(`/inspections/${id}/potential-findings/${fid}`),
+  aiScanFindings: (id: string) =>
+    api.post(`/inspections/${id}/potential-findings/ai-scan`, {}, { timeout: 90000 }),
+
   // Backroom chat
   sendMessage: (id: string, data: {
     content: string; room?: string; message_type?: string;
