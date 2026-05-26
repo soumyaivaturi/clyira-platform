@@ -24,11 +24,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("users", sa.Column("failed_login_attempts", sa.Integer(), nullable=False, server_default="0"))
-    op.add_column("users", sa.Column("locked_until", sa.DateTime(), nullable=True))
-    op.add_column("users", sa.Column("force_password_change", sa.Boolean(), nullable=False, server_default="false"))
-    op.add_column("users", sa.Column("terms_accepted_at", sa.DateTime(), nullable=True))
-    op.add_column("users", sa.Column("password_changed_at", sa.DateTime(), nullable=True))
+    # Use ADD COLUMN IF NOT EXISTS so this is safe to run on a DB that already
+    # has these columns (e.g., if the migration is re-stamped and re-run).
+    op.execute(sa.text("ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0"))
+    op.execute(sa.text("ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP WITHOUT TIME ZONE"))
+    op.execute(sa.text("ALTER TABLE users ADD COLUMN IF NOT EXISTS force_password_change BOOLEAN NOT NULL DEFAULT FALSE"))
+    op.execute(sa.text("ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMP WITHOUT TIME ZONE"))
+    op.execute(sa.text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP WITHOUT TIME ZONE"))
 
 
 def downgrade() -> None:
