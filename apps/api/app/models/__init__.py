@@ -14,6 +14,9 @@ from app.models.inspection_request_document import InspectionRequestDocument
 from app.models.inspection_request_comment import InspectionRequestComment
 from app.models.inspection_message import InspectionMessage
 from app.models.inspection_potential_finding import InspectionPotentialFinding
+from app.models.inspection_evidence_package import InspectionEvidencePackage
+from app.models.inspection_sme import InspectionSME
+from app.models.inspection_capa import InspectionCAPA
 from app.models.evidence import EvidenceImport, EvidenceObject
 from app.models.audit import AuditLog
 from app.models.api_key import APIKey
@@ -42,6 +45,9 @@ __all__ = [
     "InspectionRequestComment",
     "InspectionMessage",
     "InspectionPotentialFinding",
+    "InspectionEvidencePackage",
+    "InspectionSME",
+    "InspectionCAPA",
     "EvidenceImport",
     "EvidenceObject",
     "AuditLog",

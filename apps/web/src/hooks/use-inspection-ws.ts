@@ -12,6 +12,9 @@ export type WsEvent =
   | { type: "potential_finding_added"; id: string; inspection_id: string; [key: string]: unknown }
   | { type: "potential_finding_updated"; id: string; inspection_id: string; [key: string]: unknown }
   | { type: "ai_scan_complete"; inspection_id: string; count: number }
+  | { type: "sme_update"; sme_id: string; name: string; availability?: string; qa_cleared?: boolean }
+  | { type: "package_qa_pending"; package_id: string; title: string }
+  | { type: "package_status_update"; package_id: string; status: string; title: string }
   | { type: "pong" };
 
 type Handler = (event: WsEvent) => void;

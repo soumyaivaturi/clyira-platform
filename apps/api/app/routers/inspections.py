@@ -27,6 +27,9 @@ from app.models.inspection_request_document import InspectionRequestDocument
 from app.models.inspection_request_comment import InspectionRequestComment
 from app.models.inspection_message import InspectionMessage
 from app.models.inspection_potential_finding import InspectionPotentialFinding
+from app.models.inspection_evidence_package import InspectionEvidencePackage
+from app.models.inspection_sme import InspectionSME
+from app.models.inspection_capa import InspectionCAPA
 from app.models.user import User
 from app.models.base import generate_uuid
 
@@ -60,6 +63,11 @@ def _request_out(r: InspectionRequest) -> dict:
         "request_text": r.request_text,
         "criticality": r.criticality,
         "category": r.category,
+        "request_type": r.request_type,
+        "request_category": r.request_category,
+        "regulatory_risk": r.regulatory_risk or "low",
+        "related_lot": r.related_lot,
+        "related_product": r.related_product,
         "inspector_name": r.inspector_name,
         "inspector_department": r.inspector_department,
         "location": r.location,
@@ -71,6 +79,9 @@ def _request_out(r: InspectionRequest) -> dict:
         "status": r.status,
         "fulfillment_progress": r.fulfillment_progress or 0,
         "response_text": r.response_text,
+        "qa_reviewed_at": r.qa_reviewed_at,
+        "qa_notes": r.qa_notes,
+        "released_at": r.released_at,
         "ai_talking_points": r.ai_talking_points or [],
         "ai_suggested_documents": r.ai_suggested_documents or [],
         "ai_risk_assessment": r.ai_risk_assessment,
@@ -92,6 +103,11 @@ class InspectionRequestCreate(BaseModel):
     request_text: str
     criticality: str = "medium"
     category: Optional[str] = "question"
+    request_type: Optional[str] = None
+    request_category: Optional[str] = None
+    regulatory_risk: str = "low"
+    related_lot: Optional[str] = None
+    related_product: Optional[str] = None
     inspector_name: Optional[str] = None
     inspector_department: Optional[str] = None
     location: Optional[str] = None
@@ -317,6 +333,11 @@ async def create_request(
         request_text=data.request_text,
         criticality=data.criticality,
         category=data.category or "question",
+        request_type=data.request_type,
+        request_category=data.request_category,
+        regulatory_risk=data.regulatory_risk,
+        related_lot=data.related_lot,
+        related_product=data.related_product,
         inspector_name=data.inspector_name,
         inspector_department=data.inspector_department,
         location=data.location,
@@ -1764,6 +1785,1042 @@ Only return the JSON array. If no patterns suggest a 483, return [].
     out = [_pf_out(pf) for pf in created]
     await ws_broadcast(inspection_id, {"type": "ai_scan_complete", "inspection_id": inspection_id, "count": len(out)})
     return {"findings": out, "count": len(out)}
+
+
+# ── Inspection Setup (Section 1 extended) ────────────────────────────────────────
+
+class InspectionSetupUpdate(BaseModel):
+    title: Optional[str] = None
+    agency: Optional[str] = None
+    inspection_type: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    sector: Optional[str] = None
+    products_in_scope: Optional[list[str]] = None
+    departments_in_scope: Optional[list[str]] = None
+    regulatory_frameworks: Optional[list[str]] = None
+    site_name: Optional[str] = None
+    mode: Optional[str] = None
+    inspection_scope: Optional[list[str]] = None
+    team_assignments: Optional[dict] = None
+    default_sla_settings: Optional[dict] = None
+
+
+@router.patch("/{inspection_id}/setup", response_model=dict)
+async def update_inspection_setup(
+    inspection_id: str,
+    data: InspectionSetupUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    insp = await _verify_inspection(db, inspection_id, current_user.company_id)
+    for field, val in data.model_dump(exclude_none=True).items():
+        setattr(insp, field, val)
+    await db.commit()
+    await db.refresh(insp)
+    return _inspection_out(insp)
+
+
+# ── QA Release Gate (Section 7) ───────────────────────────────────────────────────
+
+class QAReviewAction(BaseModel):
+    action: str   # approve | reject | release
+    notes: Optional[str] = None
+
+
+@router.post("/{inspection_id}/requests/{request_id}/qa", response_model=dict)
+async def qa_action_request(
+    inspection_id: str,
+    request_id: str,
+    data: QAReviewAction,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """QA approve / reject / release a request. Gate before documents reach the inspector."""
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    req_result = await db.execute(
+        select(InspectionRequest).where(
+            InspectionRequest.id == request_id,
+            InspectionRequest.inspection_id == inspection_id,
+        )
+    )
+    req = req_result.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    now = datetime.utcnow().isoformat()
+    if data.action == "send_to_qa":
+        req.status = "qa_review"
+    elif data.action == "approve":
+        req.status = "approved"
+        req.qa_reviewed_by = current_user.id
+        req.qa_reviewed_at = now
+        req.qa_notes = data.notes
+    elif data.action == "reject":
+        req.status = "in_progress"
+        req.qa_reviewed_by = current_user.id
+        req.qa_reviewed_at = now
+        req.qa_notes = data.notes
+    elif data.action == "release":
+        if req.status not in ("approved", "qa_review"):
+            raise HTTPException(status_code=400, detail="Request must be QA-approved before release")
+        req.status = "released"
+        req.released_by = current_user.id
+        req.released_at = now
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {data.action}")
+
+    await db.commit()
+    await db.refresh(req)
+    out = _request_out(req)
+    await ws_broadcast(inspection_id, {"type": "request_update", "inspection_id": inspection_id,
+                                        "request_id": req.id, "status": req.status,
+                                        "fulfillment_progress": req.fulfillment_progress})
+    return out
+
+
+# ── Evidence Package Builder (Section 6) ─────────────────────────────────────────
+
+class PackageCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    request_id: Optional[str] = None
+    legal_review_required: bool = False
+    dual_approval_required: bool = False
+
+
+class PackageUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    qa_notes: Optional[str] = None
+    release_notes: Optional[str] = None
+    legal_review_required: Optional[bool] = None
+    dual_approval_required: Optional[bool] = None
+
+
+def _pkg_out(pkg: InspectionEvidencePackage) -> dict:
+    return {
+        "id": pkg.id,
+        "inspection_id": pkg.inspection_id,
+        "request_id": pkg.request_id,
+        "title": pkg.title,
+        "description": pkg.description,
+        "status": pkg.status,
+        "documents": pkg.documents or [],
+        "package_risk": pkg.package_risk,
+        "completeness_status": pkg.completeness_status,
+        "owner_name": pkg.owner_name,
+        "qa_approver_name": pkg.qa_approver_name,
+        "qa_approved_at": pkg.qa_approved_at,
+        "qa_notes": pkg.qa_notes,
+        "qa_checks": pkg.qa_checks or {},
+        "released_by_name": pkg.released_by_name,
+        "released_at": pkg.released_at,
+        "release_notes": pkg.release_notes,
+        "legal_review_required": pkg.legal_review_required,
+        "dual_approval_required": pkg.dual_approval_required,
+        "created_at": str(pkg.created_at),
+    }
+
+
+@router.post("/{inspection_id}/packages", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def create_evidence_package(
+    inspection_id: str,
+    data: PackageCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    pkg = InspectionEvidencePackage(
+        id=generate_uuid(),
+        inspection_id=inspection_id,
+        request_id=data.request_id,
+        title=data.title,
+        description=data.description,
+        owner_id=current_user.id,
+        owner_name=current_user.full_name or current_user.email,
+        legal_review_required=data.legal_review_required,
+        dual_approval_required=data.dual_approval_required,
+    )
+    db.add(pkg)
+    await db.commit()
+    await db.refresh(pkg)
+    return _pkg_out(pkg)
+
+
+@router.get("/{inspection_id}/packages", response_model=dict)
+async def list_evidence_packages(
+    inspection_id: str,
+    request_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    filters = [InspectionEvidencePackage.inspection_id == inspection_id]
+    if request_id:
+        filters.append(InspectionEvidencePackage.request_id == request_id)
+    result = await db.execute(
+        select(InspectionEvidencePackage).where(*filters)
+        .order_by(InspectionEvidencePackage.created_at.desc())
+    )
+    pkgs = result.scalars().all()
+    return {"inspection_id": inspection_id, "packages": [_pkg_out(p) for p in pkgs]}
+
+
+@router.patch("/{inspection_id}/packages/{package_id}", response_model=dict)
+async def update_evidence_package(
+    inspection_id: str,
+    package_id: str,
+    data: PackageUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionEvidencePackage).where(
+            InspectionEvidencePackage.id == package_id,
+            InspectionEvidencePackage.inspection_id == inspection_id,
+        )
+    )
+    pkg = result.scalar_one_or_none()
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found")
+    for field, val in data.model_dump(exclude_none=True).items():
+        setattr(pkg, field, val)
+    await db.commit()
+    await db.refresh(pkg)
+    return _pkg_out(pkg)
+
+
+@router.post("/{inspection_id}/packages/{package_id}/documents", response_model=dict)
+async def add_document_to_package(
+    inspection_id: str,
+    package_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    filename: str = "",
+    document_id: Optional[str] = None,
+    version: Optional[str] = None,
+    approval_status: Optional[str] = None,
+    flags: Optional[dict] = None,
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionEvidencePackage).where(
+            InspectionEvidencePackage.id == package_id,
+            InspectionEvidencePackage.inspection_id == inspection_id,
+        )
+    )
+    pkg = result.scalar_one_or_none()
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found")
+
+    doc_entry = {
+        "id": generate_uuid(),
+        "filename": filename,
+        "document_id": document_id,
+        "version": version,
+        "approval_status": approval_status or "unknown",
+        "flags": flags or {},
+        "added_by": current_user.full_name or current_user.email,
+        "added_at": datetime.utcnow().isoformat(),
+    }
+    docs = list(pkg.documents or [])
+    docs.append(doc_entry)
+    pkg.documents = docs
+    pkg.completeness_status = "complete" if docs else "incomplete"
+    await db.commit()
+    await db.refresh(pkg)
+    return _pkg_out(pkg)
+
+
+@router.delete("/{inspection_id}/packages/{package_id}/documents/{doc_id}", response_model=dict)
+async def remove_document_from_package(
+    inspection_id: str,
+    package_id: str,
+    doc_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionEvidencePackage).where(
+            InspectionEvidencePackage.id == package_id,
+            InspectionEvidencePackage.inspection_id == inspection_id,
+        )
+    )
+    pkg = result.scalar_one_or_none()
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found")
+    pkg.documents = [d for d in (pkg.documents or []) if d.get("id") != doc_id]
+    await db.commit()
+    await db.refresh(pkg)
+    return _pkg_out(pkg)
+
+
+@router.post("/{inspection_id}/packages/{package_id}/submit-qa", response_model=dict)
+async def submit_package_for_qa(
+    inspection_id: str,
+    package_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionEvidencePackage).where(
+            InspectionEvidencePackage.id == package_id,
+            InspectionEvidencePackage.inspection_id == inspection_id,
+        )
+    )
+    pkg = result.scalar_one_or_none()
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found")
+    pkg.status = "qa_review"
+    await db.commit()
+    await db.refresh(pkg)
+    await ws_broadcast(inspection_id, {"type": "package_qa_pending", "package_id": package_id, "title": pkg.title})
+    return _pkg_out(pkg)
+
+
+class PackageQAAction(BaseModel):
+    action: str   # approve | reject | release
+    notes: Optional[str] = None
+    qa_checks: Optional[dict] = None
+
+
+@router.post("/{inspection_id}/packages/{package_id}/qa", response_model=dict)
+async def qa_action_package(
+    inspection_id: str,
+    package_id: str,
+    data: PackageQAAction,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionEvidencePackage).where(
+            InspectionEvidencePackage.id == package_id,
+            InspectionEvidencePackage.inspection_id == inspection_id,
+        )
+    )
+    pkg = result.scalar_one_or_none()
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found")
+
+    now = datetime.utcnow().isoformat()
+    if data.action == "approve":
+        pkg.status = "approved"
+        pkg.qa_approver_id = current_user.id
+        pkg.qa_approver_name = current_user.full_name or current_user.email
+        pkg.qa_approved_at = now
+        pkg.qa_notes = data.notes
+        if data.qa_checks:
+            pkg.qa_checks = data.qa_checks
+    elif data.action == "reject":
+        pkg.status = "returned"
+        pkg.qa_notes = data.notes
+    elif data.action == "release":
+        if pkg.status != "approved":
+            raise HTTPException(status_code=400, detail="Package must be QA-approved before release")
+        pkg.status = "released"
+        pkg.released_by_id = current_user.id
+        pkg.released_by_name = current_user.full_name or current_user.email
+        pkg.released_at = now
+        pkg.release_notes = data.notes
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {data.action}")
+
+    await db.commit()
+    await db.refresh(pkg)
+    await ws_broadcast(inspection_id, {"type": "package_status_update", "package_id": package_id,
+                                        "status": pkg.status, "title": pkg.title})
+    return _pkg_out(pkg)
+
+
+# ── SME Coach (Section 11) ────────────────────────────────────────────────────────
+
+class SMECreate(BaseModel):
+    name: str
+    title: Optional[str] = None
+    department: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    topics: list[str] = []
+    backup_for: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class SMEUpdate(BaseModel):
+    name: Optional[str] = None
+    title: Optional[str] = None
+    department: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    room: Optional[str] = None
+    availability: Optional[str] = None
+    topics: Optional[list[str]] = None
+    prep_status: Optional[str] = None
+    approved_talking_points: Optional[list[str]] = None
+    do_not_volunteer: Optional[list[str]] = None
+    do_not_speculate: Optional[list[str]] = None
+    escalation_triggers: Optional[list[str]] = None
+    likely_questions: Optional[list[dict]] = None
+    relevant_documents: Optional[list[str]] = None
+    known_weak_areas: Optional[str] = None
+    notes: Optional[str] = None
+
+
+def _sme_out(s: InspectionSME) -> dict:
+    return {
+        "id": s.id,
+        "inspection_id": s.inspection_id,
+        "name": s.name,
+        "title": s.title,
+        "department": s.department,
+        "email": s.email,
+        "phone": s.phone,
+        "room": s.room,
+        "availability": s.availability,
+        "topics": s.topics or [],
+        "backup_for": s.backup_for,
+        "prep_status": s.prep_status,
+        "qa_cleared": s.qa_cleared,
+        "qa_cleared_at": s.qa_cleared_at,
+        "approved_talking_points": s.approved_talking_points or [],
+        "do_not_volunteer": s.do_not_volunteer or [],
+        "do_not_speculate": s.do_not_speculate or [],
+        "escalation_triggers": s.escalation_triggers or [],
+        "likely_questions": s.likely_questions or [],
+        "relevant_documents": s.relevant_documents or [],
+        "known_weak_areas": s.known_weak_areas,
+        "call_log": s.call_log or [],
+        "notes": s.notes,
+        "created_at": str(s.created_at),
+    }
+
+
+@router.post("/{inspection_id}/smes", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def create_sme(
+    inspection_id: str,
+    data: SMECreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    sme = InspectionSME(
+        id=generate_uuid(),
+        inspection_id=inspection_id,
+        **data.model_dump(),
+    )
+    db.add(sme)
+    await db.commit()
+    await db.refresh(sme)
+    return _sme_out(sme)
+
+
+@router.get("/{inspection_id}/smes", response_model=dict)
+async def list_smes(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionSME).where(InspectionSME.inspection_id == inspection_id)
+        .order_by(InspectionSME.name)
+    )
+    smes = result.scalars().all()
+    return {"inspection_id": inspection_id, "smes": [_sme_out(s) for s in smes]}
+
+
+@router.patch("/{inspection_id}/smes/{sme_id}", response_model=dict)
+async def update_sme(
+    inspection_id: str,
+    sme_id: str,
+    data: SMEUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionSME).where(
+            InspectionSME.id == sme_id,
+            InspectionSME.inspection_id == inspection_id,
+        )
+    )
+    sme = result.scalar_one_or_none()
+    if not sme:
+        raise HTTPException(status_code=404, detail="SME not found")
+    for field, val in data.model_dump(exclude_none=True).items():
+        setattr(sme, field, val)
+    await db.commit()
+    await db.refresh(sme)
+    await ws_broadcast(inspection_id, {"type": "sme_update", "sme_id": sme_id,
+                                        "name": sme.name, "availability": sme.availability})
+    return _sme_out(sme)
+
+
+@router.delete("/{inspection_id}/smes/{sme_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_sme(
+    inspection_id: str,
+    sme_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionSME).where(
+            InspectionSME.id == sme_id,
+            InspectionSME.inspection_id == inspection_id,
+        )
+    )
+    sme = result.scalar_one_or_none()
+    if sme:
+        await db.delete(sme)
+        await db.commit()
+
+
+@router.post("/{inspection_id}/smes/{sme_id}/qa-clear", response_model=dict)
+async def qa_clear_sme(
+    inspection_id: str,
+    sme_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionSME).where(
+            InspectionSME.id == sme_id,
+            InspectionSME.inspection_id == inspection_id,
+        )
+    )
+    sme = result.scalar_one_or_none()
+    if not sme:
+        raise HTTPException(status_code=404, detail="SME not found")
+    sme.qa_cleared = not sme.qa_cleared
+    sme.qa_cleared_by = current_user.id if sme.qa_cleared else None
+    sme.qa_cleared_at = datetime.utcnow().isoformat() if sme.qa_cleared else None
+    if sme.qa_cleared:
+        sme.prep_status = "qa_cleared"
+    await db.commit()
+    await db.refresh(sme)
+    await ws_broadcast(inspection_id, {"type": "sme_update", "sme_id": sme_id,
+                                        "name": sme.name, "qa_cleared": sme.qa_cleared})
+    return _sme_out(sme)
+
+
+@router.post("/{inspection_id}/smes/{sme_id}/coach", response_model=dict)
+async def ai_coach_sme(
+    inspection_id: str,
+    sme_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """AI generates coaching brief: talking points, do-not-volunteer, likely questions."""
+    from app.engines.llm_engine import _call_llm, _llm_available
+    import json, re
+
+    insp = await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionSME).where(
+            InspectionSME.id == sme_id,
+            InspectionSME.inspection_id == inspection_id,
+        )
+    )
+    sme = result.scalar_one_or_none()
+    if not sme:
+        raise HTTPException(status_code=404, detail="SME not found")
+
+    if not _llm_available():
+        raise HTTPException(status_code=503, detail="LLM not available")
+
+    prompt = f"""You are a regulatory preparation coach with 20 years of FDA inspection experience.
+
+Generate a coaching brief for an SME who is about to be interviewed by an {insp.agency or "FDA"} inspector.
+
+SME: {sme.name}
+Department: {sme.department or "Unknown"}
+Topics: {", ".join(sme.topics or ["General quality"]) or "General quality"}
+Inspection type: {insp.inspection_type or "routine"}
+Sector: {insp.sector or "pharmaceutical"}
+
+Return valid JSON with exactly these keys:
+{{
+  "approved_talking_points": ["...", "...", "..."],
+  "do_not_volunteer": ["topic1", "topic2"],
+  "do_not_speculate": ["area1", "area2"],
+  "escalation_triggers": ["if asked about X, say you will verify and contact QA"],
+  "likely_questions": [
+    {{"question": "...", "recommended_answer": "..."}}
+  ]
+}}
+
+Keep talking points concise and factual. Do-not-volunteer should be areas that could open new inspection scope.
+"""
+
+    raw = await _call_llm(prompt, max_tokens=2000)
+    try:
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        coaching = json.loads(match.group()) if match else {}
+    except Exception:
+        coaching = {}
+
+    for field in ("approved_talking_points", "do_not_volunteer", "do_not_speculate",
+                  "escalation_triggers", "likely_questions"):
+        if field in coaching:
+            setattr(sme, field, coaching[field])
+
+    await db.commit()
+    await db.refresh(sme)
+    return _sme_out(sme)
+
+
+@router.post("/{inspection_id}/smes/{sme_id}/call-log", response_model=dict)
+async def log_sme_call(
+    inspection_id: str,
+    sme_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    reason: str = "",
+    notes: str = "",
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionSME).where(
+            InspectionSME.id == sme_id,
+            InspectionSME.inspection_id == inspection_id,
+        )
+    )
+    sme = result.scalar_one_or_none()
+    if not sme:
+        raise HTTPException(status_code=404, detail="SME not found")
+    log = list(sme.call_log or [])
+    log.append({
+        "called_at": datetime.utcnow().isoformat(),
+        "called_by": current_user.full_name or current_user.email,
+        "reason": reason,
+        "notes": notes,
+    })
+    sme.call_log = log
+    await db.commit()
+    await db.refresh(sme)
+    return _sme_out(sme)
+
+
+# ── CAPA / Post-Inspection Actions (Section 16) ───────────────────────────────────
+
+class CAPACreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    action_type: str = "capa"
+    owner_name: Optional[str] = None
+    department: Optional[str] = None
+    due_date: Optional[str] = None
+    criticality: str = "medium"
+    linked_observation_id: Optional[str] = None
+    linked_request_id: Optional[str] = None
+    linked_commitment_id: Optional[str] = None
+    linked_potential_finding_id: Optional[str] = None
+    effectiveness_check_required: bool = False
+    management_review_required: bool = False
+
+
+class CAPAUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    owner_name: Optional[str] = None
+    department: Optional[str] = None
+    due_date: Optional[str] = None
+    criticality: Optional[str] = None
+    status: Optional[str] = None
+    completion_notes: Optional[str] = None
+    effectiveness_check_notes: Optional[str] = None
+    lesson_learned: Optional[str] = None
+    qms_record_id: Optional[str] = None
+
+
+def _capa_out(c: InspectionCAPA) -> dict:
+    return {
+        "id": c.id,
+        "inspection_id": c.inspection_id,
+        "action_type": c.action_type,
+        "title": c.title,
+        "description": c.description,
+        "owner_name": c.owner_name,
+        "department": c.department,
+        "due_date": c.due_date,
+        "completed_at": c.completed_at,
+        "verified_at": c.verified_at,
+        "status": c.status,
+        "criticality": c.criticality,
+        "completion_notes": c.completion_notes,
+        "effectiveness_check_required": c.effectiveness_check_required,
+        "effectiveness_check_due": c.effectiveness_check_due,
+        "effectiveness_check_notes": c.effectiveness_check_notes,
+        "management_review_required": c.management_review_required,
+        "linked_observation_id": c.linked_observation_id,
+        "linked_request_id": c.linked_request_id,
+        "linked_commitment_id": c.linked_commitment_id,
+        "linked_potential_finding_id": c.linked_potential_finding_id,
+        "lesson_learned": c.lesson_learned,
+        "qms_exported": c.qms_exported,
+        "qms_record_id": c.qms_record_id,
+        "created_at": str(c.created_at),
+    }
+
+
+@router.post("/{inspection_id}/capas", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def create_capa(
+    inspection_id: str,
+    data: CAPACreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    capa = InspectionCAPA(
+        id=generate_uuid(),
+        inspection_id=inspection_id,
+        created_by=current_user.id,
+        **data.model_dump(),
+    )
+    db.add(capa)
+    await db.commit()
+    await db.refresh(capa)
+    return _capa_out(capa)
+
+
+@router.get("/{inspection_id}/capas", response_model=dict)
+async def list_capas(
+    inspection_id: str,
+    status_filter: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    filters = [InspectionCAPA.inspection_id == inspection_id]
+    if status_filter:
+        filters.append(InspectionCAPA.status == status_filter)
+    result = await db.execute(
+        select(InspectionCAPA).where(*filters).order_by(InspectionCAPA.created_at.desc())
+    )
+    capas = result.scalars().all()
+    return {"inspection_id": inspection_id, "capas": [_capa_out(c) for c in capas]}
+
+
+@router.patch("/{inspection_id}/capas/{capa_id}", response_model=dict)
+async def update_capa(
+    inspection_id: str,
+    capa_id: str,
+    data: CAPAUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionCAPA).where(
+            InspectionCAPA.id == capa_id,
+            InspectionCAPA.inspection_id == inspection_id,
+        )
+    )
+    capa = result.scalar_one_or_none()
+    if not capa:
+        raise HTTPException(status_code=404, detail="CAPA not found")
+    for field, val in data.model_dump(exclude_none=True).items():
+        setattr(capa, field, val)
+    if data.status == "completed" and not capa.completed_at:
+        capa.completed_at = datetime.utcnow().isoformat()
+    if data.status == "verified" and not capa.verified_at:
+        capa.verified_at = datetime.utcnow().isoformat()
+    await db.commit()
+    await db.refresh(capa)
+    return _capa_out(capa)
+
+
+@router.delete("/{inspection_id}/capas/{capa_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_capa(
+    inspection_id: str,
+    capa_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionCAPA).where(
+            InspectionCAPA.id == capa_id,
+            InspectionCAPA.inspection_id == inspection_id,
+        )
+    )
+    capa = result.scalar_one_or_none()
+    if capa:
+        await db.delete(capa)
+        await db.commit()
+
+
+# ── Command Center Metrics (Section 2) ────────────────────────────────────────────
+
+@router.get("/{inspection_id}/metrics", response_model=dict)
+async def get_inspection_metrics(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Live command center metrics — all counters for the 'are we in control?' panel."""
+    insp = await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    # Requests
+    req_result = await db.execute(
+        select(InspectionRequest).where(InspectionRequest.inspection_id == inspection_id)
+    )
+    requests = req_result.scalars().all()
+    total_req = len(requests)
+    open_req = sum(1 for r in requests if r.status in ("open", "triage", "assigned", "in_progress", "evidence_gathering"))
+    qa_review_req = sum(1 for r in requests if r.status == "qa_review")
+    approved_req = sum(1 for r in requests if r.status == "approved")
+    released_req = sum(1 for r in requests if r.status == "released")
+    fulfilled_req = sum(1 for r in requests if r.status in ("fulfilled", "closed"))
+    critical_req = sum(1 for r in requests if r.criticality == "critical" and r.status not in ("fulfilled", "closed", "declined"))
+    overdue_req = sum(1 for r in requests if r.due_at and r.status not in ("fulfilled", "closed", "declined", "released")
+                      and r.due_at < datetime.utcnow().isoformat())
+
+    # Avg response time
+    response_times = [r.response_time_minutes for r in requests if r.response_time_minutes]
+    avg_response = int(sum(response_times) / len(response_times)) if response_times else None
+
+    # Commitments
+    comm_result = await db.execute(
+        select(InspectionCommitment).where(InspectionCommitment.inspection_id == inspection_id)
+    )
+    commitments = comm_result.scalars().all()
+    open_commitments = sum(1 for c in commitments if c.status in ("open", "in_progress"))
+    overdue_commitments = sum(1 for c in commitments if c.deadline_at and
+                              c.status not in ("fulfilled", "closed") and
+                              c.deadline_at < datetime.utcnow().isoformat())
+
+    # Potential findings
+    pf_result = await db.execute(
+        select(InspectionPotentialFinding).where(InspectionPotentialFinding.inspection_id == inspection_id)
+    )
+    findings = pf_result.scalars().all()
+    active_findings = sum(1 for f in findings if f.status == "tracking")
+    high_confidence_findings = sum(1 for f in findings if f.confidence in ("high", "certain") and f.status == "tracking")
+
+    # Packages
+    pkg_result = await db.execute(
+        select(InspectionEvidencePackage).where(InspectionEvidencePackage.inspection_id == inspection_id)
+    )
+    packages = pkg_result.scalars().all()
+    staged_packages = sum(1 for p in packages if p.status in ("staged", "qa_review"))
+    released_packages = sum(1 for p in packages if p.status == "released")
+
+    # SMEs
+    sme_result = await db.execute(
+        select(InspectionSME).where(InspectionSME.inspection_id == inspection_id)
+    )
+    smes = sme_result.scalars().all()
+    available_smes = sum(1 for s in smes if s.availability == "available")
+    qa_cleared_smes = sum(1 for s in smes if s.qa_cleared)
+
+    completion_pct = int((fulfilled_req / total_req * 100)) if total_req else 0
+
+    # "Are we in control?" — simple heuristic
+    risk_score = (overdue_req * 3) + (critical_req * 2) + (high_confidence_findings * 2) + (overdue_commitments * 2) + (qa_review_req)
+    if risk_score == 0:
+        control_status = "in_control"
+    elif risk_score <= 3:
+        control_status = "manageable"
+    elif risk_score <= 8:
+        control_status = "under_pressure"
+    else:
+        control_status = "critical"
+
+    return {
+        "inspection_id": inspection_id,
+        "requests": {
+            "total": total_req, "open": open_req, "qa_review": qa_review_req,
+            "approved": approved_req, "released": released_req, "fulfilled": fulfilled_req,
+            "critical": critical_req, "overdue": overdue_req,
+            "completion_pct": completion_pct, "avg_response_minutes": avg_response,
+        },
+        "commitments": {
+            "total": len(commitments), "open": open_commitments, "overdue": overdue_commitments,
+        },
+        "findings": {
+            "active": active_findings, "high_confidence": high_confidence_findings,
+        },
+        "packages": {
+            "staged": staged_packages, "released": released_packages,
+        },
+        "smes": {
+            "total": len(smes), "available": available_smes, "qa_cleared": qa_cleared_smes,
+        },
+        "control_status": control_status,
+        "risk_score": risk_score,
+        "current_phase": insp.current_phase,
+        "day_count": insp.day_count,
+    }
+
+
+# ── Daily Briefing (Section 2 / 13) ──────────────────────────────────────────────
+
+@router.post("/{inspection_id}/daily-brief", response_model=dict)
+async def generate_daily_brief(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """AI generates the morning briefing for today's inspection session."""
+    from app.engines.llm_engine import _call_llm, _llm_available
+
+    insp = await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    if not _llm_available():
+        raise HTTPException(status_code=503, detail="LLM not available")
+
+    # Gather open items
+    req_result = await db.execute(
+        select(InspectionRequest)
+        .where(InspectionRequest.inspection_id == inspection_id,
+               InspectionRequest.status.in_(["open", "in_progress", "qa_review", "evidence_gathering"]))
+        .order_by(InspectionRequest.criticality.desc())
+        .limit(20)
+    )
+    open_reqs = req_result.scalars().all()
+
+    pf_result = await db.execute(
+        select(InspectionPotentialFinding)
+        .where(InspectionPotentialFinding.inspection_id == inspection_id,
+               InspectionPotentialFinding.status == "tracking")
+    )
+    findings = pf_result.scalars().all()
+
+    comm_result = await db.execute(
+        select(InspectionCommitment)
+        .where(InspectionCommitment.inspection_id == inspection_id,
+               InspectionCommitment.status.in_(["open", "in_progress"]))
+    )
+    open_commitments = comm_result.scalars().all()
+
+    context = f"""INSPECTION: {insp.title}
+AGENCY: {insp.agency or "FDA"}
+PHASE: {insp.current_phase or "Unknown"}
+DAY: {insp.day_count or 1}
+
+OPEN REQUESTS ({len(open_reqs)}):
+{chr(10).join(f"- [{r.criticality}] {r.request_text[:100]}" for r in open_reqs[:10])}
+
+POTENTIAL FINDINGS ({len(findings)}):
+{chr(10).join(f"- [{f.confidence}] {f.title}" for f in findings)}
+
+OPEN COMMITMENTS ({len(open_commitments)}):
+{chr(10).join(f"- {c.commitment_text[:80]}" for c in open_commitments[:5])}
+"""
+
+    brief = await _call_llm(
+        f"""You are a senior inspection host. Generate a concise morning briefing for Day {insp.day_count or 1} of this {insp.agency or "FDA"} inspection.
+
+{context}
+
+Write a crisp morning briefing (3-5 bullet sections) covering:
+1. Where we stand — overall posture
+2. What to expect today — likely inspector focus based on patterns
+3. Top 3 priorities for the team
+4. Who needs to be ready
+5. One key risk to watch
+
+Keep it tight, no fluff. This is read in 90 seconds by the host team.""",
+        max_tokens=800,
+    )
+
+    insp.last_daily_brief = brief
+    insp.last_daily_brief_at = datetime.utcnow().isoformat()
+    await db.commit()
+
+    return {"inspection_id": inspection_id, "brief": brief, "generated_at": insp.last_daily_brief_at}
+
+
+# ── Post-Inspection Workspace (Section 18) ────────────────────────────────────────
+
+class PostInspectionUpdate(BaseModel):
+    outcome: Optional[str] = None
+    final_483_count: Optional[int] = None
+    post_inspection_notes: Optional[str] = None
+    lessons_learned: Optional[list[str]] = None
+
+
+@router.patch("/{inspection_id}/post-inspection", response_model=dict)
+async def update_post_inspection(
+    inspection_id: str,
+    data: PostInspectionUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    insp = await _verify_inspection(db, inspection_id, current_user.company_id)
+    for field, val in data.model_dump(exclude_none=True).items():
+        setattr(insp, field, val)
+    await db.commit()
+    await db.refresh(insp)
+    return _inspection_out(insp)
+
+
+@router.get("/{inspection_id}/post-inspection-summary", response_model=dict)
+async def get_post_inspection_summary(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Full post-inspection reconciliation: requests, deliveries, commitments, 483s, CAPAs."""
+    insp = await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    req_result = await db.execute(select(InspectionRequest).where(InspectionRequest.inspection_id == inspection_id))
+    requests = req_result.scalars().all()
+
+    comm_result = await db.execute(select(InspectionCommitment).where(InspectionCommitment.inspection_id == inspection_id))
+    commitments = comm_result.scalars().all()
+
+    obs_result = await db.execute(select(InspectionObservation).where(InspectionObservation.inspection_id == inspection_id))
+    observations = obs_result.scalars().all()
+
+    capa_result = await db.execute(select(InspectionCAPA).where(InspectionCAPA.inspection_id == inspection_id))
+    capas = capa_result.scalars().all()
+
+    pkg_result = await db.execute(select(InspectionEvidencePackage).where(InspectionEvidencePackage.inspection_id == inspection_id))
+    packages = pkg_result.scalars().all()
+
+    return {
+        "inspection_id": inspection_id,
+        "title": insp.title,
+        "agency": insp.agency,
+        "outcome": insp.outcome,
+        "final_483_count": insp.final_483_count,
+        "post_inspection_notes": insp.post_inspection_notes,
+        "lessons_learned": insp.lessons_learned or [],
+        "requests": {
+            "total": len(requests),
+            "fulfilled": sum(1 for r in requests if r.status in ("fulfilled", "closed")),
+            "unfulfilled": sum(1 for r in requests if r.status not in ("fulfilled", "closed", "declined", "withdrawn")),
+        },
+        "commitments": {
+            "total": len(commitments),
+            "fulfilled": sum(1 for c in commitments if c.status in ("fulfilled", "closed")),
+            "open": sum(1 for c in commitments if c.status in ("open", "in_progress")),
+        },
+        "observations": {
+            "total": len(observations),
+            "draft": sum(1 for o in observations if o.status == "draft"),
+            "final": sum(1 for o in observations if o.status == "final"),
+            "responded": sum(1 for o in observations if o.status == "responded"),
+        },
+        "capas": {
+            "total": len(capas),
+            "open": sum(1 for c in capas if c.status in ("open", "in_progress")),
+            "completed": sum(1 for c in capas if c.status in ("completed", "verified", "closed")),
+        },
+        "packages": {
+            "total": len(packages),
+            "released": sum(1 for p in packages if p.status == "released"),
+        },
+    }
 
 
 # ── Backroom Chat ────────────────────────────────────────────────────────────────

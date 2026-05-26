@@ -32,18 +32,39 @@ class Inspection(Base, TimestampMixin):
     end_date = Column(String(20))
     day_count = Column(Integer, default=0)
 
+    # Section 1 — extended setup
+    sector = Column(String(100))         # small_molecule | biologics | medical_device | cdmo | etc.
+    products_in_scope = Column(JSONB, default=list)
+    departments_in_scope = Column(JSONB, default=list)
+    regulatory_frameworks = Column(JSONB, default=list)  # ["21_cfr_211", "eu_gmp", "ich_q10", ...]
+    site_name = Column(String(255))
+    mode = Column(String(30), default="onsite")   # onsite | remote | hybrid
+    default_sla_settings = Column(JSONB, default=dict)  # {critical: 15, high: 30, medium: 60, low: 120}
+
     # Scope and agenda
     inspection_scope = Column(JSONB, default=list)  # systems/areas in scope
     agenda = Column(JSONB, default=list)            # [{phase, label, scheduled_time, actual_start, status}]
 
-    # Team
-    team_assignments = Column(JSONB, default=dict)  # role -> user_id mapping
+    # Team roles (Section 3)
+    team_assignments = Column(JSONB, default=dict)
+    # {host: user_id, qa_lead: user_id, prep_room_manager: user_id, scribe: user_id, runner: user_id, ...}
     ai_agents_active = Column(JSONB, default=list)  # ["scribe", "prep_manager", ...]
+
+    # Command center live metrics cache (Section 2)
+    avg_response_time_minutes = Column(Integer)
+    last_daily_brief = Column(Text)
+    last_daily_brief_at = Column(String(50))
 
     # Summary (populated on close)
     total_requests = Column(Integer, default=0)
     commitments_made = Column(JSONB, default=list)
     observations_noted = Column(JSONB, default=list)
+
+    # Post-inspection (Section 18)
+    outcome = Column(String(50))           # no_action | warning_letter_risk | 483_issued | eir_pending | closed_satisfactorily
+    final_483_count = Column(Integer, default=0)
+    post_inspection_notes = Column(Text)
+    lessons_learned = Column(JSONB, default=list)
 
     # Relationships
     company = relationship("Company", back_populates="inspections")
@@ -66,6 +87,19 @@ class InspectionRequest(Base, TimestampMixin):
     criticality = Column(String(20), default="medium")  # critical, high, medium, low
     category = Column(String(50))  # document_request, question, observation, commitment
 
+    # Extended classification (Section 4)
+    request_type = Column(String(50))
+    # document_request | data_request | interview | facility_tour | demonstration
+    # system_access | clarification | follow_up | commitment | observation_response
+    request_category = Column(String(100))
+    # batch_record | sop | deviation | capa | change_control | oos | lab_investigation
+    # training | validation | equipment | calibration | maintenance | cleaning
+    # environmental_monitoring | sterility | stability | supplier | complaint | data_integrity
+    # computer_system | method_validation | specification | coa | raw_data | risk_management
+    regulatory_risk = Column(String(30), default="low")  # low | medium | high | potential_observation
+    related_lot = Column(String(255))
+    related_product = Column(String(255))
+
     # Who / Where
     inspector_name = Column(String(255))
     inspector_department = Column(String(255))
@@ -78,11 +112,20 @@ class InspectionRequest(Base, TimestampMixin):
     sla_minutes = Column(Integer)            # set at creation from criticality
     due_at = Column(String(50))              # ISO datetime string
 
-    # Status + progress
-    status = Column(String(50), default="open")  # open, in_progress, fulfilled, declined
+    # Status + progress — extended lifecycle
+    status = Column(String(50), default="open")
+    # open | triage | assigned | in_progress | evidence_gathering | qa_review
+    # approved | released | inspector_review | fulfilled | closed | declined | withdrawn
     fulfillment_progress = Column(Integer, default=0)  # 0–100
     response_text = Column(Text)
     response_time_minutes = Column(Integer)
+
+    # QA Gate fields
+    qa_reviewed_by = Column(String, ForeignKey("users.id"), nullable=True)
+    qa_reviewed_at = Column(String(50))
+    qa_notes = Column(Text)
+    released_by = Column(String, ForeignKey("users.id"), nullable=True)
+    released_at = Column(String(50))
 
     # AI Support
     ai_suggested_documents = Column(JSONB, default=list)

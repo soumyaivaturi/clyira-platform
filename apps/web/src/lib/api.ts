@@ -273,6 +273,80 @@ export const inspectionsApi = {
   briefInspector: (inspectionId: string, inspectorId: string) =>
     api.post(`/inspections/${inspectionId}/inspectors/${inspectorId}/brief`, {}, { timeout: 90000 }),
 
+  // Setup
+  updateSetup: (id: string, data: Partial<{
+    title: string; agency: string; inspection_type: string; start_date: string; end_date: string;
+    sector: string; products_in_scope: string[]; departments_in_scope: string[];
+    regulatory_frameworks: string[]; site_name: string; mode: string;
+    inspection_scope: string[]; team_assignments: Record<string, string>;
+    default_sla_settings: Record<string, number>;
+  }>) => api.patch(`/inspections/${id}/setup`, data),
+
+  // QA Release Gate
+  qaActionRequest: (id: string, reqId: string, action: string, notes?: string) =>
+    api.post(`/inspections/${id}/requests/${reqId}/qa`, { action, notes }),
+
+  // Evidence packages
+  listPackages: (id: string, requestId?: string) =>
+    api.get(`/inspections/${id}/packages`, { params: requestId ? { request_id: requestId } : {} }),
+  createPackage: (id: string, data: { title: string; description?: string; request_id?: string; legal_review_required?: boolean }) =>
+    api.post(`/inspections/${id}/packages`, data),
+  updatePackage: (id: string, pkgId: string, data: Partial<{ title: string; description: string; qa_notes: string; release_notes: string }>) =>
+    api.patch(`/inspections/${id}/packages/${pkgId}`, data),
+  addDocumentToPackage: (id: string, pkgId: string, params: { filename: string; document_id?: string; version?: string; approval_status?: string }) =>
+    api.post(`/inspections/${id}/packages/${pkgId}/documents`, null, { params }),
+  removeDocumentFromPackage: (id: string, pkgId: string, docId: string) =>
+    api.delete(`/inspections/${id}/packages/${pkgId}/documents/${docId}`),
+  submitPackageQA: (id: string, pkgId: string) =>
+    api.post(`/inspections/${id}/packages/${pkgId}/submit-qa`),
+  qaActionPackage: (id: string, pkgId: string, action: string, notes?: string, qa_checks?: Record<string, boolean>) =>
+    api.post(`/inspections/${id}/packages/${pkgId}/qa`, { action, notes, qa_checks }),
+
+  // SME Coach
+  listSMEs: (id: string) => api.get(`/inspections/${id}/smes`),
+  createSME: (id: string, data: { name: string; title?: string; department?: string; email?: string; topics?: string[] }) =>
+    api.post(`/inspections/${id}/smes`, data),
+  updateSME: (id: string, smeId: string, data: Partial<{
+    name: string; title: string; department: string; room: string; availability: string;
+    topics: string[]; prep_status: string; approved_talking_points: string[];
+    do_not_volunteer: string[]; do_not_speculate: string[]; escalation_triggers: string[];
+    likely_questions: {question: string; recommended_answer: string}[];
+    known_weak_areas: string; notes: string;
+  }>) => api.patch(`/inspections/${id}/smes/${smeId}`, data),
+  deleteSME: (id: string, smeId: string) => api.delete(`/inspections/${id}/smes/${smeId}`),
+  qaClearSME: (id: string, smeId: string) => api.post(`/inspections/${id}/smes/${smeId}/qa-clear`),
+  aiCoachSME: (id: string, smeId: string) =>
+    api.post(`/inspections/${id}/smes/${smeId}/coach`, {}, { timeout: 90000 }),
+  logSMECall: (id: string, smeId: string, reason: string, notes?: string) =>
+    api.post(`/inspections/${id}/smes/${smeId}/call-log`, null, { params: { reason, notes: notes || "" } }),
+
+  // CAPAs
+  listCAPAs: (id: string, status?: string) =>
+    api.get(`/inspections/${id}/capas`, { params: status ? { status_filter: status } : {} }),
+  createCAPA: (id: string, data: {
+    title: string; description?: string; action_type?: string; owner_name?: string;
+    department?: string; due_date?: string; criticality?: string;
+    linked_observation_id?: string; linked_request_id?: string;
+    effectiveness_check_required?: boolean;
+  }) => api.post(`/inspections/${id}/capas`, data),
+  updateCAPA: (id: string, capaId: string, data: Partial<{
+    title: string; description: string; owner_name: string; department: string;
+    due_date: string; criticality: string; status: string; completion_notes: string;
+    effectiveness_check_notes: string; lesson_learned: string; qms_record_id: string;
+  }>) => api.patch(`/inspections/${id}/capas/${capaId}`, data),
+  deleteCAPA: (id: string, capaId: string) => api.delete(`/inspections/${id}/capas/${capaId}`),
+
+  // Metrics + briefing
+  getMetrics: (id: string) => api.get(`/inspections/${id}/metrics`),
+  generateDailyBrief: (id: string) =>
+    api.post(`/inspections/${id}/daily-brief`, {}, { timeout: 90000 }),
+
+  // Post-inspection
+  updatePostInspection: (id: string, data: { outcome?: string; final_483_count?: number; post_inspection_notes?: string; lessons_learned?: string[] }) =>
+    api.patch(`/inspections/${id}/post-inspection`, data),
+  getPostInspectionSummary: (id: string) =>
+    api.get(`/inspections/${id}/post-inspection-summary`),
+
   // Potential findings tracker
   listPotentialFindings: (id: string, status?: string) =>
     api.get(`/inspections/${id}/potential-findings`, { params: status ? { status_filter: status } : {} }),

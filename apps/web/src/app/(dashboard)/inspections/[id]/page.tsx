@@ -123,6 +123,85 @@ interface Comment {
   created_at: string;
 }
 
+interface SME {
+  id: string;
+  name: string;
+  title: string | null;
+  department: string | null;
+  email: string | null;
+  phone: string | null;
+  room: string;
+  availability: string;
+  topics: string[];
+  backup_for: string | null;
+  prep_status: string;
+  qa_cleared: boolean;
+  qa_cleared_at: string | null;
+  approved_talking_points: string[];
+  do_not_volunteer: string[];
+  do_not_speculate: string[];
+  escalation_triggers: string[];
+  likely_questions: { question: string; recommended_answer: string }[];
+  relevant_documents: string[];
+  known_weak_areas: string | null;
+  call_log: { called_at: string; called_by: string; reason: string; notes: string }[];
+  notes: string | null;
+  created_at: string;
+}
+
+interface EvidencePackage {
+  id: string;
+  inspection_id: string;
+  request_id: string | null;
+  title: string;
+  description: string | null;
+  status: string;
+  documents: { id: string; filename: string; version?: string; approval_status: string; flags: Record<string, boolean>; added_by: string }[];
+  package_risk: string;
+  completeness_status: string;
+  owner_name: string | null;
+  qa_approver_name: string | null;
+  qa_approved_at: string | null;
+  qa_notes: string | null;
+  qa_checks: Record<string, boolean>;
+  released_by_name: string | null;
+  released_at: string | null;
+  release_notes: string | null;
+  legal_review_required: boolean;
+  created_at: string;
+}
+
+interface CAPA {
+  id: string;
+  action_type: string;
+  title: string;
+  description: string | null;
+  owner_name: string | null;
+  department: string | null;
+  due_date: string | null;
+  completed_at: string | null;
+  status: string;
+  criticality: string;
+  completion_notes: string | null;
+  effectiveness_check_required: boolean;
+  lesson_learned: string | null;
+  linked_observation_id: string | null;
+  linked_request_id: string | null;
+  created_at: string;
+}
+
+interface InspectionMetrics {
+  requests: { total: number; open: number; qa_review: number; approved: number; released: number; fulfilled: number; critical: number; overdue: number; completion_pct: number; avg_response_minutes: number | null };
+  commitments: { total: number; open: number; overdue: number };
+  findings: { active: number; high_confidence: number };
+  packages: { staged: number; released: number };
+  smes: { total: number; available: number; qa_cleared: number };
+  control_status: string;
+  risk_score: number;
+  current_phase: string | null;
+  day_count: number;
+}
+
 interface PotentialFinding {
   id: string;
   title: string;
@@ -906,7 +985,7 @@ export default function WarRoomPage() {
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"requests" | "findings" | "chat" | "people" | "observations" | "commitments" | "binder" | "intel" | "scribe" | "closing">("requests");
+  const [tab, setTab] = useState<"requests" | "findings" | "chat" | "sme" | "people" | "observations" | "commitments" | "packages" | "capas" | "binder" | "intel" | "scribe" | "closing" | "post">("requests");
   const [showAddRequest, setShowAddRequest] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<InspRequest | null>(null);
   const [scribeText, setScribeText] = useState("");
@@ -942,6 +1021,40 @@ export default function WarRoomPage() {
   const [briefingInspector, setBriefingInspector] = useState<string | null>(null);
   const [expandedBrief, setExpandedBrief] = useState<string | null>(null);
   const [wsToasts, setWsToasts] = useState<{ id: string; message: string; type: string }[]>([]);
+
+  // SME state
+  const [smes, setSMEs] = useState<SME[]>([]);
+  const [showAddSME, setShowAddSME] = useState(false);
+  const [newSME, setNewSME] = useState({ name: "", title: "", department: "", email: "", topics: "" });
+  const [savingSME, setSavingSME] = useState(false);
+  const [expandedSME, setExpandedSME] = useState<string | null>(null);
+  const [coachingSME, setCoachingSME] = useState<string | null>(null);
+
+  // Evidence packages state
+  const [packages, setPackages] = useState<EvidencePackage[]>([]);
+  const [showAddPackage, setShowAddPackage] = useState(false);
+  const [newPackage, setNewPackage] = useState({ title: "", description: "", request_id: "" });
+  const [savingPackage, setSavingPackage] = useState(false);
+  const [expandedPackage, setExpandedPackage] = useState<string | null>(null);
+  const [addingDocToPackage, setAddingDocToPackage] = useState<string | null>(null);
+  const [newDocFilename, setNewDocFilename] = useState("");
+  const [qaActionPackage, setQaActionPackage] = useState<string | null>(null);
+
+  // CAPA state
+  const [capas, setCAPAs] = useState<CAPA[]>([]);
+  const [showAddCAPA, setShowAddCAPA] = useState(false);
+  const [newCAPA, setNewCAPA] = useState({ title: "", description: "", action_type: "capa", owner_name: "", department: "", due_date: "", criticality: "medium" });
+  const [savingCAPA, setSavingCAPA] = useState(false);
+
+  // Metrics
+  const [metrics, setMetrics] = useState<InspectionMetrics | null>(null);
+  const [dailyBrief, setDailyBrief] = useState("");
+  const [generatingBrief, setGeneratingBrief] = useState(false);
+
+  // Post-inspection
+  const [postSummary, setPostSummary] = useState<any>(null);
+  const [postEdit, setPostEdit] = useState({ outcome: "", post_inspection_notes: "", final_483_count: 0 });
+  const [savingPost, setSavingPost] = useState(false);
 
   // Potential findings state
   const [potentialFindings, setPotentialFindings] = useState<PotentialFinding[]>([]);
@@ -1000,6 +1113,21 @@ export default function WarRoomPage() {
       } else if (t === "findings") {
         const r = await inspectionsApi.listPotentialFindings(id);
         setPotentialFindings(r.data.findings ?? []);
+      } else if (t === "sme") {
+        const r = await inspectionsApi.listSMEs(id);
+        setSMEs(r.data.smes ?? []);
+      } else if (t === "packages") {
+        const r = await inspectionsApi.listPackages(id);
+        setPackages(r.data.packages ?? []);
+      } else if (t === "capas") {
+        const r = await inspectionsApi.listCAPAs(id);
+        setCAPAs(r.data.capas ?? []);
+      } else if (t === "intel") {
+        const r = await inspectionsApi.getMetrics(id);
+        setMetrics(r.data);
+      } else if (t === "post") {
+        const r = await inspectionsApi.getPostInspectionSummary(id);
+        setPostSummary(r.data);
       }
     } catch { /* tab data missing is non-fatal */ }
   }, [id]);
@@ -1041,6 +1169,15 @@ export default function WarRoomPage() {
     } else if (event.type === "ai_scan_complete") {
       loadTabData("findings");
       addToast(`AI scan complete — ${(event as any).count} potential finding${(event as any).count !== 1 ? "s" : ""} identified`, "info");
+    } else if (event.type === "sme_update") {
+      setSMEs(prev => prev.map(s => s.id === event.sme_id
+        ? { ...s, availability: event.availability ?? s.availability, qa_cleared: event.qa_cleared ?? s.qa_cleared }
+        : s));
+    } else if (event.type === "package_qa_pending") {
+      addToast(`Package "${event.title}" needs QA review`, "info");
+    } else if (event.type === "package_status_update") {
+      setPackages(prev => prev.map(p => p.id === event.package_id ? { ...p, status: event.status } : p));
+      addToast(`Package "${event.title}" → ${event.status}`, "info");
     }
   }, [addToast]));
 
@@ -1078,6 +1215,79 @@ export default function WarRoomPage() {
       setChatInput("");
     } catch { /* ignore — WS will not fire but REST response is ok */ }
     finally { setSendingChat(false); }
+  };
+
+  const handleSaveSME = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSME.name.trim()) return;
+    setSavingSME(true);
+    try {
+      const res = await inspectionsApi.createSME(id, {
+        ...newSME,
+        topics: newSME.topics.split(",").map(s => s.trim()).filter(Boolean),
+      });
+      setSMEs(prev => [...prev, res.data]);
+      setNewSME({ name: "", title: "", department: "", email: "", topics: "" });
+      setShowAddSME(false);
+    } finally { setSavingSME(false); }
+  };
+
+  const handleCoachSME = async (smeId: string) => {
+    setCoachingSME(smeId);
+    try {
+      const res = await inspectionsApi.aiCoachSME(id, smeId);
+      setSMEs(prev => prev.map(s => s.id === smeId ? res.data : s));
+    } finally { setCoachingSME(null); }
+  };
+
+  const handleSavePackage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPackage.title.trim()) return;
+    setSavingPackage(true);
+    try {
+      const res = await inspectionsApi.createPackage(id, {
+        title: newPackage.title,
+        description: newPackage.description || undefined,
+        request_id: newPackage.request_id || undefined,
+      });
+      setPackages(prev => [res.data, ...prev]);
+      setNewPackage({ title: "", description: "", request_id: "" });
+      setShowAddPackage(false);
+    } finally { setSavingPackage(false); }
+  };
+
+  const handleAddDocToPackage = async (pkgId: string) => {
+    if (!newDocFilename.trim()) return;
+    const res = await inspectionsApi.addDocumentToPackage(id, pkgId, { filename: newDocFilename });
+    setPackages(prev => prev.map(p => p.id === pkgId ? res.data : p));
+    setNewDocFilename("");
+    setAddingDocToPackage(null);
+  };
+
+  const handlePackageQA = async (pkgId: string, action: string) => {
+    const res = await inspectionsApi.qaActionPackage(id, pkgId, action);
+    setPackages(prev => prev.map(p => p.id === pkgId ? res.data : p));
+    setQaActionPackage(null);
+  };
+
+  const handleSaveCAPA = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCAPA.title.trim()) return;
+    setSavingCAPA(true);
+    try {
+      const res = await inspectionsApi.createCAPA(id, newCAPA);
+      setCAPAs(prev => [res.data, ...prev]);
+      setNewCAPA({ title: "", description: "", action_type: "capa", owner_name: "", department: "", due_date: "", criticality: "medium" });
+      setShowAddCAPA(false);
+    } finally { setSavingCAPA(false); }
+  };
+
+  const handleGenerateBrief = async () => {
+    setGeneratingBrief(true);
+    try {
+      const res = await inspectionsApi.generateDailyBrief(id);
+      setDailyBrief(res.data.brief);
+    } finally { setGeneratingBrief(false); }
   };
 
   const handleAiScan = async () => {
@@ -1232,14 +1442,18 @@ export default function WarRoomPage() {
   const TABS = [
     { key: "requests", label: `Requests${openRequests.length ? ` (${openRequests.length})` : ""}`, icon: MessageSquare },
     { key: "findings", label: `Findings${potentialFindings.filter(f => f.status === "tracking").length ? ` (${potentialFindings.filter(f => f.status === "tracking").length})` : ""}`, icon: TriangleAlert },
-    { key: "chat", label: `Chat${chatMessages.length ? ` (${chatMessages.length})` : ""}`, icon: Hash },
-    { key: "people", label: "People", icon: Users },
-    { key: "observations", label: "483s", icon: Shield },
+    { key: "sme", label: `SMEs${smes.length ? ` (${smes.length})` : ""}`, icon: Users },
+    { key: "packages", label: `Packages${packages.length ? ` (${packages.length})` : ""}`, icon: Package },
+    { key: "chat", label: `Chat`, icon: Hash },
+    { key: "people", label: "Inspectors", icon: Shield },
+    { key: "observations", label: "483s", icon: Flag },
     { key: "commitments", label: "Commitments", icon: BadgeCheck },
-    { key: "binder", label: "Binder", icon: Package },
-    { key: "intel", label: "Intel", icon: BarChart3 },
+    { key: "capas", label: `CAPAs${capas.length ? ` (${capas.length})` : ""}`, icon: CheckSquare },
+    { key: "binder", label: "Binder", icon: FileText },
+    { key: "intel", label: "Command", icon: BarChart3 },
     { key: "scribe", label: "Scribe", icon: Mic },
     { key: "closing", label: "Closing", icon: BookOpen },
+    { key: "post", label: "Post", icon: ClipboardList },
   ];
 
   if (loading) {
@@ -2334,18 +2548,571 @@ export default function WarRoomPage() {
         </div>
       )}
 
-      {/* ── Intel Tab ─────────────────────────────────────────────────────────── */}
+      {/* ── SME Coach Tab ─────────────────────────────────────────────────────── */}
+      {tab === "sme" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h2 className="font-semibold flex items-center gap-2"><Users className="w-4 h-4 text-primary" /> SME Coach</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Subject-matter experts — availability, topic prep, QA clearance before entering the room.</p>
+            </div>
+            <button onClick={() => setShowAddSME(f => !f)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+              <Plus className="w-3.5 h-3.5" /> Add SME
+            </button>
+          </div>
+
+          {showAddSME && (
+            <form onSubmit={handleSaveSME} className="bg-card border rounded-xl p-5 space-y-3">
+              <h3 className="text-sm font-semibold">Add SME</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <input placeholder="Name *" value={newSME.name} onChange={e => setNewSME(f => ({ ...f, name: e.target.value }))}
+                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                <input placeholder="Title" value={newSME.title} onChange={e => setNewSME(f => ({ ...f, title: e.target.value }))}
+                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                <input placeholder="Department" value={newSME.department} onChange={e => setNewSME(f => ({ ...f, department: e.target.value }))}
+                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                <input placeholder="Email" value={newSME.email} onChange={e => setNewSME(f => ({ ...f, email: e.target.value }))}
+                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              </div>
+              <input placeholder="Topics (comma-separated, e.g. Batch Records, CAPA, Sterility)"
+                value={newSME.topics} onChange={e => setNewSME(f => ({ ...f, topics: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              <div className="flex gap-2 justify-end">
+                <button type="button" onClick={() => setShowAddSME(false)} className="px-3 py-2 text-sm border rounded-lg hover:bg-accent">Cancel</button>
+                <button type="submit" disabled={savingSME}
+                  className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg font-medium disabled:opacity-60">
+                  {savingSME ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  {savingSME ? "Saving…" : "Add SME"}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {smes.length === 0 ? (
+            <div className="bg-card border rounded-xl py-12 text-center">
+              <Users className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
+              <p className="text-sm text-muted-foreground">No SMEs added yet</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {smes.map(sme => {
+                const availColors: Record<string, string> = {
+                  available: "bg-emerald-100 text-emerald-800",
+                  in_audit_room: "bg-red-100 text-red-800",
+                  on_standby: "bg-blue-100 text-blue-800",
+                  in_prep: "bg-amber-100 text-amber-800",
+                  unavailable: "bg-gray-100 text-gray-600",
+                  do_not_call: "bg-red-200 text-red-900",
+                };
+                const isExpanded = expandedSME === sme.id;
+                const isCoaching = coachingSME === sme.id;
+                return (
+                  <div key={sme.id} className="bg-card border rounded-xl overflow-hidden">
+                    <div className="flex items-start gap-3 p-4">
+                      <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                        <span className="text-xs font-bold text-primary">{sme.name.slice(0,2).toUpperCase()}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-semibold">{sme.name}</p>
+                            <p className="text-xs text-muted-foreground">{[sme.title, sme.department].filter(Boolean).join(" · ")}</p>
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${availColors[sme.availability] ?? availColors.available}`}>
+                                {sme.availability.replace(/_/g, " ")}
+                              </span>
+                              {sme.qa_cleared && (
+                                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 flex items-center gap-0.5 font-medium">
+                                  <BadgeCheck className="w-2.5 h-2.5" /> QA Cleared
+                                </span>
+                              )}
+                              {sme.topics.slice(0, 3).map(t => (
+                                <span key={t} className="text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded">{t}</span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex gap-1 flex-shrink-0">
+                            {/* Availability quick-set */}
+                            <select value={sme.availability}
+                              onChange={async e => {
+                                const res = await inspectionsApi.updateSME(id, sme.id, { availability: e.target.value });
+                                setSMEs(prev => prev.map(s => s.id === sme.id ? res.data : s));
+                              }}
+                              className="text-[10px] border rounded px-1.5 py-1 bg-background">
+                              <option value="available">Available</option>
+                              <option value="in_audit_room">In audit room</option>
+                              <option value="on_standby">Standby</option>
+                              <option value="in_prep">In prep</option>
+                              <option value="unavailable">Unavailable</option>
+                              <option value="do_not_call">Do not call</option>
+                            </select>
+                            <button onClick={() => inspectionsApi.qaClearSME(id, sme.id).then(r => setSMEs(prev => prev.map(s => s.id === sme.id ? r.data : s)))}
+                              className={`p-1.5 rounded-lg border text-xs transition-colors ${sme.qa_cleared ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "border-border text-muted-foreground hover:text-emerald-600"}`}
+                              title="Toggle QA clearance">
+                              <BadgeCheck className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => handleCoachSME(sme.id)} disabled={isCoaching}
+                              className="flex items-center gap-1 px-2 py-1.5 text-[10px] border rounded-lg font-medium hover:bg-accent disabled:opacity-50">
+                              {isCoaching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3 text-primary" />}
+                              {isCoaching ? "…" : "AI Coach"}
+                            </button>
+                            <button onClick={() => setExpandedSME(isExpanded ? null : sme.id)}
+                              className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-accent">
+                              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                            </button>
+                            <button onClick={async () => { await inspectionsApi.deleteSME(id, sme.id); setSMEs(prev => prev.filter(s => s.id !== sme.id)); }}
+                              className="p-1.5 rounded-lg border border-border text-muted-foreground hover:text-red-500">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    {isExpanded && (
+                      <div className="border-t px-4 py-3 space-y-3 bg-muted/20">
+                        {sme.approved_talking_points.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Approved Talking Points</p>
+                            <ul className="space-y-1">
+                              {sme.approved_talking_points.map((tp, i) => (
+                                <li key={i} className="flex items-start gap-2 text-xs">
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-500 mt-0.5 flex-shrink-0" /> {tp}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {sme.do_not_volunteer.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-red-600 uppercase tracking-wide mb-1.5">Do NOT Volunteer</p>
+                            <ul className="space-y-1">
+                              {sme.do_not_volunteer.map((dnv, i) => (
+                                <li key={i} className="flex items-start gap-2 text-xs text-red-700">
+                                  <XCircle className="w-3 h-3 mt-0.5 flex-shrink-0" /> {dnv}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {sme.escalation_triggers.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1.5">Escalation Triggers</p>
+                            <ul className="space-y-1">
+                              {sme.escalation_triggers.map((t, i) => (
+                                <li key={i} className="flex items-start gap-2 text-xs text-amber-700">
+                                  <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" /> {t}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {sme.likely_questions.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Mock Q&A</p>
+                            <div className="space-y-2">
+                              {sme.likely_questions.map((qa, i) => (
+                                <div key={i} className="bg-card border rounded-lg p-3">
+                                  <p className="text-xs font-medium mb-1">Q: {qa.question}</p>
+                                  <p className="text-xs text-muted-foreground">A: {qa.recommended_answer}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Evidence Packages Tab ─────────────────────────────────────────────── */}
+      {tab === "packages" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h2 className="font-semibold flex items-center gap-2"><Package className="w-4 h-4 text-primary" /> Evidence Packages</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Assemble documents for each request. QA must approve before release to inspector.</p>
+            </div>
+            <button onClick={() => setShowAddPackage(f => !f)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+              <Plus className="w-3.5 h-3.5" /> New Package
+            </button>
+          </div>
+
+          {showAddPackage && (
+            <form onSubmit={handleSavePackage} className="bg-card border rounded-xl p-5 space-y-3">
+              <h3 className="text-sm font-semibold">New Evidence Package</h3>
+              <input placeholder="Package title *" value={newPackage.title} onChange={e => setNewPackage(f => ({ ...f, title: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              <input placeholder="Description (optional)" value={newPackage.description} onChange={e => setNewPackage(f => ({ ...f, description: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              <select value={newPackage.request_id} onChange={e => setNewPackage(f => ({ ...f, request_id: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                <option value="">Not linked to a request</option>
+                {(inspection?.requests ?? []).map(r => (
+                  <option key={r.id} value={r.id}>REQ-{String(r.request_number).padStart(3,"0")}: {r.request_text.slice(0,60)}</option>
+                ))}
+              </select>
+              <div className="flex gap-2 justify-end">
+                <button type="button" onClick={() => setShowAddPackage(false)} className="px-3 py-2 text-sm border rounded-lg hover:bg-accent">Cancel</button>
+                <button type="submit" disabled={savingPackage}
+                  className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg font-medium disabled:opacity-60">
+                  {savingPackage ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  {savingPackage ? "Creating…" : "Create Package"}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {packages.length === 0 ? (
+            <div className="bg-card border rounded-xl py-12 text-center">
+              <Package className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
+              <p className="text-sm text-muted-foreground">No evidence packages yet</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {packages.map(pkg => {
+                const statusColors: Record<string, string> = {
+                  draft: "bg-gray-100 text-gray-700",
+                  staged: "bg-blue-100 text-blue-700",
+                  qa_review: "bg-amber-100 text-amber-800",
+                  approved: "bg-emerald-100 text-emerald-800",
+                  released: "bg-primary/10 text-primary",
+                  returned: "bg-red-100 text-red-700",
+                  withdrawn: "bg-gray-100 text-gray-500",
+                };
+                const isExpanded = expandedPackage === pkg.id;
+                const QA_CHECKS = ["relevance", "version", "approval", "alignment", "no_extra", "no_internal", "no_draft", "redaction"];
+                return (
+                  <div key={pkg.id} className="bg-card border rounded-xl overflow-hidden">
+                    <div className="flex items-start gap-3 p-4">
+                      <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                        <Package className="w-4 h-4 text-primary" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-semibold">{pkg.title}</p>
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${statusColors[pkg.status] ?? statusColors.draft}`}>
+                                {pkg.status.replace(/_/g, " ")}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">{pkg.documents.length} doc{pkg.documents.length !== 1 ? "s" : ""}</span>
+                              {pkg.legal_review_required && <span className="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-700 rounded">Legal review</span>}
+                              {pkg.released_at && <span className="text-[10px] text-emerald-600">Released {new Date(pkg.released_at).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit"})}</span>}
+                            </div>
+                          </div>
+                          <div className="flex gap-1 flex-shrink-0">
+                            {pkg.status === "draft" || pkg.status === "staged" ? (
+                              <button onClick={() => inspectionsApi.submitPackageQA(id, pkg.id).then(r => setPackages(prev => prev.map(p => p.id === pkg.id ? r.data : p)))}
+                                className="text-[10px] px-2 py-1.5 border rounded-lg font-medium hover:bg-amber-50 hover:border-amber-300 hover:text-amber-800 transition-colors">
+                                Send to QA
+                              </button>
+                            ) : pkg.status === "qa_review" ? (
+                              <>
+                                <button onClick={() => handlePackageQA(pkg.id, "approve")}
+                                  className="text-[10px] px-2 py-1.5 border border-emerald-300 bg-emerald-50 text-emerald-700 rounded-lg font-medium hover:bg-emerald-100">
+                                  Approve
+                                </button>
+                                <button onClick={() => handlePackageQA(pkg.id, "reject")}
+                                  className="text-[10px] px-2 py-1.5 border border-red-200 bg-red-50 text-red-700 rounded-lg font-medium hover:bg-red-100">
+                                  Return
+                                </button>
+                              </>
+                            ) : pkg.status === "approved" ? (
+                              <button onClick={() => handlePackageQA(pkg.id, "release")}
+                                className="text-[10px] px-2 py-1.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90">
+                                Release to Inspector
+                              </button>
+                            ) : null}
+                            <button onClick={() => setExpandedPackage(isExpanded ? null : pkg.id)}
+                              className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-accent">
+                              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="border-t px-4 py-3 space-y-3 bg-muted/20">
+                        {/* Documents list */}
+                        <div>
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Documents</p>
+                          {pkg.documents.length === 0 ? (
+                            <p className="text-xs text-muted-foreground italic">No documents added yet</p>
+                          ) : (
+                            <ul className="space-y-1">
+                              {pkg.documents.map(doc => (
+                                <li key={doc.id} className="flex items-center justify-between text-xs bg-card border rounded px-2 py-1.5">
+                                  <span className="flex items-center gap-1.5">
+                                    <FileText className="w-3 h-3 text-muted-foreground" />
+                                    {doc.filename}
+                                    {doc.version && <span className="text-muted-foreground">v{doc.version}</span>}
+                                  </span>
+                                  <button onClick={() => inspectionsApi.removeDocumentFromPackage(id, pkg.id, doc.id).then(r => setPackages(prev => prev.map(p => p.id === pkg.id ? r.data : p)))}
+                                    className="text-muted-foreground hover:text-red-500">
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          {addingDocToPackage === pkg.id ? (
+                            <div className="flex gap-2 mt-2">
+                              <input placeholder="Filename or document title" value={newDocFilename}
+                                onChange={e => setNewDocFilename(e.target.value)}
+                                className="flex-1 border rounded-lg px-2 py-1.5 text-xs bg-background focus:outline-none" />
+                              <button onClick={() => handleAddDocToPackage(pkg.id)}
+                                className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg font-medium">Add</button>
+                              <button onClick={() => { setAddingDocToPackage(null); setNewDocFilename(""); }}
+                                className="px-2 py-1.5 text-xs border rounded-lg hover:bg-accent">Cancel</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setAddingDocToPackage(pkg.id)}
+                              className="mt-2 flex items-center gap-1 text-[10px] text-primary hover:underline">
+                              <Plus className="w-3 h-3" /> Add document
+                            </button>
+                          )}
+                        </div>
+
+                        {/* QA Checklist */}
+                        {pkg.status === "qa_review" && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">QA Checklist</p>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              {QA_CHECKS.map(check => (
+                                <label key={check} className="flex items-center gap-2 text-xs cursor-pointer">
+                                  <input type="checkbox" className="rounded" defaultChecked={pkg.qa_checks[check]} />
+                                  {check.replace(/_/g, " ")}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {pkg.qa_notes && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">QA Notes</p>
+                            <p className="text-xs text-muted-foreground">{pkg.qa_notes}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── CAPAs Tab ──────────────────────────────────────────────────────────── */}
+      {tab === "capas" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h2 className="font-semibold flex items-center gap-2"><CheckSquare className="w-4 h-4 text-primary" /> CAPAs & Action Items</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Post-inspection corrective and preventive actions, corrections, and training items.</p>
+            </div>
+            <button onClick={() => setShowAddCAPA(f => !f)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+              <Plus className="w-3.5 h-3.5" /> Add CAPA
+            </button>
+          </div>
+
+          {showAddCAPA && (
+            <form onSubmit={handleSaveCAPA} className="bg-card border rounded-xl p-5 space-y-3">
+              <h3 className="text-sm font-semibold">New CAPA / Action Item</h3>
+              <input placeholder="Title *" value={newCAPA.title} onChange={e => setNewCAPA(f => ({ ...f, title: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              <textarea placeholder="Description" value={newCAPA.description} onChange={e => setNewCAPA(f => ({ ...f, description: e.target.value }))}
+                rows={2} className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none resize-none" />
+              <div className="grid grid-cols-2 gap-3">
+                <select value={newCAPA.action_type} onChange={e => setNewCAPA(f => ({ ...f, action_type: e.target.value }))}
+                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none">
+                  {["capa","correction","preventive","training","sop_revision","validation","supplier","data_integrity","other"].map(t => (
+                    <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
+                  ))}
+                </select>
+                <select value={newCAPA.criticality} onChange={e => setNewCAPA(f => ({ ...f, criticality: e.target.value }))}
+                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none">
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+                <input placeholder="Owner name" value={newCAPA.owner_name} onChange={e => setNewCAPA(f => ({ ...f, owner_name: e.target.value }))}
+                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none" />
+                <input type="date" value={newCAPA.due_date} onChange={e => setNewCAPA(f => ({ ...f, due_date: e.target.value }))}
+                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none" />
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button type="button" onClick={() => setShowAddCAPA(false)} className="px-3 py-2 text-sm border rounded-lg hover:bg-accent">Cancel</button>
+                <button type="submit" disabled={savingCAPA}
+                  className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg font-medium disabled:opacity-60">
+                  {savingCAPA ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  {savingCAPA ? "Saving…" : "Add CAPA"}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {capas.length === 0 ? (
+            <div className="bg-card border rounded-xl py-12 text-center">
+              <CheckSquare className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
+              <p className="text-sm text-muted-foreground">No CAPAs logged yet</p>
+            </div>
+          ) : (
+            <div className="divide-y border rounded-xl bg-card overflow-hidden">
+              {capas.map(capa => {
+                const statusColors: Record<string, string> = {
+                  open: "bg-amber-100 text-amber-800",
+                  in_progress: "bg-blue-100 text-blue-800",
+                  qa_review: "bg-purple-100 text-purple-800",
+                  completed: "bg-emerald-100 text-emerald-800",
+                  verified: "bg-emerald-200 text-emerald-900",
+                  closed: "bg-gray-100 text-gray-600",
+                  overdue: "bg-red-100 text-red-800",
+                };
+                return (
+                  <div key={capa.id} className="flex items-start gap-3 px-4 py-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold">{capa.title}</p>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${statusColors[capa.status] ?? statusColors.open}`}>
+                          {capa.status.replace(/_/g, " ")}
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 bg-muted rounded text-muted-foreground">{capa.action_type.replace(/_/g, " ")}</span>
+                        {capa.owner_name && <span className="text-xs text-muted-foreground">{capa.owner_name}</span>}
+                        {capa.due_date && <span className="text-xs text-muted-foreground flex items-center gap-1"><Clock className="w-3 h-3" />{capa.due_date}</span>}
+                      </div>
+                      {capa.description && <p className="text-xs text-muted-foreground mt-1">{capa.description}</p>}
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <select value={capa.status}
+                        onChange={async e => {
+                          const res = await inspectionsApi.updateCAPA(id, capa.id, { status: e.target.value });
+                          setCAPAs(prev => prev.map(c => c.id === capa.id ? res.data : c));
+                        }}
+                        className="text-[10px] border rounded px-1.5 py-1 bg-background">
+                        {["open","in_progress","qa_review","completed","verified","closed"].map(s => (
+                          <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                        ))}
+                      </select>
+                      <button onClick={async () => { await inspectionsApi.deleteCAPA(id, capa.id); setCAPAs(prev => prev.filter(c => c.id !== capa.id)); }}
+                        className="p-1.5 text-muted-foreground hover:text-red-500">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Intel / Command Center Tab ─────────────────────────────────────────── */}
       {tab === "intel" && (
         <div className="space-y-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm text-muted-foreground">AI-powered cross-request pattern analysis — predicts 483 likelihood before the inspection ends.</p>
+          {/* Command Center header */}
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <h2 className="font-semibold flex items-center gap-2"><BarChart3 className="w-4 h-4 text-primary" /> Command Center</h2>
+            <div className="flex gap-2">
+              <button onClick={() => loadTabData("intel")} className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent">
+                <RefreshCw className="w-3.5 h-3.5" /> Refresh
+              </button>
+              <button onClick={handleGenerateBrief} disabled={generatingBrief}
+                className="flex items-center gap-2 px-3 py-2 border rounded-lg text-sm hover:bg-accent disabled:opacity-50">
+                {generatingBrief ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-primary" />}
+                {generatingBrief ? "Generating…" : "Daily Brief"}
+              </button>
+              <button onClick={handleRiskAnalysis} disabled={runningAnalysis}
+                className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-60">
+                {runningAnalysis ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BarChart3 className="w-3.5 h-3.5" />}
+                {runningAnalysis ? "Analyzing…" : "Risk Analysis"}
+              </button>
             </div>
-            <button onClick={handleRiskAnalysis} disabled={runningAnalysis}
-              className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium flex-shrink-0 disabled:opacity-60">
-              {runningAnalysis ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BarChart3 className="w-3.5 h-3.5" />}
-              {runningAnalysis ? "Analyzing…" : "Run Risk Analysis"}
-            </button>
+          </div>
+
+          {/* "Are we in control?" panel */}
+          {metrics && (
+            <div className={`rounded-xl border px-5 py-4 ${
+              metrics.control_status === "in_control" ? "bg-emerald-50 border-emerald-200" :
+              metrics.control_status === "manageable" ? "bg-blue-50 border-blue-200" :
+              metrics.control_status === "under_pressure" ? "bg-amber-50 border-amber-200" :
+              "bg-red-50 border-red-200"
+            }`}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Posture</p>
+                  <p className={`text-xl font-bold ${
+                    metrics.control_status === "in_control" ? "text-emerald-800" :
+                    metrics.control_status === "manageable" ? "text-blue-800" :
+                    metrics.control_status === "under_pressure" ? "text-amber-800" :
+                    "text-red-800"
+                  }`}>
+                    {metrics.control_status.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-4 text-center">
+                  {[
+                    { label: "Open", value: metrics.requests.open, color: metrics.requests.open > 5 ? "text-amber-700" : "text-foreground" },
+                    { label: "Overdue", value: metrics.requests.overdue, color: metrics.requests.overdue > 0 ? "text-red-700 font-bold" : "text-foreground" },
+                    { label: "QA Pending", value: metrics.requests.qa_review, color: metrics.requests.qa_review > 0 ? "text-amber-700" : "text-foreground" },
+                  ].map(m => (
+                    <div key={m.label}>
+                      <p className={`text-2xl font-bold ${m.color}`}>{m.value}</p>
+                      <p className="text-[10px] text-muted-foreground">{m.label}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Live metrics grid */}
+          {metrics && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: "Total Requests", value: metrics.requests.total },
+                { label: "Fulfilled", value: metrics.requests.fulfilled },
+                { label: "Released", value: metrics.requests.released },
+                { label: "Completion", value: `${metrics.requests.completion_pct}%` },
+                { label: "Avg Response", value: metrics.requests.avg_response_minutes ? `${metrics.requests.avg_response_minutes}m` : "—" },
+                { label: "Open Commitments", value: metrics.commitments.open },
+                { label: "Active Findings", value: metrics.findings.active },
+                { label: "High-Conf Findings", value: metrics.findings.high_confidence },
+                { label: "SMEs Available", value: metrics.smes.available },
+                { label: "QA Cleared SMEs", value: metrics.smes.qa_cleared },
+                { label: "Packages Staged", value: metrics.packages.staged },
+                { label: "Packages Released", value: metrics.packages.released },
+              ].map(m => (
+                <div key={m.label} className="bg-card border rounded-xl p-3 text-center">
+                  <p className="text-xl font-bold">{m.value}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{m.label}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Daily brief */}
+          {dailyBrief && (
+            <div className="bg-card border rounded-xl p-5">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Today's Brief</p>
+              <p className="text-sm whitespace-pre-line leading-relaxed">{dailyBrief}</p>
+            </div>
+          )}
+
+          {/* Risk analysis (existing) */}
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold">Pattern Risk Analysis</p>
           </div>
 
           {!riskAnalysis ? (
@@ -2435,7 +3202,34 @@ export default function WarRoomPage() {
           {log.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Timeline</p>
-              {[...log].reverse().map(entry => <LogEntryCard key={entry.id} entry={entry} />)}
+              {[...log].reverse().map(entry => (
+                <div key={entry.id} className="group">
+                  <LogEntryCard entry={entry} />
+                  <div className="hidden group-hover:flex items-center gap-1 px-4 pb-2 -mt-1">
+                    <span className="text-[10px] text-muted-foreground mr-1">Convert to:</span>
+                    <button onClick={async () => {
+                      const res = await inspectionsApi.createRequest(id, { request_text: entry.content, criticality: "medium", category: "question" });
+                      setInspection(r => r ? { ...r, requests: [...(r.requests ?? []), res.data], total_requests: (r.total_requests || 0) + 1 } : r);
+                      addToast("Converted to request", "info");
+                    }} className="text-[10px] px-2 py-0.5 border rounded text-muted-foreground hover:text-primary hover:border-primary transition-colors">
+                      Request
+                    </button>
+                    <button onClick={async () => {
+                      await inspectionsApi.createCommitment(id, { commitment_text: entry.content });
+                      addToast("Converted to commitment", "info");
+                    }} className="text-[10px] px-2 py-0.5 border rounded text-muted-foreground hover:text-primary hover:border-primary transition-colors">
+                      Commitment
+                    </button>
+                    <button onClick={async () => {
+                      const res = await inspectionsApi.createPotentialFinding(id, { title: entry.content.slice(0, 80), defense_summary: entry.content });
+                      setPotentialFindings(prev => [res.data, ...prev]);
+                      addToast("Converted to potential finding", "info");
+                    }} className="text-[10px] px-2 py-0.5 border rounded text-muted-foreground hover:text-amber-600 hover:border-amber-400 transition-colors">
+                      Finding
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -2503,11 +3297,114 @@ export default function WarRoomPage() {
               </button>
             )}
             {inspection.status === "post_inspection" && (
-              <Link href={`/inspections/${id}/response`}
+              <button onClick={() => setTab("post")}
                 className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90">
                 <ArrowRight className="w-4 h-4" />
-                Go to Post-Inspection Response
-              </Link>
+                Go to Post-Inspection Workspace
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Post-Inspection Tab ────────────────────────────────────────────────── */}
+      {tab === "post" && (
+        <div className="space-y-5">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h2 className="font-semibold flex items-center gap-2"><ClipboardList className="w-4 h-4 text-primary" /> Post-Inspection Workspace</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Final reconciliation, outcome, lessons learned, and CAPA carryover.</p>
+            </div>
+            <button onClick={() => loadTabData("post")} className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent">
+              <RefreshCw className="w-3.5 h-3.5" /> Refresh
+            </button>
+          </div>
+
+          {/* Summary metrics */}
+          {postSummary && (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              {[
+                { label: "Requests Fulfilled", value: `${postSummary.requests?.fulfilled}/${postSummary.requests?.total}` },
+                { label: "Commitments Open", value: postSummary.commitments?.open },
+                { label: "483s (Final)", value: postSummary.observations?.final },
+                { label: "CAPAs Open", value: postSummary.capas?.open },
+                { label: "Packages Released", value: postSummary.packages?.released },
+              ].map(m => (
+                <div key={m.label} className="bg-card border rounded-xl p-3 text-center">
+                  <p className="text-xl font-bold">{m.value}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{m.label}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Outcome + notes */}
+          <div className="bg-card border rounded-xl p-5 space-y-4">
+            <h3 className="text-sm font-semibold">Inspection Outcome</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block mb-1.5">Outcome</label>
+                <select value={postEdit.outcome}
+                  onChange={e => setPostEdit(f => ({ ...f, outcome: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none">
+                  <option value="">Not set</option>
+                  <option value="no_action">No Action</option>
+                  <option value="eir_pending">EIR Pending</option>
+                  <option value="483_issued">483 Issued</option>
+                  <option value="warning_letter_risk">Warning Letter Risk</option>
+                  <option value="closed_satisfactorily">Closed Satisfactorily</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block mb-1.5">Final 483 Count</label>
+                <input type="number" min={0} value={postEdit.final_483_count}
+                  onChange={e => setPostEdit(f => ({ ...f, final_483_count: parseInt(e.target.value) || 0 }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block mb-1.5">Post-Inspection Notes</label>
+              <textarea value={postEdit.post_inspection_notes}
+                onChange={e => setPostEdit(f => ({ ...f, post_inspection_notes: e.target.value }))}
+                rows={3} placeholder="Executive summary of inspection outcome, inspector stance, areas of concern…"
+                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none resize-none" />
+            </div>
+            <div className="flex justify-end">
+              <button onClick={async () => {
+                setSavingPost(true);
+                try {
+                  await inspectionsApi.updatePostInspection(id, {
+                    outcome: postEdit.outcome || undefined,
+                    final_483_count: postEdit.final_483_count,
+                    post_inspection_notes: postEdit.post_inspection_notes || undefined,
+                  });
+                  addToast("Post-inspection saved", "info");
+                } finally { setSavingPost(false); }
+              }} disabled={savingPost}
+                className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-60">
+                {savingPost ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                {savingPost ? "Saving…" : "Save Outcome"}
+              </button>
+            </div>
+          </div>
+
+          {/* CAPAs quick view */}
+          <div className="bg-card border rounded-xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold">Open CAPAs</h3>
+              <button onClick={() => setTab("capas")} className="text-xs text-primary hover:underline">View all →</button>
+            </div>
+            {capas.filter(c => c.status === "open" || c.status === "in_progress").length === 0 ? (
+              <p className="text-xs text-muted-foreground">No open CAPAs</p>
+            ) : (
+              <ul className="space-y-2">
+                {capas.filter(c => c.status === "open" || c.status === "in_progress").map(capa => (
+                  <li key={capa.id} className="flex items-center justify-between text-sm">
+                    <span>{capa.title}</span>
+                    <span className="text-xs text-muted-foreground">{capa.due_date || "No due date"}</span>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         </div>
