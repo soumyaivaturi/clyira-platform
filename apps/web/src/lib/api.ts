@@ -18,7 +18,10 @@ api.interceptors.response.use(
   (r) => r,
   (error) => {
     const status = error.response?.status;
-    if ((status === 401 || status === 403) && typeof window !== "undefined") {
+    const url = error.config?.url ?? "";
+    // Don't redirect on 401 from the login endpoint itself — let the form's catch handle it
+    const isAuthAttempt = url.includes("/auth/login") || url.includes("/auth/register");
+    if ((status === 401 || status === 403) && typeof window !== "undefined" && !isAuthAttempt) {
       localStorage.removeItem("clyira_token");
       document.cookie = "clyira_token=; path=/; max-age=0";
       window.location.href = "/auth/login";
