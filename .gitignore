@@ -49,3 +49,4 @@ coverage/
 
 # OS
 Thumbs.db
+.vercel

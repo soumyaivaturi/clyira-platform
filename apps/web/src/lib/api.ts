@@ -172,15 +172,80 @@ export const inspectionsApi = {
   get: (id: string) => api.get(`/inspections/${id}`),
   activate: (id: string) => api.patch(`/inspections/${id}/activate`),
   close: (id: string) => api.post(`/inspections/${id}/close`),
-  createRequest: (id: string, data: { request_text: string; criticality?: string; category?: string }) =>
-    api.post(`/inspections/${id}/requests`, data),
+  updatePhase: (id: string, phase: string) => api.patch(`/inspections/${id}/phase`, { phase }),
+
+  // Requests
+  createRequest: (id: string, data: {
+    request_text: string; criticality?: string; category?: string;
+    inspector_name?: string; inspector_department?: string; location?: string;
+    assigned_to?: string;
+  }) => api.post(`/inspections/${id}/requests`, data),
   listRequests: (id: string, status?: string) =>
     api.get(`/inspections/${id}/requests`, { params: status ? { req_status: status } : {} }),
-  updateRequest: (id: string, reqId: string, data: { req_status?: string; response_text?: string }) =>
-    api.patch(`/inspections/${id}/requests/${reqId}`, null, { params: data }),
+  updateRequest: (id: string, reqId: string, data: {
+    req_status?: string; response_text?: string; fulfillment_progress?: number; assigned_to?: string;
+  }) => api.patch(`/inspections/${id}/requests/${reqId}`, null, { params: data }),
+  getOverdueRequests: (id: string) => api.get(`/inspections/${id}/overdue-requests`),
+  analyzeRequest: (inspectionId: string, requestId: string) =>
+    api.post(`/inspections/${inspectionId}/requests/${requestId}/analyze`, {}, { timeout: 60000 }),
+
+  // Request documents
+  addRequestDocument: (id: string, reqId: string, data: { filename: string; file_path?: string; file_size_bytes?: number }) =>
+    api.post(`/inspections/${id}/requests/${reqId}/documents`, data),
+  listRequestDocuments: (id: string, reqId: string) =>
+    api.get(`/inspections/${id}/requests/${reqId}/documents`),
+  updateRequestDocument: (id: string, reqId: string, docId: string, status: string) =>
+    api.patch(`/inspections/${id}/requests/${reqId}/documents/${docId}`, { status }),
+
+  // Comments
+  addComment: (id: string, reqId: string, content: string) =>
+    api.post(`/inspections/${id}/requests/${reqId}/comments`, { content }),
+  listComments: (id: string, reqId: string) =>
+    api.get(`/inspections/${id}/requests/${reqId}/comments`),
+
+  // Commitments
+  createCommitment: (id: string, data: {
+    commitment_text: string; committed_to?: string; deadline_at?: string;
+  }) => api.post(`/inspections/${id}/commitments`, data),
+  listCommitments: (id: string) => api.get(`/inspections/${id}/commitments`),
+  updateCommitment: (id: string, cId: string, data: { status?: string; delivery_note?: string }) =>
+    api.patch(`/inspections/${id}/commitments/${cId}`, data),
+
+  // 483 Observations
+  createObservation: (id: string, data: {
+    observation_text: string; system_area?: string; cfr_citations?: string[];
+    response_deadline?: string;
+  }) => api.post(`/inspections/${id}/observations`, data),
+  listObservations: (id: string) => api.get(`/inspections/${id}/observations`),
+  updateObservation: (id: string, obsId: string, data: {
+    draft_response?: string; status?: string; legal_review_required?: boolean;
+  }) => api.patch(`/inspections/${id}/observations/${obsId}`, data),
+  draftObservationResponse: (id: string, obsId: string) =>
+    api.post(`/inspections/${id}/observations/${obsId}/draft-response`, {}, { timeout: 90000 }),
+
+  // Delivery log
+  createDelivery: (id: string, data: {
+    document_titles: string[]; delivered_to: string; delivery_method?: string;
+    request_id?: string;
+  }) => api.post(`/inspections/${id}/deliveries`, data),
+  listDeliveries: (id: string) => api.get(`/inspections/${id}/deliveries`),
+
+  // Inspector profiles
+  addInspector: (id: string, data: {
+    name: string; fda_district?: string; role?: string; focus_areas?: string[];
+    email?: string; notes?: string;
+  }) => api.post(`/inspections/${id}/inspectors`, data),
+  listInspectors: (id: string) => api.get(`/inspections/${id}/inspectors`),
+  deleteInspector: (id: string, inspId: string) => api.delete(`/inspections/${id}/inspectors/${inspId}`),
+
+  // Intelligence
+  runRiskAnalysis: (id: string) =>
+    api.post(`/inspections/${id}/risk-analysis`, {}, { timeout: 90000 }),
+  generateClosingSummary: (id: string) =>
+    api.post(`/inspections/${id}/closing-summary`, {}, { timeout: 90000 }),
+
+  // Scribe + log
   addScribeEntry: (id: string, data: { content: string; entry_type?: string; tags?: string[] }) =>
     api.post(`/inspections/${id}/scribe`, data),
   getLog: (id: string) => api.get(`/inspections/${id}/log`),
-  analyzeRequest: (inspectionId: string, requestId: string) =>
-    api.post(`/inspections/${inspectionId}/requests/${requestId}/analyze`, {}, { timeout: 60000 }),
 };

@@ -1,5 +1,5 @@
 """AuditLog model — immutable record of all significant platform events (21 CFR Part 11 §11.10(e))."""
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import Column, String, event
 from sqlalchemy.dialects.postgresql import JSONB
@@ -56,5 +56,5 @@ def _stamp_audit_hash(mapper, connection, target):  # noqa: ARG001
         "resource_type": target.resource_type,
         "resource_id": target.resource_id,
         "detail": target.detail,
-        "created_at": str(target.created_at),
+        "created_at": target.created_at.strftime("%Y-%m-%dT%H:%M:%S.%f"),
     })

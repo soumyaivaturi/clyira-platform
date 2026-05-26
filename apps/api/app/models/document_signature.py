@@ -1,5 +1,5 @@
 """DocumentSignature — electronic signatures per 21 CFR Part 11 §11.50, §11.100, §11.200."""
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, String, event
 
@@ -49,12 +49,12 @@ def _hash_signature(signature: DocumentSignature) -> str:
         "user_email": signature.user_email,
         "meaning": signature.meaning,
         "document_content_hash": signature.document_content_hash,
-        "created_at": str(signature.created_at),
+        "created_at": signature.created_at.strftime("%Y-%m-%dT%H:%M:%S.%f"),
     })
 
 
 @event.listens_for(DocumentSignature, "before_insert")
 def _stamp_signature_hash(mapper, connection, target):  # noqa: ARG001
     if not target.created_at:
-        target.created_at = datetime.now(timezone.utc)
+        target.created_at = datetime.utcnow()  # naive — column is TIMESTAMP WITHOUT TIME ZONE
     target.entry_hash = _hash_signature(target)

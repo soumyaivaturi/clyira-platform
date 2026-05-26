@@ -5,7 +5,7 @@ set -e
 # on DBs that were created via SQLAlchemy create_all() with no alembic history.
 # All statements use IF NOT EXISTS / IF EXISTS so this is fully idempotent.
 python3 - <<'PYEOF'
-import asyncio, os, sys
+import asyncio, os, re, sys
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -14,8 +14,8 @@ if not raw_url:
     print("ERROR: DATABASE_URL not set", file=sys.stderr)
     sys.exit(1)
 
-# Ensure asyncpg driver scheme for SQLAlchemy async
-url = raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+# Normalise to asyncpg scheme — handles both postgres:// (Render/Heroku) and postgresql://
+url = re.sub(r'^postgres(ql)?://', 'postgresql+asyncpg://', raw_url)
 
 MIGRATIONS = [
     # users — Part 11 security columns missing from baseline
@@ -30,6 +30,19 @@ MIGRATIONS = [
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS after_state JSONB",
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS session_id VARCHAR(64)",
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS entry_hash VARCHAR(64)",
+    # Stamp alembic_version so future alembic upgrade head only runs truly new migrations
+    """
+    DO $$
+    BEGIN
+        CREATE TABLE IF NOT EXISTS alembic_version (
+            version_num VARCHAR(32) NOT NULL,
+            CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
+        );
+        IF NOT EXISTS (SELECT 1 FROM alembic_version) THEN
+            INSERT INTO alembic_version (version_num) VALUES ('20260525_0001');
+        END IF;
+    END $$
+    """,
 ]
 
 async def main():
@@ -42,5 +55,8 @@ async def main():
 
 asyncio.run(main())
 PYEOF
+
+# Apply any Alembic migrations added after the stamped revision
+python3 -m alembic upgrade head
 
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1

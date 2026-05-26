@@ -43,11 +43,12 @@ async def _audit(
         detail=detail or {},
         ip_address=ip,
     )
-    db.add(entry)
     try:
-        await db.flush()
+        async with db.begin_nested():  # SAVEPOINT — rollback only affects this block
+            db.add(entry)
+            await db.flush()
     except Exception:
-        await db.rollback()
+        pass  # savepoint rolled back; parent transaction and user state mutations are intact
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────

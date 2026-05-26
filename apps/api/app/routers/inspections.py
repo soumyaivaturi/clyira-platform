@@ -3,42 +3,32 @@ Real-Time Audit Support Router — Module 3
 Live inspection management, AI agents, request board, post-inspection
 """
 import logging
+from datetime import datetime, timedelta
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.models.inspection import Inspection, InspectionRequest, InspectionLog
+from app.models.inspection import Inspection, InspectionRequest, InspectionLog, SLA_MINUTES
+from app.models.inspection_commitment import InspectionCommitment
+from app.models.inspection_observation import InspectionObservation
+from app.models.inspection_delivery import InspectionDeliveryLog
+from app.models.inspection_inspector import InspectionInspector
+from app.models.inspection_request_document import InspectionRequestDocument
+from app.models.inspection_request_comment import InspectionRequestComment
 from app.models.user import User
 from app.models.base import generate_uuid
 
 router = APIRouter()
 
 
-class InspectionCreate(BaseModel):
-    title: str
-    agency: Optional[str] = None
-    inspection_type: Optional[str] = "routine"
-    start_date: Optional[str] = None
-
-
-class InspectionRequestCreate(BaseModel):
-    request_text: str
-    criticality: str = "medium"
-    category: Optional[str] = "question"
-
-
-class ScribeEntryCreate(BaseModel):
-    content: str
-    entry_type: str = "scribe_note"
-    tags: list[str] = []
-
+# ── Serialisers ─────────────────────────────────────────────────────────────────
 
 def _inspection_out(insp: Inspection) -> dict:
     return {
@@ -47,15 +37,135 @@ def _inspection_out(insp: Inspection) -> dict:
         "agency": insp.agency,
         "inspection_type": insp.inspection_type,
         "status": insp.status,
+        "current_phase": insp.current_phase,
         "start_date": insp.start_date,
         "end_date": insp.end_date,
+        "inspection_scope": insp.inspection_scope or [],
+        "agenda": insp.agenda or [],
         "total_requests": insp.total_requests or 0,
         "ai_agents_count": len(insp.ai_agents_active) if insp.ai_agents_active else 0,
         "created_at": str(insp.created_at),
     }
 
 
-# ── Inspection lifecycle ────────────────────────────────────────────────────────
+def _request_out(r: InspectionRequest) -> dict:
+    return {
+        "id": r.id,
+        "request_number": r.request_number,
+        "request_text": r.request_text,
+        "criticality": r.criticality,
+        "category": r.category,
+        "inspector_name": r.inspector_name,
+        "inspector_department": r.inspector_department,
+        "location": r.location,
+        "assigned_to": r.assigned_to,
+        "assigned_to_name": r.assigned_to_name,
+        "assigned_to_title": r.assigned_to_title,
+        "sla_minutes": r.sla_minutes,
+        "due_at": r.due_at,
+        "status": r.status,
+        "fulfillment_progress": r.fulfillment_progress or 0,
+        "response_text": r.response_text,
+        "ai_talking_points": r.ai_talking_points or [],
+        "ai_suggested_documents": r.ai_suggested_documents or [],
+        "ai_risk_assessment": r.ai_risk_assessment,
+        "created_at": str(r.created_at),
+    }
+
+
+# ── Schemas ──────────────────────────────────────────────────────────────────────
+
+class InspectionCreate(BaseModel):
+    title: str
+    agency: Optional[str] = None
+    inspection_type: Optional[str] = "routine"
+    start_date: Optional[str] = None
+    inspection_scope: Optional[list[str]] = None
+
+
+class InspectionRequestCreate(BaseModel):
+    request_text: str
+    criticality: str = "medium"
+    category: Optional[str] = "question"
+    inspector_name: Optional[str] = None
+    inspector_department: Optional[str] = None
+    location: Optional[str] = None
+    assigned_to_name: Optional[str] = None
+    assigned_to_title: Optional[str] = None
+
+
+class ScribeEntryCreate(BaseModel):
+    content: str
+    entry_type: str = "scribe_note"
+    tags: list[str] = []
+    location: Optional[str] = None
+
+
+class CommitmentCreate(BaseModel):
+    commitment_text: str
+    committed_by: Optional[str] = None
+    committed_to: Optional[str] = None
+    deadline_at: Optional[str] = None
+    request_id: Optional[str] = None
+
+
+class ObservationCreate(BaseModel):
+    observation_text: str
+    system_area: Optional[str] = None
+    cfr_citations: list[str] = []
+    response_deadline: Optional[str] = None
+    legal_review_required: bool = False
+
+
+class DeliveryCreate(BaseModel):
+    document_titles: list[str]
+    delivered_to: Optional[str] = None
+    delivery_method: str = "portal"
+    request_id: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class InspectorCreate(BaseModel):
+    name: str
+    fda_district: Optional[str] = None
+    role: str = "lead"
+    focus_areas: list[str] = []
+    email: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class RequestDocumentCreate(BaseModel):
+    filename: str
+    file_size_bytes: Optional[int] = None
+    file_path: Optional[str] = None
+
+
+class RequestCommentCreate(BaseModel):
+    content: str
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────────
+
+async def _verify_inspection(db: AsyncSession, inspection_id: str, company_id: str) -> Inspection:
+    result = await db.execute(
+        select(Inspection).where(
+            Inspection.id == inspection_id,
+            Inspection.company_id == company_id,
+        )
+    )
+    insp = result.scalar_one_or_none()
+    if not insp:
+        raise HTTPException(status_code=404, detail="Inspection not found")
+    return insp
+
+
+def _compute_due_at(criticality: str) -> tuple[int, str]:
+    sla = SLA_MINUTES.get(criticality, 60)
+    due = datetime.utcnow() + timedelta(minutes=sla)
+    return sla, due.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+# ── Inspection lifecycle ─────────────────────────────────────────────────────────
 
 @router.get("/", response_model=dict)
 async def list_inspections(
@@ -86,6 +196,7 @@ async def create_inspection(
         agency=data.agency,
         inspection_type=data.inspection_type,
         start_date=data.start_date,
+        inspection_scope=data.inspection_scope or [],
         status="planned",
         total_requests=0,
         ai_agents_active=["scribe", "prep_manager", "sme_coach", "qa_agent", "doc_reviewer"],
@@ -102,39 +213,34 @@ async def get_inspection(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Inspection).where(
-            Inspection.id == inspection_id,
-            Inspection.company_id == current_user.company_id,
-        )
-    )
-    inspection = result.scalar_one_or_none()
-    if not inspection:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inspection not found")
+    inspection = await _verify_inspection(db, inspection_id, current_user.company_id)
 
     req_result = await db.execute(
         select(InspectionRequest).where(InspectionRequest.inspection_id == inspection_id)
-        .order_by(InspectionRequest.created_at.desc())
+        .order_by(InspectionRequest.request_number.asc().nullslast(), InspectionRequest.created_at.desc())
     )
     requests = req_result.scalars().all()
 
+    inspectors_result = await db.execute(
+        select(InspectionInspector).where(InspectionInspector.inspection_id == inspection_id)
+    )
+    inspectors = inspectors_result.scalars().all()
+
     out = _inspection_out(inspection)
-    out["requests"] = [
-        {
-            "id": r.id,
-            "request_text": r.request_text,
-            "criticality": r.criticality,
-            "category": r.category,
-            "status": r.status,
-            "response_text": r.response_text,
-            "ai_talking_points": r.ai_talking_points or [],
-            "ai_suggested_documents": r.ai_suggested_documents or [],
-            "ai_risk_assessment": r.ai_risk_assessment,
-            "created_at": str(r.created_at),
-        }
-        for r in requests
-    ]
+    out["requests"] = [_request_out(r) for r in requests]
     out["ai_agents"] = inspection.ai_agents_active or []
+    out["inspectors"] = [
+        {
+            "id": i.id,
+            "name": i.name,
+            "fda_district": i.fda_district,
+            "role": i.role,
+            "focus_areas": i.focus_areas or [],
+            "email": i.email,
+            "notes": i.notes,
+        }
+        for i in inspectors
+    ]
     return out
 
 
@@ -144,17 +250,9 @@ async def activate_inspection(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Inspection).where(
-            Inspection.id == inspection_id,
-            Inspection.company_id == current_user.company_id,
-        )
-    )
-    inspection = result.scalar_one_or_none()
-    if not inspection:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inspection not found")
-
+    inspection = await _verify_inspection(db, inspection_id, current_user.company_id)
     inspection.status = "active"
+    inspection.current_phase = "opening_meeting"
     await db.commit()
     return _inspection_out(inspection)
 
@@ -165,22 +263,29 @@ async def close_inspection(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Inspection).where(
-            Inspection.id == inspection_id,
-            Inspection.company_id == current_user.company_id,
-        )
-    )
-    inspection = result.scalar_one_or_none()
-    if not inspection:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inspection not found")
-
+    inspection = await _verify_inspection(db, inspection_id, current_user.company_id)
     inspection.status = "post_inspection"
     await db.commit()
     return _inspection_out(inspection)
 
 
-# ── Request board ───────────────────────────────────────────────────────────────
+@router.patch("/{inspection_id}/phase", response_model=dict)
+async def update_phase(
+    inspection_id: str,
+    phase: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    valid = {"opening_meeting", "facility_tour", "document_review", "systems_review", "closing_meeting"}
+    if phase not in valid:
+        raise HTTPException(status_code=400, detail=f"phase must be one of: {', '.join(sorted(valid))}")
+    inspection = await _verify_inspection(db, inspection_id, current_user.company_id)
+    inspection.current_phase = phase
+    await db.commit()
+    return {"inspection_id": inspection_id, "current_phase": phase}
+
+
+# ── Request board ────────────────────────────────────────────────────────────────
 
 @router.post("/{inspection_id}/requests", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def create_request(
@@ -189,40 +294,40 @@ async def create_request(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Inspection).where(
-            Inspection.id == inspection_id,
-            Inspection.company_id == current_user.company_id,
-        )
+    inspection = await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    # Auto-increment request number within this inspection
+    count_result = await db.execute(
+        select(func.count()).select_from(InspectionRequest)
+        .where(InspectionRequest.inspection_id == inspection_id)
     )
-    inspection = result.scalar_one_or_none()
-    if not inspection:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inspection not found")
+    next_number = (count_result.scalar() or 0) + 1
+
+    sla_minutes, due_at = _compute_due_at(data.criticality)
 
     req = InspectionRequest(
         id=generate_uuid(),
         inspection_id=inspection_id,
+        request_number=next_number,
         request_text=data.request_text,
         criticality=data.criticality,
         category=data.category or "question",
+        inspector_name=data.inspector_name,
+        inspector_department=data.inspector_department,
+        location=data.location,
+        assigned_to_name=data.assigned_to_name,
+        assigned_to_title=data.assigned_to_title,
+        sla_minutes=sla_minutes,
+        due_at=due_at,
         status="open",
+        fulfillment_progress=0,
     )
     db.add(req)
 
     inspection.total_requests = (inspection.total_requests or 0) + 1
     await db.commit()
     await db.refresh(req)
-
-    return {
-        "id": req.id,
-        "inspection_id": inspection_id,
-        "request_text": req.request_text,
-        "criticality": req.criticality,
-        "category": req.category,
-        "status": req.status,
-        "ai_suggested_documents": [],
-        "ai_talking_points": [],
-    }
+    return _request_out(req)
 
 
 @router.get("/{inspection_id}/requests", response_model=dict)
@@ -235,25 +340,29 @@ async def list_requests(
     query = select(InspectionRequest).where(InspectionRequest.inspection_id == inspection_id)
     if req_status:
         query = query.where(InspectionRequest.status == req_status)
-    query = query.order_by(InspectionRequest.created_at.desc())
+    query = query.order_by(InspectionRequest.request_number.asc().nullslast())
     result = await db.execute(query)
-    requests = result.scalars().all()
+    return {"inspection_id": inspection_id, "requests": [_request_out(r) for r in result.scalars().all()]}
 
-    return {
-        "inspection_id": inspection_id,
-        "requests": [
-            {
-                "id": r.id,
-                "request_text": r.request_text,
-                "criticality": r.criticality,
-                "category": r.category,
-                "status": r.status,
-                "response_text": r.response_text,
-                "created_at": str(r.created_at),
-            }
-            for r in requests
-        ],
-    }
+
+@router.get("/{inspection_id}/overdue-requests", response_model=dict)
+async def overdue_requests(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    now_str = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    result = await db.execute(
+        select(InspectionRequest).where(
+            InspectionRequest.inspection_id == inspection_id,
+            InspectionRequest.status.in_(["open", "in_progress"]),
+            InspectionRequest.due_at <= now_str,
+            InspectionRequest.due_at.isnot(None),
+        )
+    )
+    overdue = result.scalars().all()
+    return {"inspection_id": inspection_id, "overdue": [_request_out(r) for r in overdue], "count": len(overdue)}
 
 
 @router.patch("/{inspection_id}/requests/{request_id}", response_model=dict)
@@ -262,6 +371,8 @@ async def update_request(
     request_id: str,
     req_status: Optional[str] = None,
     response_text: Optional[str] = None,
+    fulfillment_progress: Optional[int] = None,
+    assigned_to_name: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -273,18 +384,721 @@ async def update_request(
     )
     req = result.scalar_one_or_none()
     if not req:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+        raise HTTPException(status_code=404, detail="Request not found")
 
     if req_status:
         req.status = req_status
-    if response_text:
+    if response_text is not None:
         req.response_text = response_text
+    if fulfillment_progress is not None:
+        req.fulfillment_progress = max(0, min(100, fulfillment_progress))
+    if assigned_to_name is not None:
+        req.assigned_to_name = assigned_to_name
 
     await db.commit()
-    return {"request_id": request_id, "status": req.status, "updated": True}
+    return _request_out(req)
 
 
-# ── Scribe ──────────────────────────────────────────────────────────────────────
+# ── Request documents ────────────────────────────────────────────────────────────
+
+@router.post("/{inspection_id}/requests/{request_id}/documents", response_model=dict, status_code=201)
+async def add_request_document(
+    inspection_id: str,
+    request_id: str,
+    data: RequestDocumentCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    doc = InspectionRequestDocument(
+        id=generate_uuid(),
+        request_id=request_id,
+        inspection_id=inspection_id,
+        filename=data.filename,
+        file_size_bytes=data.file_size_bytes,
+        file_path=data.file_path,
+        status="pending",
+        uploaded_by=current_user.id,
+    )
+    db.add(doc)
+    await db.commit()
+    await db.refresh(doc)
+    return {"id": doc.id, "filename": doc.filename, "file_size_bytes": doc.file_size_bytes,
+            "status": doc.status, "created_at": str(doc.created_at)}
+
+
+@router.get("/{inspection_id}/requests/{request_id}/documents", response_model=dict)
+async def list_request_documents(
+    inspection_id: str,
+    request_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(InspectionRequestDocument).where(
+            InspectionRequestDocument.request_id == request_id,
+            InspectionRequestDocument.inspection_id == inspection_id,
+        ).order_by(InspectionRequestDocument.created_at.asc())
+    )
+    docs = result.scalars().all()
+    return {
+        "request_id": request_id,
+        "documents": [
+            {"id": d.id, "filename": d.filename, "file_size_bytes": d.file_size_bytes,
+             "status": d.status, "created_at": str(d.created_at)}
+            for d in docs
+        ],
+    }
+
+
+@router.patch("/{inspection_id}/requests/{request_id}/documents/{doc_id}", response_model=dict)
+async def update_request_document(
+    inspection_id: str,
+    request_id: str,
+    doc_id: str,
+    doc_status: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(InspectionRequestDocument).where(
+            InspectionRequestDocument.id == doc_id,
+            InspectionRequestDocument.request_id == request_id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    doc.status = doc_status
+    await db.commit()
+    return {"id": doc_id, "status": doc.status}
+
+
+# ── Request comments ──────────────────────────────────────────────────────────────
+
+@router.post("/{inspection_id}/requests/{request_id}/comments", response_model=dict, status_code=201)
+async def add_comment(
+    inspection_id: str,
+    request_id: str,
+    data: RequestCommentCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    comment = InspectionRequestComment(
+        id=generate_uuid(),
+        request_id=request_id,
+        inspection_id=inspection_id,
+        author_id=current_user.id,
+        author_name=current_user.full_name,
+        content=data.content,
+    )
+    db.add(comment)
+    await db.commit()
+    await db.refresh(comment)
+    return {"id": comment.id, "author_name": comment.author_name,
+            "content": comment.content, "created_at": str(comment.created_at)}
+
+
+@router.get("/{inspection_id}/requests/{request_id}/comments", response_model=dict)
+async def list_comments(
+    inspection_id: str,
+    request_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(InspectionRequestComment).where(
+            InspectionRequestComment.request_id == request_id,
+        ).order_by(InspectionRequestComment.created_at.asc())
+    )
+    comments = result.scalars().all()
+    return {
+        "request_id": request_id,
+        "comments": [
+            {"id": c.id, "author_name": c.author_name, "content": c.content,
+             "created_at": str(c.created_at)}
+            for c in comments
+        ],
+    }
+
+
+# ── Commitments ───────────────────────────────────────────────────────────────────
+
+@router.post("/{inspection_id}/commitments", response_model=dict, status_code=201)
+async def create_commitment(
+    inspection_id: str,
+    data: CommitmentCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    commitment = InspectionCommitment(
+        id=generate_uuid(),
+        inspection_id=inspection_id,
+        request_id=data.request_id,
+        commitment_text=data.commitment_text,
+        committed_by=data.committed_by,
+        committed_to=data.committed_to,
+        deadline_at=data.deadline_at,
+        status="pending",
+        created_by=current_user.id,
+    )
+    db.add(commitment)
+    await db.commit()
+    await db.refresh(commitment)
+    return {
+        "id": commitment.id,
+        "commitment_text": commitment.commitment_text,
+        "committed_by": commitment.committed_by,
+        "committed_to": commitment.committed_to,
+        "deadline_at": commitment.deadline_at,
+        "status": commitment.status,
+        "created_at": str(commitment.created_at),
+    }
+
+
+@router.get("/{inspection_id}/commitments", response_model=dict)
+async def list_commitments(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionCommitment).where(InspectionCommitment.inspection_id == inspection_id)
+        .order_by(InspectionCommitment.created_at.asc())
+    )
+    items = result.scalars().all()
+    return {
+        "inspection_id": inspection_id,
+        "commitments": [
+            {
+                "id": c.id,
+                "commitment_text": c.commitment_text,
+                "committed_by": c.committed_by,
+                "committed_to": c.committed_to,
+                "deadline_at": c.deadline_at,
+                "status": c.status,
+                "delivered_at": c.delivered_at,
+                "delivery_note": c.delivery_note,
+                "request_id": c.request_id,
+                "created_at": str(c.created_at),
+            }
+            for c in items
+        ],
+    }
+
+
+@router.patch("/{inspection_id}/commitments/{commitment_id}", response_model=dict)
+async def update_commitment(
+    inspection_id: str,
+    commitment_id: str,
+    commit_status: Optional[str] = None,
+    delivery_note: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(InspectionCommitment).where(
+            InspectionCommitment.id == commitment_id,
+            InspectionCommitment.inspection_id == inspection_id,
+        )
+    )
+    c = result.scalar_one_or_none()
+    if not c:
+        raise HTTPException(status_code=404, detail="Commitment not found")
+    if commit_status:
+        c.status = commit_status
+        if commit_status == "delivered" and not c.delivered_at:
+            c.delivered_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    if delivery_note is not None:
+        c.delivery_note = delivery_note
+    await db.commit()
+    return {"id": commitment_id, "status": c.status, "delivered_at": c.delivered_at}
+
+
+# ── 483 Observations ──────────────────────────────────────────────────────────────
+
+@router.post("/{inspection_id}/observations", response_model=dict, status_code=201)
+async def create_observation(
+    inspection_id: str,
+    data: ObservationCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    count_result = await db.execute(
+        select(func.count()).select_from(InspectionObservation)
+        .where(InspectionObservation.inspection_id == inspection_id)
+    )
+    next_num = (count_result.scalar() or 0) + 1
+
+    obs = InspectionObservation(
+        id=generate_uuid(),
+        inspection_id=inspection_id,
+        observation_number=next_num,
+        observation_text=data.observation_text,
+        system_area=data.system_area,
+        cfr_citations=data.cfr_citations,
+        response_deadline=data.response_deadline,
+        legal_review_required=data.legal_review_required,
+        status="draft",
+        created_by=current_user.id,
+    )
+    db.add(obs)
+    await db.commit()
+    await db.refresh(obs)
+    return _obs_out(obs)
+
+
+def _obs_out(obs: InspectionObservation) -> dict:
+    return {
+        "id": obs.id,
+        "observation_number": obs.observation_number,
+        "observation_text": obs.observation_text,
+        "system_area": obs.system_area,
+        "cfr_citations": obs.cfr_citations or [],
+        "draft_response": obs.draft_response,
+        "supporting_evidence": obs.supporting_evidence or [],
+        "response_deadline": obs.response_deadline,
+        "legal_review_required": obs.legal_review_required,
+        "status": obs.status,
+        "created_at": str(obs.created_at),
+    }
+
+
+@router.get("/{inspection_id}/observations", response_model=dict)
+async def list_observations(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionObservation).where(InspectionObservation.inspection_id == inspection_id)
+        .order_by(InspectionObservation.observation_number.asc())
+    )
+    return {"inspection_id": inspection_id, "observations": [_obs_out(o) for o in result.scalars().all()]}
+
+
+@router.patch("/{inspection_id}/observations/{obs_id}", response_model=dict)
+async def update_observation(
+    inspection_id: str,
+    obs_id: str,
+    obs_status: Optional[str] = None,
+    draft_response: Optional[str] = None,
+    supporting_evidence: Optional[list[str]] = None,
+    legal_review_required: Optional[bool] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(InspectionObservation).where(
+            InspectionObservation.id == obs_id,
+            InspectionObservation.inspection_id == inspection_id,
+        )
+    )
+    obs = result.scalar_one_or_none()
+    if not obs:
+        raise HTTPException(status_code=404, detail="Observation not found")
+    if obs_status:
+        obs.status = obs_status
+    if draft_response is not None:
+        obs.draft_response = draft_response
+    if supporting_evidence is not None:
+        obs.supporting_evidence = supporting_evidence
+    if legal_review_required is not None:
+        obs.legal_review_required = legal_review_required
+    await db.commit()
+    return _obs_out(obs)
+
+
+@router.post("/{inspection_id}/observations/{obs_id}/draft-response", response_model=dict)
+async def ai_draft_observation_response(
+    inspection_id: str,
+    obs_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.engines.llm_engine import _llm_available, _call_llm
+    from app.models.document import Document
+    result = await db.execute(
+        select(InspectionObservation).where(
+            InspectionObservation.id == obs_id,
+            InspectionObservation.inspection_id == inspection_id,
+        )
+    )
+    obs = result.scalar_one_or_none()
+    if not obs:
+        raise HTTPException(status_code=404, detail="Observation not found")
+
+    if not _llm_available():
+        return {"obs_id": obs_id, "draft_response": "LLM not configured.", "error": "llm_unavailable"}
+
+    doc_result = await db.execute(
+        select(Document.title).where(Document.company_id == current_user.company_id).limit(30)
+    )
+    doc_titles = "\n".join(f"- {r[0]}" for r in doc_result.all())
+
+    prompt = f"""You are a regulatory expert drafting a formal FDA Form 483 observation response.
+
+Observation #{obs.observation_number}: {obs.observation_text}
+System area: {obs.system_area or "Not specified"}
+CFR citations: {', '.join(obs.cfr_citations or []) or "Not specified"}
+
+Available company documents:
+{doc_titles or "No documents listed."}
+
+Draft a professional, factual FDA 483 response that:
+1. Acknowledges the observation without admitting systematic failure
+2. Describes immediate corrective action already taken
+3. Describes the long-term CAPA plan with a specific timeline
+4. References any relevant SOPs or records
+5. Ends with a commitment statement
+
+Keep the tone factual and respectful. Use 3-5 paragraphs. Respond with the draft text only."""
+
+    try:
+        draft = await _call_llm(
+            "You are a pharmaceutical regulatory affairs expert writing FDA 483 responses.",
+            prompt,
+        )
+        obs.draft_response = draft
+        await db.commit()
+        return {"obs_id": obs_id, "draft_response": draft}
+    except Exception as e:
+        logger.warning(f"483 draft failed: {e}")
+        return {"obs_id": obs_id, "draft_response": None, "error": str(e)}
+
+
+# ── Document delivery log ──────────────────────────────────────────────────────────
+
+@router.post("/{inspection_id}/deliveries", response_model=dict, status_code=201)
+async def log_delivery(
+    inspection_id: str,
+    data: DeliveryCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    entry = InspectionDeliveryLog(
+        id=generate_uuid(),
+        inspection_id=inspection_id,
+        request_id=data.request_id,
+        document_titles=data.document_titles,
+        delivered_to=data.delivered_to,
+        delivery_method=data.delivery_method,
+        delivered_by=current_user.id,
+        delivered_at=datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+        notes=data.notes,
+    )
+    db.add(entry)
+
+    # Mark linked request as fulfilled if provided
+    if data.request_id:
+        req_result = await db.execute(
+            select(InspectionRequest).where(InspectionRequest.id == data.request_id)
+        )
+        req = req_result.scalar_one_or_none()
+        if req and req.status not in ("fulfilled", "declined"):
+            req.status = "fulfilled"
+            req.fulfillment_progress = 100
+
+    await db.commit()
+    await db.refresh(entry)
+    return {
+        "id": entry.id,
+        "document_titles": entry.document_titles,
+        "delivered_to": entry.delivered_to,
+        "delivery_method": entry.delivery_method,
+        "delivered_at": entry.delivered_at,
+        "acknowledgment_received": entry.acknowledgment_received,
+        "notes": entry.notes,
+        "created_at": str(entry.created_at),
+    }
+
+
+@router.get("/{inspection_id}/deliveries", response_model=dict)
+async def list_deliveries(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionDeliveryLog).where(InspectionDeliveryLog.inspection_id == inspection_id)
+        .order_by(InspectionDeliveryLog.created_at.desc())
+    )
+    items = result.scalars().all()
+    return {
+        "inspection_id": inspection_id,
+        "deliveries": [
+            {
+                "id": d.id,
+                "document_titles": d.document_titles or [],
+                "delivered_to": d.delivered_to,
+                "delivery_method": d.delivery_method,
+                "delivered_at": d.delivered_at,
+                "acknowledgment_received": d.acknowledgment_received,
+                "request_id": d.request_id,
+                "notes": d.notes,
+                "created_at": str(d.created_at),
+            }
+            for d in items
+        ],
+        "total_docs": sum(len(d.document_titles or []) for d in items),
+    }
+
+
+# ── Inspector profiles ──────────────────────────────────────────────────────────────
+
+@router.post("/{inspection_id}/inspectors", response_model=dict, status_code=201)
+async def add_inspector(
+    inspection_id: str,
+    data: InspectorCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    inspector = InspectionInspector(
+        id=generate_uuid(),
+        inspection_id=inspection_id,
+        name=data.name,
+        fda_district=data.fda_district,
+        role=data.role,
+        focus_areas=data.focus_areas,
+        email=data.email,
+        notes=data.notes,
+    )
+    db.add(inspector)
+    await db.commit()
+    await db.refresh(inspector)
+    return {
+        "id": inspector.id,
+        "name": inspector.name,
+        "fda_district": inspector.fda_district,
+        "role": inspector.role,
+        "focus_areas": inspector.focus_areas or [],
+        "email": inspector.email,
+        "notes": inspector.notes,
+    }
+
+
+@router.get("/{inspection_id}/inspectors", response_model=dict)
+async def list_inspectors(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+    result = await db.execute(
+        select(InspectionInspector).where(InspectionInspector.inspection_id == inspection_id)
+    )
+    items = result.scalars().all()
+    return {
+        "inspection_id": inspection_id,
+        "inspectors": [
+            {"id": i.id, "name": i.name, "fda_district": i.fda_district, "role": i.role,
+             "focus_areas": i.focus_areas or [], "email": i.email, "notes": i.notes}
+            for i in items
+        ],
+    }
+
+
+@router.delete("/{inspection_id}/inspectors/{inspector_id}", status_code=204)
+async def remove_inspector(
+    inspection_id: str,
+    inspector_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(InspectionInspector).where(
+            InspectionInspector.id == inspector_id,
+            InspectionInspector.inspection_id == inspection_id,
+        )
+    )
+    inspector = result.scalar_one_or_none()
+    if not inspector:
+        raise HTTPException(status_code=404, detail="Inspector not found")
+    await db.delete(inspector)
+    await db.commit()
+
+
+# ── Cross-request risk analysis ────────────────────────────────────────────────────
+
+@router.post("/{inspection_id}/risk-analysis", response_model=dict)
+async def run_risk_analysis(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.engines.llm_engine import _llm_available, _call_llm
+    import json, re
+
+    await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    req_result = await db.execute(
+        select(InspectionRequest).where(InspectionRequest.inspection_id == inspection_id)
+        .order_by(InspectionRequest.created_at.asc())
+    )
+    requests = req_result.scalars().all()
+
+    if not requests:
+        return {"inspection_id": inspection_id, "risk_areas": [], "overall_risk": "No requests yet.",
+                "recommendation": "Begin logging inspector requests to enable risk analysis."}
+
+    if not _llm_available():
+        return {"inspection_id": inspection_id, "risk_areas": [], "overall_risk": "LLM unavailable.",
+                "recommendation": "Configure LLM API key to enable risk analysis."}
+
+    request_list = "\n".join(
+        f"REQ-{r.request_number or '?'} [{r.criticality}] ({r.category}): {r.request_text}"
+        for r in requests
+    )
+
+    prompt = f"""You are an FDA inspection expert analyzing patterns in inspector requests to predict likely 483 observations.
+
+Inspector requests so far:
+{request_list}
+
+Analyze these requests and identify likely FDA 483 observation areas. Group related requests by regulatory topic.
+
+Respond with ONLY valid JSON:
+{{
+  "risk_areas": [
+    {{
+      "area": "<system/topic area>",
+      "cfr_section": "<primary CFR citation e.g. 21 CFR 211.188>",
+      "request_count": <number of related requests>,
+      "risk_level": "<high|medium|low>",
+      "likelihood": "<percentage e.g. 78%>",
+      "basis": "<1-2 sentence explanation of why this is a risk based on the request pattern>"
+    }}
+  ],
+  "overall_risk": "<one sentence overall risk assessment>",
+  "recommendation": "<one sentence top recommendation for the war room team>"
+}}
+
+Rank risk_areas from highest to lowest risk. Include all identifiable risk areas."""
+
+    try:
+        raw = await _call_llm(
+            "You are an FDA inspection expert analyzing inspection request patterns.",
+            prompt,
+        )
+        json_match = re.search(r'\{[\s\S]*\}', raw)
+        if not json_match:
+            raise ValueError("No JSON in response")
+        data = json.loads(json_match.group())
+        return {
+            "inspection_id": inspection_id,
+            "risk_areas": data.get("risk_areas", []),
+            "overall_risk": data.get("overall_risk", ""),
+            "recommendation": data.get("recommendation", ""),
+            "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+            "request_count": len(requests),
+        }
+    except Exception as e:
+        logger.warning(f"Risk analysis failed: {e}")
+        return {"inspection_id": inspection_id, "risk_areas": [], "overall_risk": "Analysis failed.",
+                "recommendation": "Please retry.", "error": str(e)}
+
+
+# ── Closing meeting summary ────────────────────────────────────────────────────────
+
+@router.post("/{inspection_id}/closing-summary", response_model=dict)
+async def generate_closing_summary(
+    inspection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.engines.llm_engine import _llm_available, _call_llm
+
+    inspection = await _verify_inspection(db, inspection_id, current_user.company_id)
+
+    if not _llm_available():
+        return {"inspection_id": inspection_id, "summary": "LLM not configured.", "error": "llm_unavailable"}
+
+    req_result = await db.execute(
+        select(InspectionRequest).where(InspectionRequest.inspection_id == inspection_id)
+    )
+    requests = req_result.scalars().all()
+
+    commit_result = await db.execute(
+        select(InspectionCommitment).where(InspectionCommitment.inspection_id == inspection_id)
+    )
+    commitments = commit_result.scalars().all()
+
+    obs_result = await db.execute(
+        select(InspectionObservation).where(InspectionObservation.inspection_id == inspection_id)
+    )
+    observations = obs_result.scalars().all()
+
+    requests_summary = "\n".join(
+        f"- REQ-{r.request_number or '?'} [{r.status}]: {r.request_text[:120]}"
+        for r in requests
+    ) or "No requests logged."
+
+    commitments_summary = "\n".join(
+        f"- {c.commitment_text} (deadline: {c.deadline_at or 'TBD'}, status: {c.status})"
+        for c in commitments
+    ) or "No commitments logged."
+
+    observations_summary = "\n".join(
+        f"- OBS-{o.observation_number}: {o.observation_text[:120]} [{o.status}]"
+        for o in observations
+    ) or "No formal observations noted."
+
+    prompt = f"""Generate a professional FDA inspection closing meeting summary.
+
+Inspection: {inspection.title}
+Agency: {inspection.agency or 'FDA'}
+Type: {inspection.inspection_type or 'Routine GMP'}
+
+REQUESTS RECEIVED ({len(requests)} total):
+{requests_summary}
+
+COMMITMENTS MADE ({len(commitments)} total):
+{commitments_summary}
+
+OBSERVATIONS NOTED ({len(observations)} total):
+{observations_summary}
+
+Write a structured closing meeting summary with these sections:
+1. Inspection Overview (2-3 sentences on what was inspected)
+2. Areas Reviewed (bullet list)
+3. Outstanding Items (any open requests still pending)
+4. Commitments Made (all commitments with deadlines)
+5. Formal Observations (if any, with status)
+6. Next Steps (what happens after the inspection closes)
+
+Be professional, factual, and concise. This will be read in the closing meeting with the inspector present."""
+
+    try:
+        summary = await _call_llm(
+            "You are a pharmaceutical GMP expert preparing an inspection closing meeting summary.",
+            prompt,
+        )
+        return {
+            "inspection_id": inspection_id,
+            "summary": summary,
+            "stats": {
+                "total_requests": len(requests),
+                "open_requests": sum(1 for r in requests if r.status in ("open", "in_progress")),
+                "fulfilled_requests": sum(1 for r in requests if r.status == "fulfilled"),
+                "total_commitments": len(commitments),
+                "pending_commitments": sum(1 for c in commitments if c.status == "pending"),
+                "total_observations": len(observations),
+            },
+            "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+    except Exception as e:
+        logger.warning(f"Closing summary failed: {e}")
+        return {"inspection_id": inspection_id, "summary": None, "error": str(e)}
+
+
+# ── Scribe ───────────────────────────────────────────────────────────────────────
 
 @router.post("/{inspection_id}/scribe", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def add_scribe_entry(
@@ -293,14 +1107,7 @@ async def add_scribe_entry(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Inspection).where(
-            Inspection.id == inspection_id,
-            Inspection.company_id == current_user.company_id,
-        )
-    )
-    if not result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inspection not found")
+    await _verify_inspection(db, inspection_id, current_user.company_id)
 
     entry = InspectionLog(
         id=generate_uuid(),
@@ -309,6 +1116,7 @@ async def add_scribe_entry(
         entry_type=data.entry_type,
         content=data.content,
         tags=data.tags,
+        location=data.location,
     )
     db.add(entry)
     await db.commit()
@@ -320,6 +1128,7 @@ async def add_scribe_entry(
         "entry_type": entry.entry_type,
         "content": entry.content,
         "tags": entry.tags,
+        "location": entry.location,
         "created_at": str(entry.created_at),
     }
 
@@ -343,6 +1152,7 @@ async def get_log(
                 "entry_type": e.entry_type,
                 "content": e.content,
                 "tags": e.tags or [],
+                "location": e.location,
                 "created_at": str(e.created_at),
             }
             for e in entries
@@ -350,7 +1160,7 @@ async def get_log(
     }
 
 
-# ── AI Analysis ─────────────────────────────────────────────────────────────────
+# ── AI analysis (per-request) ──────────────────────────────────────────────────────
 
 @router.post("/{inspection_id}/requests/{request_id}/analyze", response_model=dict)
 async def analyze_request(
@@ -359,33 +1169,19 @@ async def analyze_request(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Run AI analysis on an inspector request.
-    Generates talking points, document suggestions, and a risk assessment.
-    Stores results on the request record and returns them.
-    """
     from app.models.document import Document
     from app.engines.llm_engine import _llm_available
-    import json
+    import json, re
 
-    # Verify request belongs to an inspection owned by this company
     req_result = await db.execute(
         select(InspectionRequest).where(InspectionRequest.id == request_id)
     )
     req = req_result.scalar_one_or_none()
     if not req or req.inspection_id != inspection_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+        raise HTTPException(status_code=404, detail="Request not found")
 
-    insp_result = await db.execute(
-        select(Inspection).where(
-            Inspection.id == inspection_id,
-            Inspection.company_id == current_user.company_id,
-        )
-    )
-    if not insp_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+    await _verify_inspection(db, inspection_id, current_user.company_id)
 
-    # Load company document titles for context
     doc_result = await db.execute(
         select(Document.title, Document.document_category, Document.department_owner, Document.latest_score)
         .where(Document.company_id == current_user.company_id)
@@ -411,19 +1207,19 @@ async def analyze_request(
 "{req.request_text}"
 
 Criticality: {req.criticality} | Category: {req.category}
+Inspector: {req.inspector_name or 'Unknown'} | Location: {req.location or 'Not specified'}
 
-Available company documents (title, department, readiness score):
+Available company documents:
 {doc_list or "No documents found."}
 
-Respond with a structured JSON object using exactly these keys:
+Respond with a structured JSON object:
 {{
   "talking_points": ["<3-5 concise bullet points of what to say to the inspector>"],
-  "suggested_documents": ["<2-3 document titles from the list above most relevant to this request>"],
-  "risk_assessment": "<1-2 sentence assessment of the regulatory risk this request represents>"
+  "suggested_documents": ["<2-3 document titles from the list above>"],
+  "risk_assessment": "<1-2 sentence regulatory risk assessment>"
 }}
 
-Be specific and actionable. Reference 21 CFR Part 211 or other applicable regulations where relevant.
-Only suggest documents from the provided list. Respond with valid JSON only."""
+Be specific. Reference 21 CFR Part 211 or applicable regulations where relevant. JSON only."""
 
     try:
         from app.engines.llm_engine import _call_llm
@@ -431,8 +1227,6 @@ Only suggest documents from the provided list. Respond with valid JSON only."""
             "You are a pharmaceutical regulatory expert supporting a GMP inspection war room.",
             prompt,
         )
-        # Extract JSON from response
-        import re
         json_match = re.search(r'\{[\s\S]*\}', raw)
         if json_match:
             data = json.loads(json_match.group())
@@ -465,7 +1259,7 @@ Only suggest documents from the provided list. Respond with valid JSON only."""
         }
 
 
-# ── WebSocket ───────────────────────────────────────────────────────────────────
+# ── WebSocket ────────────────────────────────────────────────────────────────────
 
 @router.websocket("/{inspection_id}/ws")
 async def inspection_websocket(websocket: WebSocket, inspection_id: str):

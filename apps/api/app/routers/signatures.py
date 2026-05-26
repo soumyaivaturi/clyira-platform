@@ -69,8 +69,12 @@ async def _audit(db, company_id, user_id, user_email, event_type, resource_id, d
         detail=detail or {},
         ip_address=ip,
     )
-    db.add(log)
-    await db.flush()
+    try:
+        async with db.begin_nested():
+            db.add(log)
+            await db.flush()
+    except Exception:
+        pass
 
 
 @router.post("/{document_id}/signatures", response_model=SignatureOut, status_code=201)
@@ -90,7 +94,7 @@ async def sign_document(
     # 1. Re-authenticate the user's password
     if not bcrypt.checkpw(body.password.encode(), current_user.password_hash.encode()):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Incorrect password — electronic signature requires password re-authentication (21 CFR §11.200(b))",
         )
 
