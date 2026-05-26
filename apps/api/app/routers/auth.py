@@ -139,9 +139,13 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 async def login(data: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    import traceback
     ip = request.client.host if request.client else None
 
-    user = await auth_service.get_user_by_email(db, data.email)
+    try:
+        user = await auth_service.get_user_by_email(db, data.email)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"DB lookup failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()[-1000:]}")
     if not user:
         # Don't reveal whether the email exists
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
@@ -175,12 +179,19 @@ async def login(data: LoginRequest, request: Request, db: AsyncSession = Depends
     user.failed_login_attempts = 0
     user.locked_until = None
     user.last_login = datetime.utcnow()
-    await _audit(db, user.company_id, user.id, user.email, "login_success", ip=ip)
-    await db.commit()
+    try:
+        await _audit(db, user.company_id, user.id, user.email, "login_success", ip=ip)
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Post-auth commit failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()[-1000:]}")
 
-    token = auth_service.create_access_token(user)
-    onboarding_complete = user.company.onboarding_complete if user.company else False
-    return {"access_token": token, "user": _user_out(user, onboarding_complete)}
+    try:
+        token = auth_service.create_access_token(user)
+        onboarding_complete = user.company.onboarding_complete if user.company else False
+        return {"access_token": token, "user": _user_out(user, onboarding_complete)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Response build failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()[-1000:]}")
 
 
 @router.get("/me", response_model=UserOut)
