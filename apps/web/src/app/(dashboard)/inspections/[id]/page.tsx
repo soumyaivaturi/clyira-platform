@@ -3277,62 +3277,6 @@ export default function WarRoomPage() {
         );
       })()}
 
-      {/* ── Derived Alert Strip (priority-ranked) ────────────────────────────── */}
-      {(() => {
-        const unpreparedSMEs = smeRoomStatuses.filter(s => s.not_prepared && s.room_slot !== "off_site");
-        const derivedAlerts: { severity: "critical" | "warning"; title: string; body: string; dismissible: boolean }[] = [];
-
-        // Priority 1: unprepared SMEs — red, not dismissible
-        if (unpreparedSMEs.length > 0) {
-          derivedAlerts.push({
-            severity: "critical",
-            title: `${unpreparedSMEs.length} SME${unpreparedSMEs.length > 1 ? "s" : ""} not prep-cleared`,
-            body: unpreparedSMEs.map(s => s.name).join(", ") + " — not cleared for room entry",
-            dismissible: false,
-          });
-        }
-        // Priority 2: QA bottleneck
-        if (qaPendingCount >= 3) {
-          derivedAlerts.push({
-            severity: "warning",
-            title: `QA bottleneck — ${qaPendingCount} requests queued`,
-            body: "More than 3 requests waiting for QA review. Consider pulling in another reviewer.",
-            dismissible: true,
-          });
-        }
-        // Priority 3: overdue requests (only if no higher-priority alerts)
-        if (overdueCount > 0 && derivedAlerts.length === 0) {
-          derivedAlerts.push({
-            severity: "warning",
-            title: `${overdueCount} request${overdueCount > 1 ? "s" : ""} past SLA`,
-            body: "Click Overdue in the toolbar to see affected requests.",
-            dismissible: true,
-          });
-        }
-
-        if (derivedAlerts.length === 0) return null;
-        return (
-          <div className="space-y-1.5">
-            {derivedAlerts.map((a, i) => (
-              <div key={i} className={`flex items-start gap-3 px-4 py-2.5 rounded-xl border ${
-                a.severity === "critical" ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200"
-              }`}>
-                {a.severity === "critical"
-                  ? <AlertTriangle className="w-3.5 h-3.5 text-red-600 flex-shrink-0 mt-0.5" />
-                  : <AlertCircle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />}
-                <div className="flex-1 min-w-0">
-                  <span className={`text-xs font-semibold ${a.severity === "critical" ? "text-red-800" : "text-amber-800"}`}>{a.title}</span>
-                  <span className={`text-xs ml-2 ${a.severity === "critical" ? "text-red-700" : "text-amber-700"}`}>{a.body}</span>
-                </div>
-                {!a.dismissible && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase flex-shrink-0 bg-red-200 text-red-800">Action required</span>
-                )}
-              </div>
-            ))}
-          </div>
-        );
-      })()}
-
       {/* Main Tabs */}
       <div className="flex border-b gap-0 overflow-x-auto scrollbar-hide">
         {TABS.map(t => {
