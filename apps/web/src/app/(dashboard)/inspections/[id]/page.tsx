@@ -1906,6 +1906,34 @@ function PredictionStrip({
   );
 }
 
+// ── Inline Note Input (sidebar) ───────────────────────────────────────────────
+function InlineNoteInput({ onSubmit }: { onSubmit: (text: string) => Promise<void> }) {
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    if (!note.trim() || saving) return;
+    setSaving(true);
+    try { await onSubmit(note.trim()); setNote(""); } finally { setSaving(false); }
+  };
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        value={note}
+        onChange={e => setNote(e.target.value)}
+        onKeyDown={e => { if (e.key === "Enter") submit(); }}
+        placeholder="Quick note… Enter to save"
+        className="flex-1 text-[10px] bg-transparent focus:outline-none placeholder:text-muted-foreground/40"
+      />
+      {saving
+        ? <Loader2 className="w-2.5 h-2.5 animate-spin text-muted-foreground flex-shrink-0" />
+        : <button onClick={submit} disabled={!note.trim()} className="flex-shrink-0 disabled:opacity-30 cursor-pointer">
+            <Send className="w-2.5 h-2.5 text-muted-foreground" />
+          </button>
+      }
+    </div>
+  );
+}
+
 // ── Quick Note Strip ──────────────────────────────────────────────────────────
 function QuickNoteStrip({
   log,
@@ -3973,24 +4001,151 @@ export default function WarRoomPage() {
 
               </div>
 
-              {/* ── Right: Live Scribe Sidebar ── */}
-              <div className={`hidden xl:flex flex-col flex-shrink-0 w-72 space-y-2`}>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
-                    <Mic className="w-3.5 h-3.5 text-primary" /> Live Feed
-                  </span>
-                  <button onClick={() => setShowScribeSidebar(v => !v)} className="text-[10px] text-muted-foreground hover:text-foreground">
-                    {showScribeSidebar ? "hide" : "show"}
-                  </button>
-                </div>
-                {showScribeSidebar && (
-                  <QuickNoteStrip log={log} onSubmit={async (text) => {
-                    await inspectionsApi.addScribeEntry(id, { entry_type: "scribe_note", content: text, tags: [] });
-                    const logRes = await inspectionsApi.getLog(id);
-                    setLog(logRes.data.entries ?? []);
-                  }} />
-                )}
-              </div>
+              {/* ── Right: Intelligence Sidebar ── */}
+              {(() => {
+                const sidebarNotes = log.filter(e => e.entry_type === "scribe_note").slice(-3).reverse();
+                const sidebarRisk = requestRows
+                  .filter(r => (r.criticality === "critical" || r.criticality === "high") && !DONE_STATUSES.includes(r.stage))
+                  .slice(0, 3);
+                const commitReqs = allRequests.filter(r => r.category === "commitment");
+                const doneCommits = commitReqs.filter(r => DONE_STATUSES.includes(r.status)).length;
+                const openCommits = commitReqs.filter(r => !DONE_STATUSES.includes(r.status)).length;
+                const pct = allRequests.length ? Math.round((resolvedRequests.length / allRequests.length) * 100) : 0;
+                const openHighCt = requestRows.filter(r =>
+                  (r.criticality === "critical" || r.criticality === "high") && !DONE_STATUSES.includes(r.stage)).length;
+                return (
+                  <div className="hidden xl:flex flex-col flex-shrink-0 w-64 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
+                        <Layers className="w-3.5 h-3.5 text-primary" /> Live Intel
+                      </span>
+                      <button onClick={() => setShowScribeSidebar(v => !v)}
+                        className="text-[10px] text-muted-foreground hover:text-foreground cursor-pointer">
+                        {showScribeSidebar ? "hide" : "show"}
+                      </button>
+                    </div>
+                    {showScribeSidebar && (
+                      <div className="space-y-3">
+
+                        {/* Live Scribe Short Notes */}
+                        <div className="bg-card border rounded-xl p-3 space-y-2">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Live Scribe — Short Notes</p>
+                            <p className="text-[10px] text-muted-foreground/60 mt-0.5">Only the last few meaningful moments</p>
+                          </div>
+                          {sidebarNotes.length === 0 ? (
+                            <p className="text-[10px] text-muted-foreground/50 italic">No notes yet</p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {sidebarNotes.map((note, i) => (
+                                <div key={i} className="flex gap-2">
+                                  <span className="text-[9px] text-muted-foreground/50 font-mono flex-shrink-0 mt-0.5 w-8">
+                                    {new Date(note.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                  </span>
+                                  <span className="text-[10px] text-foreground/80 leading-snug line-clamp-2">
+                                    {note.content.length > 55 ? note.content.slice(0, 55) + "…" : note.content}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <div className="border-t pt-2 mt-1">
+                            <InlineNoteInput onSubmit={async (text) => {
+                              await inspectionsApi.addScribeEntry(id, { entry_type: "scribe_note", content: text, tags: [] });
+                              const logRes = await inspectionsApi.getLog(id);
+                              setLog(logRes.data.entries ?? []);
+                            }} />
+                          </div>
+                        </div>
+
+                        {/* Risk Flags */}
+                        <div className="bg-card border rounded-xl p-3 space-y-2">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Risk Flags</p>
+                            <p className="text-[10px] text-muted-foreground/60 mt-0.5">Top 3 only</p>
+                          </div>
+                          {sidebarRisk.length === 0 ? (
+                            <div className="flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />
+                              <span className="text-[10px] text-emerald-700">No critical/high items</span>
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {sidebarRisk.map((r, i) => (
+                                <button key={i} onClick={() => { setTab("requests"); setActivePresetId("all"); }}
+                                  className="w-full flex items-start gap-1.5 text-left hover:bg-accent/50 rounded-md px-1 py-0.5 -mx-1 transition-colors cursor-pointer">
+                                  <span className={`text-[9px] font-bold px-1 py-0.5 rounded border flex-shrink-0 mt-0.5 ${
+                                    r.criticality === "critical" ? "bg-red-50 border-red-200 text-red-700" : "bg-orange-50 border-orange-200 text-orange-700"
+                                  }`}>
+                                    {r.criticality === "critical" ? "High" : "Med"}
+                                  </span>
+                                  <span className="text-[10px] text-foreground/80 leading-snug line-clamp-2">
+                                    {r.request_text.length > 45 ? r.request_text.slice(0, 45) + "…" : r.request_text}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Commitments & Follow-Ups */}
+                        <div className="bg-card border rounded-xl p-3 space-y-2">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Commitments & Follow-Ups</p>
+                            <p className="text-[10px] text-muted-foreground/60 mt-0.5">Track what was promised</p>
+                          </div>
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xl font-bold text-foreground tabular-nums leading-none">{doneCommits}</span>
+                              <span className="text-[10px] text-muted-foreground">Confirmed commitments</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xl font-bold tabular-nums leading-none ${openCommits > 0 ? "text-amber-600" : "text-foreground"}`}>
+                                {openCommits}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">Potential commitments detected</span>
+                            </div>
+                          </div>
+                          <button onClick={() => setActivePresetId("all")}
+                            className="text-[10px] text-primary hover:underline cursor-pointer">
+                            Open Log → before EOD
+                          </button>
+                        </div>
+
+                        {/* End-of-Day Readiness */}
+                        <div className="bg-card border rounded-xl p-3 space-y-2">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">End-of-Day Readiness</p>
+                            <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                              {openHighCt > 0 ? `${openHighCt} critical/high still open` : "On track"}
+                            </p>
+                          </div>
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-muted-foreground">Resolution</span>
+                              <span className={`text-[11px] font-bold tabular-nums ${
+                                pct >= 80 ? "text-emerald-600" : pct >= 50 ? "text-amber-600" : "text-red-600"
+                              }`}>{pct}%</span>
+                            </div>
+                            <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                              <div className={`h-full rounded-full transition-all ${
+                                pct >= 80 ? "bg-emerald-500" : pct >= 50 ? "bg-amber-500" : "bg-red-400"
+                              }`} style={{ width: `${pct}%` }} />
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-muted-foreground">Open requests</span>
+                              <span className={`text-[11px] font-bold tabular-nums ${openRequests.length > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                                {openRequests.length}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
             </div>
           )}
