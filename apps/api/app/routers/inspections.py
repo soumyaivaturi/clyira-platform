@@ -60,6 +60,10 @@ def _inspection_out(insp: Inspection) -> dict:
         "final_483_count": insp.final_483_count or 0,
         "post_inspection_notes": insp.post_inspection_notes,
         "sign_offs": insp.sign_offs or {},
+        "site_name": insp.site_name,
+        "mode": insp.mode or "onsite",
+        "sector": insp.sector,
+        "day_count": insp.day_count or 0,
         "created_at": str(insp.created_at),
     }
 
