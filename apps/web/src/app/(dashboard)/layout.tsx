@@ -107,7 +107,7 @@ export default function DashboardLayout({
           <Link href="/dashboard" className="flex items-center gap-2.5">
             <ClyiraLogo />
             <span className="font-brand font-bold text-lg tracking-tight" style={{ letterSpacing: "0.04em" }}>
-              CLYIRA<span style={{ color: "#7654c9", fontSize: "1.3em", lineHeight: 1 }}>.</span>AI
+              CLYIRA<span style={{ color: "#7654c9" }}>.</span>AI
             </span>
           </Link>
         </div>

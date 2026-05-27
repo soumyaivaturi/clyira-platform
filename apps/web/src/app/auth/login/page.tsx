@@ -48,7 +48,7 @@ function LoginForm() {
         <div className="flex items-center justify-center gap-2.5 mb-8">
           <ClyiraLogo />
           <span className="font-brand text-2xl font-bold tracking-tight" style={{ letterSpacing: "0.04em" }}>
-            CLYIRA<span style={{ color: "#7654c9", fontSize: "1.3em", lineHeight: 1 }}>.</span>AI
+            CLYIRA<span style={{ color: "#7654c9" }}>.</span>AI
           </span>
         </div>
 
