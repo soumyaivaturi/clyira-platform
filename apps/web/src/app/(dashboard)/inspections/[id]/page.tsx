@@ -3143,6 +3143,19 @@ export default function WarRoomPage() {
 
           {/* Right: controls */}
           <div className="flex items-center gap-1.5 flex-shrink-0">
+            {/* My role chip — clickable to open role picker */}
+            <button
+              onClick={() => setShowRolePicker(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-primary/10 border border-primary/20 text-primary rounded-lg text-[11px] font-semibold hover:bg-primary/20 transition-colors cursor-pointer"
+              title="Click to change your role"
+            >
+              <User className="w-3 h-3 flex-shrink-0" />
+              <span className="max-w-[120px] truncate">
+                {myRoles.length > 0
+                  ? myRoles.map(r => r.replace(/_/g, " ")).join(" · ")
+                  : "Set my role"}
+              </span>
+            </button>
             {/* Live users */}
             {inspection.status === "active" && (
               <div className="flex items-center gap-1 px-2 py-1 border rounded-lg text-[11px] text-muted-foreground">
