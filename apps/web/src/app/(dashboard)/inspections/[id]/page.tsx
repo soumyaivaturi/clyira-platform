@@ -1327,6 +1327,7 @@ export default function WarRoomPage() {
   const [chatInput, setChatInput] = useState("");
   const [chatType, setChatType] = useState("general");
   const [sendingChat, setSendingChat] = useState(false);
+  const [dmTarget, setDmTarget] = useState("");
   const [convertingMsg, setConvertingMsg] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -1592,9 +1593,13 @@ export default function WarRoomPage() {
     if (!chatInput.trim()) return;
     setSendingChat(true);
     try {
+      const effectiveRoom = chatRoom === "dm" && dmTarget ? `dm_${dmTarget}` : chatRoom;
+      const content = chatRoom === "dm" && dmTarget
+        ? `@${dmTarget}: ${chatInput.trim()}`
+        : chatInput.trim();
       await inspectionsApi.sendMessage(id, {
-        content: chatInput.trim(),
-        room: chatRoom,
+        content,
+        room: effectiveRoom,
         message_type: chatType,
       });
       setChatInput("");
@@ -2104,22 +2109,71 @@ export default function WarRoomPage() {
         </div>
       )}
 
-      {/* Stats Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          { label: "Total Requests", value: inspection.total_requests },
-          { label: "Open / In Progress", value: openRequests.length, highlight: openRequests.length > 0 },
-          { label: "Log Entries", value: log.length },
-          { label: "AI Agents", value: inspection.status === "active" ? 5 : 0, active: inspection.status === "active" },
-        ].map(s => (
-          <div key={s.label} className="bg-card border rounded-xl px-4 py-3">
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{s.label}</p>
-            <p className={`text-2xl font-bold tabular-nums mt-1 ${
-              (s as any).highlight ? "text-amber-600" : (s as any).active ? "text-emerald-600" : ""
-            }`}>{s.value}</p>
+      {/* Stats + Compliance Charts Row */}
+      {(() => {
+        const total = allRequests.length || 1;
+        const critCount = allRequests.filter(r => r.criticality === "critical").length;
+        const highCount = allRequests.filter(r => r.criticality === "high").length;
+        const medCount = allRequests.filter(r => r.criticality === "medium").length;
+        const lowCount = allRequests.filter(r => r.criticality === "low").length;
+        const doneCount = allRequests.filter(r => DONE_STATUSES.includes(r.status)).length;
+        const completionPct = allRequests.length ? Math.round((doneCount / allRequests.length) * 100) : 0;
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* KPI strip */}
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { label: "Total Requests", value: allRequests.length },
+                { label: "Open / Active", value: openRequests.length, highlight: openRequests.length > 0 },
+                { label: "Fulfilled", value: doneCount, active: doneCount > 0 },
+                { label: "Log Entries", value: log.length },
+              ].map(s => (
+                <div key={s.label} className="bg-card border rounded-xl px-4 py-3">
+                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{s.label}</p>
+                  <p className={`text-2xl font-bold tabular-nums mt-1 ${
+                    (s as any).highlight ? "text-amber-600" : (s as any).active ? "text-emerald-600" : ""
+                  }`}>{s.value}</p>
+                </div>
+              ))}
+            </div>
+            {/* Compliance charts */}
+            <div className="bg-card border rounded-xl p-4 space-y-3">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                <BarChart3 className="w-3 h-3 text-primary" /> Request Breakdown
+              </p>
+              {/* Completion ring */}
+              <div className="flex items-center gap-3">
+                <div className="relative w-12 h-12 flex-shrink-0">
+                  <svg viewBox="0 0 36 36" className="w-12 h-12 -rotate-90">
+                    <circle cx="18" cy="18" r="15.9" fill="none" stroke="currentColor" strokeWidth="3.2" className="text-muted/30" />
+                    <circle cx="18" cy="18" r="15.9" fill="none" stroke="currentColor" strokeWidth="3.2"
+                      strokeDasharray={`${completionPct} ${100 - completionPct}`} strokeDashoffset="0"
+                      strokeLinecap="round" className="text-emerald-500 transition-all duration-700" />
+                  </svg>
+                  <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold">{completionPct}%</span>
+                </div>
+                <div className="flex-1 space-y-1">
+                  {[
+                    { label: "Critical", count: critCount, color: "bg-red-500" },
+                    { label: "High", count: highCount, color: "bg-orange-500" },
+                    { label: "Medium", count: medCount, color: "bg-amber-400" },
+                    { label: "Low", count: lowCount, color: "bg-blue-400" },
+                  ].map(b => (
+                    <div key={b.label} className="flex items-center gap-2">
+                      <span className="text-[10px] text-muted-foreground w-12 flex-shrink-0">{b.label}</span>
+                      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${b.color} transition-all`}
+                          style={{ width: `${(b.count / total) * 100}%` }} />
+                      </div>
+                      <span className="text-[10px] font-semibold w-4 text-right">{b.count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
-        ))}
-      </div>
+        );
+      })()}
 
       {/* AI Agents Status */}
       <div className="bg-card border rounded-xl p-3">
@@ -2558,8 +2612,9 @@ export default function WarRoomPage() {
               { key: "front", label: "Front Room" },
               { key: "back", label: "Back Room" },
               { key: "prep", label: "Prep Room" },
+              { key: "dm", label: "Direct Message" },
             ].map(r => (
-              <button key={r.key} onClick={() => { setChatRoom(r.key); loadTabData("chat"); }}
+              <button key={r.key} onClick={() => { setChatRoom(r.key); if (r.key !== "dm") loadTabData("chat"); }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                   chatRoom === r.key
                     ? "bg-primary text-primary-foreground border-primary"
@@ -2568,6 +2623,17 @@ export default function WarRoomPage() {
                 {r.label}
               </button>
             ))}
+            {chatRoom === "dm" && (
+              <select
+                value={dmTarget}
+                onChange={e => setDmTarget(e.target.value)}
+                className="text-xs border rounded-lg px-2.5 py-1.5 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 ml-1">
+                <option value="">— pick recipient —</option>
+                {[...teamMembers, ...smes.map(s => ({ name: s.name, room: "sme", role: null }))].map(m => (
+                  <option key={m.name} value={m.name}>{m.name}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* Message list */}
@@ -2580,7 +2646,11 @@ export default function WarRoomPage() {
               </div>
             ) : (
               chatMessages
-                .filter(m => chatRoom === "all" || m.room === chatRoom || m.room === "all")
+                .filter(m => {
+                  if (chatRoom === "all") return !m.room.startsWith("dm_");
+                  if (chatRoom === "dm") return dmTarget ? m.room === `dm_${dmTarget}` : m.room.startsWith("dm_");
+                  return m.room === chatRoom || m.room === "all";
+                })
                 .map(m => {
                   const typeConfig: Record<string, { label: string; color: string; icon: any }> = {
                     general: { label: "General", color: "bg-muted text-muted-foreground", icon: MessageCircle },
@@ -2647,7 +2717,17 @@ export default function WarRoomPage() {
                   <option value="front">Front room</option>
                   <option value="back">Back room</option>
                   <option value="prep">Prep room</option>
+                  <option value="dm">Direct Message</option>
                 </select>
+                {chatRoom === "dm" && (
+                  <select value={dmTarget} onChange={e => setDmTarget(e.target.value)}
+                    className="text-xs border rounded-lg px-2 py-1.5 bg-background">
+                    <option value="">— To —</option>
+                    {[...teamMembers, ...smes.map(s => ({ name: s.name }))].map(m => (
+                      <option key={m.name} value={m.name}>{m.name}</option>
+                    ))}
+                  </select>
+                )}
                 <select value={chatType} onChange={e => setChatType(e.target.value)}
                   className="text-xs border rounded-lg px-2 py-1.5 bg-background">
                   <option value="general">General</option>
