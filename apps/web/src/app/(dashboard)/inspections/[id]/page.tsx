@@ -1230,7 +1230,7 @@ export default function WarRoomPage() {
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"requests" | "findings" | "team" | "scribe" | "chat" | "prep" | "post">("requests");
+  const [tab, setTab] = useState<"requests" | "findings" | "team" | "scribe" | "chat" | "prep" | "post" | "eod">("requests");
   const [showAddRequest, setShowAddRequest] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<InspRequest | null>(null);
   const [scribeText, setScribeText] = useState("");
@@ -1257,6 +1257,11 @@ export default function WarRoomPage() {
   const [closingSummary, setClosingSummary] = useState<string>("");
   const [runningAnalysis, setRunningAnalysis] = useState(false);
   const [generatingClosing, setGeneratingClosing] = useState(false);
+  const [myRole, setMyRole] = useState<string | null>(() => {
+    if (typeof window !== "undefined") return sessionStorage.getItem(`clyira_role_${id}`) ?? null;
+    return null;
+  });
+  const [showRolePicker, setShowRolePicker] = useState(false);
 
   // Forms
   const [newCommitment, setNewCommitment] = useState({ commitment_text: "", committed_to: "", deadline_at: "" });
@@ -1338,6 +1343,10 @@ export default function WarRoomPage() {
   const [reqFilterCrit, setReqFilterCrit] = useState("all");
   const [reqFilterInspector, setReqFilterInspector] = useState("all");
   const [reqSort, setReqSort] = useState("newest");
+  const [eodNotes, setEodNotes] = useState("");
+  const [eodActionItems, setEodActionItems] = useState<string[]>([]);
+  const [newEodAction, setNewEodAction] = useState("");
+  const [eodDayLabel, setEodDayLabel] = useState("");
 
   // Safe mode
   const [safeMode, setSafeMode] = useState(false);
@@ -1454,6 +1463,11 @@ export default function WarRoomPage() {
   useEffect(() => { loadAll(); }, [loadAll]);
   useEffect(() => { loadTabData(tab); }, [tab, loadTabData]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
+
+  // Show role picker for active inspections when no role is set
+  useEffect(() => {
+    if (inspection?.status === "active" && !myRole) setShowRolePicker(true);
+  }, [inspection?.status, myRole]);
 
   // Detect Web Speech API support (client-side only)
   useEffect(() => {
@@ -1806,6 +1820,7 @@ export default function WarRoomPage() {
     { key: "team", label: `Team${teamCount ? ` (${teamCount})` : ""}`, icon: Users },
     { key: "scribe", label: "Scribe", icon: Mic },
     { key: "chat", label: "Chat", icon: Hash },
+    { key: "eod", label: "End of Day", icon: Calendar },
     { key: "prep", label: "Pre-Inspection Prep", icon: FileText },
     { key: "post", label: "Post-Inspection", icon: ClipboardList },
   ];
@@ -1840,6 +1855,69 @@ export default function WarRoomPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Role Picker Modal */}
+      {showRolePicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-card border rounded-2xl shadow-2xl w-full max-w-md mx-4">
+            <div className="px-6 pt-6 pb-2">
+              <h2 className="text-lg font-semibold">What's your role today?</h2>
+              <p className="text-sm text-muted-foreground mt-1">This personalises your war-room view.</p>
+            </div>
+            <div className="px-6 py-4 grid grid-cols-2 gap-2">
+              {[
+                { key: "host", label: "Inspection Host", desc: "Leads front room, final calls", icon: "🎙️" },
+                { key: "scribe", label: "Scribe", desc: "Logs requests and notes", icon: "✍️" },
+                { key: "front_runner", label: "Front Runner", desc: "Carries docs to prep room", icon: "🏃" },
+                { key: "prep_lead", label: "Prep Room Lead", desc: "Manages prep room workflow", icon: "📋" },
+                { key: "qa_reviewer", label: "QA Reviewer", desc: "Reviews documents before release", icon: "🔍" },
+                { key: "sme", label: "SME / Expert", desc: "Subject matter expert on standby", icon: "🧪" },
+                { key: "observer", label: "Observer", desc: "Read-only war room access", icon: "👁️" },
+              ].map(r => (
+                <button
+                  key={r.key}
+                  onClick={() => {
+                    setMyRole(r.key);
+                    if (typeof window !== "undefined") sessionStorage.setItem(`clyira_role_${id}`, r.key);
+                    setShowRolePicker(false);
+                  }}
+                  className={`flex items-start gap-2.5 px-3 py-3 rounded-xl border text-left transition-all hover:border-primary hover:bg-primary/5 ${myRole === r.key ? "border-primary bg-primary/5" : ""}`}
+                >
+                  <span className="text-lg">{r.icon}</span>
+                  <div>
+                    <p className="text-xs font-semibold">{r.label}</p>
+                    <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{r.desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="px-6 pb-6 flex justify-between items-center">
+              <button onClick={() => setShowRolePicker(false)} className="text-xs text-muted-foreground hover:underline">
+                Skip for now
+              </button>
+              {myRole && (
+                <button
+                  onClick={() => setShowRolePicker(false)}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+                  Continue as {myRole.replace(/_/g, " ")}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Role badge (click to change) */}
+      {myRole && inspection.status === "active" && (
+        <button
+          onClick={() => setShowRolePicker(true)}
+          className="fixed bottom-4 left-4 z-40 flex items-center gap-1.5 px-3 py-2 bg-card border rounded-xl shadow-lg text-xs font-semibold hover:bg-accent"
+          title="Change your role"
+        >
+          <User className="w-3 h-3 text-primary" />
+          {myRole.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+        </button>
       )}
 
       {showAddRequest && (
@@ -1884,6 +1962,15 @@ export default function WarRoomPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-xl font-semibold tracking-tight">{inspection.title}</h1>
                 <InspStatusBadge status={inspection.status} />
+                {inspection.start_date && (() => {
+                  const day = Math.max(1, Math.ceil((Date.now() - new Date(inspection.start_date).getTime()) / 86400000));
+                  return (
+                    <span className="flex items-center gap-1 px-2.5 py-0.5 bg-primary/10 text-primary text-xs font-bold rounded-full">
+                      <Calendar className="w-3 h-3" />
+                      Day {day}
+                    </span>
+                  );
+                })()}
               </div>
               <p className="text-sm text-muted-foreground mt-0.5">
                 {inspection.agency && `${inspection.agency} · `}
@@ -1988,6 +2075,34 @@ export default function WarRoomPage() {
 
       {/* Phase Navigator */}
       <PhaseNavigator current={inspection.current_phase} status={inspection.status} onPhaseChange={handlePhaseChange} />
+
+      {/* Inspector Activity Controls */}
+      {inspection.status === "active" && (
+        <div className="bg-card border rounded-xl p-3">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2.5 flex items-center gap-1.5">
+            <Activity className="w-3 h-3 text-primary" /> Inspector Activity
+          </p>
+          <div className="flex gap-1.5 flex-wrap">
+            {[
+              { key: "inspector_arrived", label: "Arrived", className: "bg-emerald-50 border-emerald-200 text-emerald-800", activeClass: "ring-2 ring-emerald-500" },
+              { key: "inspector_on_break", label: "On Break", className: "bg-amber-50 border-amber-200 text-amber-800", activeClass: "ring-2 ring-amber-500" },
+              { key: "lunch_break", label: "Lunch", className: "bg-orange-50 border-orange-200 text-orange-800", activeClass: "ring-2 ring-orange-500" },
+              { key: "quiet_time", label: "Quiet / Off Floor", className: "bg-blue-50 border-blue-200 text-blue-800", activeClass: "ring-2 ring-blue-500" },
+              { key: "end_of_day_debrief", label: "End-of-Day Debrief", className: "bg-purple-50 border-purple-200 text-purple-800", activeClass: "ring-2 ring-purple-500" },
+              { key: "inspectors_left", label: "Inspectors Left", className: "bg-gray-100 border-gray-200 text-gray-700", activeClass: "ring-2 ring-gray-400" },
+            ].map(a => (
+              <button
+                key={a.key}
+                onClick={() => handlePhaseChange(inspection.current_phase === a.key ? "document_review" : a.key)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${a.className} ${inspection.current_phase === a.key ? a.activeClass : "opacity-60 hover:opacity-100"}`}
+              >
+                {inspection.current_phase === a.key && <div className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
+                {a.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Stats Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -3286,6 +3401,148 @@ export default function WarRoomPage() {
           </div>
         </div>
       )}
+
+      {/* ── End of Day Tab ──────────────────────────────────────────────────────── */}
+      {tab === "eod" && (() => {
+        const dayNum = inspection.start_date
+          ? Math.max(1, Math.ceil((Date.now() - new Date(inspection.start_date).getTime()) / 86400000))
+          : 1;
+        const label = eodDayLabel || `Day ${dayNum} Debrief`;
+        return (
+          <div className="space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-semibold flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-primary" />
+                  End-of-Day Summary
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Capture debrief notes, next-day prep items, and open questions after inspectors leave.
+                </p>
+              </div>
+              <input
+                value={eodDayLabel}
+                onChange={e => setEodDayLabel(e.target.value)}
+                placeholder={`Day ${dayNum} Debrief`}
+                className="border rounded-lg px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 w-44"
+              />
+            </div>
+
+            {/* Inspector activity summary strip */}
+            {inspection.current_phase && [
+              "inspector_arrived","inspector_on_break","lunch_break",
+              "quiet_time","end_of_day_debrief","inspectors_left"
+            ].includes(inspection.current_phase) && (
+              <div className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium ${
+                inspection.current_phase === "inspectors_left" ? "bg-gray-50 border-gray-200 text-gray-700" :
+                inspection.current_phase === "end_of_day_debrief" ? "bg-purple-50 border-purple-200 text-purple-800" :
+                "bg-amber-50 border-amber-200 text-amber-800"
+              }`}>
+                <div className="w-2 h-2 rounded-full bg-current animate-pulse" />
+                Current: {inspection.current_phase.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+              </div>
+            )}
+
+            {/* Debrief Notes */}
+            <div className="bg-card border rounded-xl p-5 space-y-3">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-primary" />
+                {label} — Notes
+              </h3>
+              <textarea
+                rows={8}
+                value={eodNotes}
+                onChange={e => setEodNotes(e.target.value)}
+                placeholder={`What happened today?\n\n• What topics did the inspector focus on?\n• What documents were requested?\n• Any verbal concerns raised?\n• What went well? What could improve?\n• Overnight tasks for the prep team?`}
+                className="w-full border rounded-lg px-4 py-3 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none leading-relaxed"
+              />
+            </div>
+
+            {/* Next-Day Action Items */}
+            <div className="bg-card border rounded-xl p-5 space-y-3">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <CheckSquare className="w-4 h-4 text-amber-500" />
+                Next-Day Action Items
+              </h3>
+              <form onSubmit={e => {
+                e.preventDefault();
+                if (!newEodAction.trim()) return;
+                setEodActionItems(prev => [...prev, newEodAction.trim()]);
+                setNewEodAction("");
+              }} className="flex gap-2">
+                <input
+                  value={newEodAction}
+                  onChange={e => setNewEodAction(e.target.value)}
+                  placeholder="Add action item for tomorrow…"
+                  className="flex-1 border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+                <button type="submit" className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+                  Add
+                </button>
+              </form>
+              {eodActionItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No action items yet</p>
+              ) : (
+                <ul className="space-y-2">
+                  {eodActionItems.map((item, i) => (
+                    <li key={i} className="flex items-start gap-3 bg-muted/30 border rounded-lg px-3 py-2.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
+                      <span className="text-sm flex-1">{item}</span>
+                      <button onClick={() => setEodActionItems(prev => prev.filter((_, j) => j !== i))}
+                        className="text-muted-foreground hover:text-destructive flex-shrink-0">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Open Requests Carry-Over */}
+            {openRequests.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+                <h3 className="text-sm font-semibold text-amber-900 flex items-center gap-2 mb-3">
+                  <AlertTriangle className="w-4 h-4" />
+                  {openRequests.length} Request{openRequests.length > 1 ? "s" : ""} Carrying Over to Tomorrow
+                </h3>
+                <div className="space-y-2">
+                  {openRequests.slice(0, 5).map(r => (
+                    <div key={r.id} className="flex items-center gap-2 text-sm text-amber-800">
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${CRITICALITY_BADGE[r.criticality] ?? ""}`}>
+                        {r.criticality}
+                      </span>
+                      <span className="truncate flex-1">{r.request_text}</span>
+                      <span className="text-[10px] font-medium text-amber-600 flex-shrink-0">
+                        {REQUEST_STATUS_STYLES[r.status]?.label ?? r.status}
+                      </span>
+                    </div>
+                  ))}
+                  {openRequests.length > 5 && (
+                    <p className="text-xs text-amber-700 mt-1">+{openRequests.length - 5} more</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Save / Print stub */}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  const text = `${label}\n\nNOTES:\n${eodNotes}\n\nACTION ITEMS:\n${eodActionItems.map((a, i) => `${i + 1}. ${a}`).join("\n")}`;
+                  const blob = new Blob([text], { type: "text/plain" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url; a.download = `${label.replace(/ /g, "_")}.txt`; a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 border rounded-lg text-sm hover:bg-accent">
+                <Download className="w-3.5 h-3.5" />
+                Export Notes
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Post-Inspection Tab ────────────────────────────────────────────────── */}
       {tab === "post" && (
