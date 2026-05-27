@@ -16,6 +16,7 @@ import {
   Hash, AtSign, ArrowUpRight, Flame,
   Bell, Download, GitMerge, Database, BookMarked,
   ShieldCheck, ShieldOff, AlertCircle,
+  UserCheck, Phone, Mail, Building2, Fingerprint,
 } from "lucide-react";
 import { inspectionsApi } from "@/lib/api";
 import { InspStatusBadge } from "@/components/shared/badges";
@@ -1790,6 +1791,120 @@ function InvestigatorLane({
   );
 }
 
+// ── Prediction Strip ──────────────────────────────────────────────────────────
+function PredictionStrip({
+  tracks,
+  activeInvestigator,
+  allRequests,
+  smeStatuses,
+  inspectorBrief,
+  onGetIntel,
+  briefLoading,
+}: {
+  tracks: InvestigatorTrack[];
+  activeInvestigator: string;
+  allRequests: InspRequest[];
+  smeStatuses: SMERoomStatus[];
+  inspectorBrief: any;
+  onGetIntel: (name: string) => void;
+  briefLoading: boolean;
+}) {
+  const focusedTracks = activeInvestigator === "all" ? tracks : tracks.filter(t => t.investigator_name === activeInvestigator);
+  if (focusedTracks.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      {focusedTracks.map(track => {
+        const myReqs = allRequests.filter(r => r.inspector_name === track.investigator_name);
+        if (myReqs.length === 0) return null;
+
+        // Topic frequency from last 8 requests
+        const topicMap: Record<string, number> = {};
+        myReqs.slice(-8).forEach(r => {
+          const t = r.category ?? "question";
+          topicMap[t] = (topicMap[t] ?? 0) + 1;
+        });
+        const topTopics = Object.entries(topicMap).sort((a, b) => b[1] - a[1]);
+        const dominantTopic = topTopics[0]?.[0]?.replace(/_/g, " ");
+
+        // SMEs whose topics overlap with investigator's focus
+        const smeMatches = smeStatuses.filter(s =>
+          s.room_slot !== "off_site" && s.room_slot !== "do_not_call" &&
+          myReqs.some(r => s.topics.some(t => r.request_text.toLowerCase().includes(t.toLowerCase()) || (r.category ?? "").includes(t.toLowerCase())))
+        ).slice(0, 3);
+
+        const colorClass = INVESTIGATOR_COLORS[track.color_index % INVESTIGATOR_COLORS.length];
+
+        return (
+          <div key={track.investigator_name} className="bg-card border rounded-xl px-4 py-3">
+            <div className="flex items-center gap-2 mb-2">
+              <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${colorClass}`}>
+                {track.investigator_name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase()}
+              </span>
+              <span className="text-xs font-semibold">{track.investigator_name}</span>
+              <span className="text-[10px] text-muted-foreground">— {myReqs.length} requests so far</span>
+              <button
+                onClick={() => onGetIntel(track.investigator_name)}
+                disabled={briefLoading}
+                className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold border border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
+              >
+                {briefLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Zap className="w-2.5 h-2.5" />}
+                Get AI Intel
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-3 text-xs">
+              {/* Thread summary */}
+              <div className="flex items-start gap-1.5">
+                <span className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground mt-0.5 flex-shrink-0">Thread:</span>
+                <div className="flex flex-wrap gap-1">
+                  {topTopics.slice(0, 4).map(([topic, count]) => (
+                    <span key={topic} className="px-1.5 py-0.5 bg-primary/10 text-primary text-[10px] rounded font-medium">
+                      {topic.replace(/_/g, " ")} ×{count}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* SME prep alert */}
+              {smeMatches.length > 0 && (
+                <div className="flex items-start gap-1.5">
+                  <span className="text-[9px] font-bold uppercase tracking-wide text-amber-600 mt-0.5 flex-shrink-0">Prepare:</span>
+                  <div className="flex flex-wrap gap-1">
+                    {smeMatches.map(s => (
+                      <span key={s.id} className={`px-1.5 py-0.5 text-[10px] rounded font-medium ${
+                        s.not_prepared ? "bg-red-100 text-red-700" : "bg-amber-50 text-amber-800"
+                      }`}>
+                        {s.name}{s.not_prepared ? " ⚠" : ""}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* AI brief output */}
+            {inspectorBrief?.next_likely_focus && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <div className="px-2.5 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-[10px] flex-1">
+                  <span className="font-bold text-amber-800">Likely next: </span>
+                  <span className="text-amber-700">{inspectorBrief.next_likely_focus}</span>
+                </div>
+                {inspectorBrief?.building_toward && (
+                  <div className="px-2.5 py-1.5 bg-red-50 border border-red-200 rounded-lg text-[10px] flex-1">
+                    <span className="font-bold text-red-800">Building toward: </span>
+                    <span className="text-red-700">{inspectorBrief.building_toward}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Quick Note Strip ──────────────────────────────────────────────────────────
 function QuickNoteStrip({
   log,
@@ -1956,13 +2071,95 @@ function RolePickerModal({
   );
 }
 
+// ── TeamPersonCard ─────────────────────────────────────────────────────────────
+const TEAM_AVATAR_COLORS = [
+  "bg-blue-100 text-blue-700",
+  "bg-emerald-100 text-emerald-700",
+  "bg-violet-100 text-violet-700",
+  "bg-amber-100 text-amber-700",
+  "bg-rose-100 text-rose-700",
+  "bg-cyan-100 text-cyan-700",
+];
+
+function TeamPersonCard({
+  name, role, email, phone, colorOverride, availBadge,
+  assignedTo, allInspectors, onAssign, onExpand, isExpanded, children,
+}: {
+  name: string; role: string; email?: string | null; phone?: string | null;
+  colorOverride?: string; availBadge?: { label: string; cls: string };
+  assignedTo?: string; allInspectors?: { id: string; name: string }[];
+  onAssign?: (name: string) => void;
+  onExpand?: () => void; isExpanded?: boolean; children?: React.ReactNode;
+}) {
+  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+  const colorIdx = name.charCodeAt(0) % TEAM_AVATAR_COLORS.length;
+  const avatarCls = colorOverride ?? TEAM_AVATAR_COLORS[colorIdx];
+  return (
+    <div className="group">
+      <div className="flex items-start gap-3">
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm ${avatarCls}`}>
+          {initials}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="font-semibold text-sm leading-tight">{name}</p>
+              <p className="text-xs text-muted-foreground capitalize">{role.replace(/_/g, " ")}</p>
+              {availBadge && (
+                <span className={`mt-1 inline-block text-[10px] px-1.5 py-0.5 rounded font-medium ${availBadge.cls}`}>{availBadge.label}</span>
+              )}
+              {assignedTo && (
+                <span className="mt-1 inline-block text-[10px] px-1.5 py-0.5 bg-violet-100 text-violet-800 rounded">→ {assignedTo}</span>
+              )}
+              {allInspectors && allInspectors.length > 1 && onAssign && (
+                <select
+                  value={assignedTo ?? ""}
+                  onChange={e => onAssign(e.target.value)}
+                  className="mt-1 block text-[10px] border rounded px-1.5 py-0.5 bg-background text-muted-foreground"
+                >
+                  <option value="">Assign to inspector…</option>
+                  {allInspectors.map(i => <option key={i.id} value={i.name}>{i.name}</option>)}
+                </select>
+              )}
+            </div>
+            {onExpand && (
+              <button onClick={onExpand} className="p-1 rounded hover:bg-accent text-muted-foreground flex-shrink-0">
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+              </button>
+            )}
+          </div>
+          {(email || phone) && (
+            <div className="mt-1.5 space-y-0.5">
+              {email && (
+                <a href={`mailto:${email}`} className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground">
+                  <Mail className="w-3 h-3 flex-shrink-0" />{email}
+                </a>
+              )}
+              {phone && (
+                <a href={`tel:${phone}`} className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground">
+                  <Phone className="w-3 h-3 flex-shrink-0" />{phone}
+                </a>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      {isExpanded && children && (
+        <div className="mt-2 ml-13 pl-1 border-l-2 border-muted space-y-2">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function WarRoomPage() {
   const { id } = useParams<{ id: string }>();
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"requests" | "findings" | "team" | "scribe" | "chat" | "prep" | "post" | "eod">("requests");
+  const [tab, setTab] = useState<"requests" | "findings" | "team" | "inspector_profile" | "scribe" | "chat" | "prep" | "post" | "eod">("requests");
   const [showAddRequest, setShowAddRequest] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<InspRequest | null>(null);
   const [scribeText, setScribeText] = useState("");
@@ -2032,6 +2229,14 @@ export default function WarRoomPage() {
   const [newTeamMember, setNewTeamMember] = useState({ name: "", title: "", email: "", phone: "", room: "prep", role: "", functional_area: "", topics: "", fda_district: "", notes: "" });
   const [savingTeamMember, setSavingTeamMember] = useState(false);
   const [expandedTeamMember, setExpandedTeamMember] = useState<string | null>(null);
+  // memberId → inspectorName assignment (session-only, for multi-inspector display)
+  const [frontRoomAssignment, setFrontRoomAssignment] = useState<Record<string, string>>(() => {
+    if (typeof window !== "undefined") {
+      try { return JSON.parse(sessionStorage.getItem(`clyira_frassign_${id}`) ?? "{}"); } catch { return {}; }
+    }
+    return {};
+  });
+  const [inspectorNotes, setInspectorNotes] = useState<Record<string, string>>({});
 
   // CAPA state
   const [capas, setCAPAs] = useState<CAPA[]>([]);
@@ -2113,6 +2318,9 @@ export default function WarRoomPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [showColumnCustomizer, setShowColumnCustomizer] = useState(false);
+  const [showScribeSidebar, setShowScribeSidebar] = useState(true);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [activePredictionInspector, setActivePredictionInspector] = useState<string | null>(null);
   const [scribePanelOpen, setScribePanelOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
@@ -2723,6 +2931,7 @@ export default function WarRoomPage() {
     { key: "requests", label: `Requests${openRows.length ? ` (${openRows.length})` : ""}`, icon: MessageSquare },
     { key: "findings", label: `Findings${potentialFindings.filter(f => f.status === "tracking").length ? ` (${potentialFindings.filter(f => f.status === "tracking").length})` : ""}`, icon: TriangleAlert },
     { key: "team", label: `Team${teamCount ? ` (${teamCount})` : ""}`, icon: Users },
+    { key: "inspector_profile", label: "Inspector", icon: UserCheck },
     { key: "scribe", label: "Scribe", icon: Mic },
     { key: "chat", label: "Chat", icon: Hash },
     { key: "eod", label: "End of Day", icon: Calendar },
@@ -2996,24 +3205,28 @@ export default function WarRoomPage() {
           </div>
         </div>
 
-        {/* Row 2: phase + activity pills (active only) */}
-        {inspection.status === "active" && (
+        {/* Row 2: phase + activity pills — always shown, highlighted based on current_phase */}
+        {(inspection.status === "active" || inspection.status === "planned") && (
           <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
             <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
               <Activity className="w-3 h-3 text-primary" /> Phase
             </span>
             {PHASES.map((p, phaseIdx) => {
               const currentIdx = PHASES.findIndex(x => x.key === inspection.current_phase);
-              const isActive = inspection.current_phase === p.key;
-              const isDone = currentIdx > phaseIdx;
+              // Default to first phase (opening_meeting) when no phase set yet
+              const effectiveIdx = currentIdx >= 0 ? currentIdx : 0;
+              const isActive = inspection.current_phase
+                ? inspection.current_phase === p.key
+                : phaseIdx === 0;
+              const isDone = effectiveIdx > phaseIdx;
               return (
                 <button key={p.key} onClick={() => handlePhaseChange(p.key)}
                   className={`flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-medium border transition-all ${
-                    isActive ? "bg-primary text-primary-foreground border-primary" :
+                    isActive ? "bg-emerald-500 text-white border-emerald-500" :
                     isDone ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
                     "border-border text-muted-foreground hover:text-foreground hover:bg-accent"
                   }`}>
-                  {isActive && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
+                  {isActive && <span className="w-1.5 h-1.5 rounded-full bg-white/80 animate-pulse" />}
                   {p.short}
                 </button>
               );
@@ -3152,7 +3365,10 @@ export default function WarRoomPage() {
               onExitExecView={() => setIsExecViewHidden(true)}
             />
           ) : (
-            <>
+            <div className="flex gap-4 items-start">
+              {/* ── Left: main table area ── */}
+              <div className="flex-1 min-w-0 space-y-3">
+
               {/* Observer banner */}
               {isObserver && (
                 <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-800">
@@ -3173,6 +3389,31 @@ export default function WarRoomPage() {
               {/* SME Room Board */}
               {smeRoomStatuses.length > 0 && (
                 <SMERoomBoard statuses={smeRoomStatuses} />
+              )}
+
+              {/* AI Prediction Strip */}
+              {investigatorTracks.length > 0 && (
+                <PredictionStrip
+                  tracks={investigatorTracks}
+                  activeInvestigator={filterInvestigator}
+                  allRequests={allRequests}
+                  smeStatuses={smeRoomStatuses}
+                  inspectorBrief={activePredictionInspector ? (inspectorBriefs[
+                    [...teamMembers.filter(m => m.room === "inspector"), ...inspectors].find(i => i.name === activePredictionInspector)?.id ?? ""
+                  ] ?? null) : null}
+                  onGetIntel={async (name) => {
+                    setActivePredictionInspector(name);
+                    const inspObj = [...teamMembers.filter(m => m.room === "inspector"), ...inspectors].find(i => i.name === name);
+                    if (!inspObj?.id) return;
+                    setBriefingInspector(inspObj.id);
+                    try {
+                      const res = await inspectionsApi.briefInspector(id, inspObj.id);
+                      setInspectorBriefs(b => ({ ...b, [inspObj.id]: res.data.brief }));
+                    } catch { setInspectorBriefs(b => ({ ...b, [inspObj?.id ?? ""]: null })); }
+                    finally { setBriefingInspector(null); }
+                  }}
+                  briefLoading={briefingInspector !== null}
+                />
               )}
 
               {/* Table Toolbar: preset pills + sort + log button */}
@@ -3300,17 +3541,43 @@ export default function WarRoomPage() {
                 </div>
               ) : (
                 <div className="bg-card border rounded-xl overflow-hidden">
-                  {/* Table column headers — driven by activeColumns */}
-                  <div className="flex items-center gap-2 px-3 py-2 border-b bg-muted/30">
-                    {ALL_COLUMNS.filter(c => activeColumns.includes(c.key)).map(c => (
-                      <span key={c.key}
-                        onClick={() => { if (c.sortable) { setSortDir(d => sortColumn === c.key ? (d === "asc" ? "desc" : "asc") : "asc"); setSortColumn(c.key); } }}
-                        className={`text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex-shrink-0 select-none ${c.key === "request_text" ? "flex-1" : ""} ${c.sortable ? "cursor-pointer hover:text-foreground" : ""}`}
-                        style={c.key !== "request_text" && c.width ? { width: `${c.width}px` } : undefined}
-                      >
-                        {c.label}{sortColumn === c.key ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
-                      </span>
-                    ))}
+                  {/* Table column headers — driven by activeColumns, resizable */}
+                  <div className="flex items-center gap-2 px-3 py-2 border-b bg-muted/30 select-none">
+                    {ALL_COLUMNS.filter(c => activeColumns.includes(c.key)).map(c => {
+                      const w = columnWidths[c.key] ?? c.width;
+                      return (
+                        <div key={c.key}
+                          className={`relative group/col flex items-center gap-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex-shrink-0 ${c.key === "request_text" ? "flex-1" : ""} ${c.sortable ? "cursor-pointer hover:text-foreground" : ""}`}
+                          style={c.key !== "request_text" && w ? { width: `${w}px` } : undefined}
+                          onClick={() => { if (c.sortable) { setSortDir(d => sortColumn === c.key ? (d === "asc" ? "desc" : "asc") : "asc"); setSortColumn(c.key); } }}
+                        >
+                          <span>{c.label}{sortColumn === c.key ? (sortDir === "asc" ? " ↑" : " ↓") : ""}</span>
+                          {/* Drag-to-resize handle */}
+                          {c.key !== "request_text" && (
+                            <span
+                              className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize opacity-0 group-hover/col:opacity-100 flex items-center justify-center"
+                              onMouseDown={e => {
+                                e.stopPropagation();
+                                const startX = e.clientX;
+                                const startW = columnWidths[c.key] ?? (c.width || 80);
+                                const onMove = (mv: MouseEvent) => {
+                                  const newW = Math.max(32, startW + mv.clientX - startX);
+                                  setColumnWidths(prev => ({ ...prev, [c.key]: newW }));
+                                };
+                                const onUp = () => {
+                                  window.removeEventListener("mousemove", onMove);
+                                  window.removeEventListener("mouseup", onUp);
+                                };
+                                window.addEventListener("mousemove", onMove);
+                                window.addEventListener("mouseup", onUp);
+                              }}
+                            >
+                              <span className="w-0.5 h-3 bg-border rounded-full" />
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                   {/* Grouped or flat rows */}
                   {groupBy === "investigator" ? (
@@ -3383,14 +3650,28 @@ export default function WarRoomPage() {
                 </div>
               )}
 
-            {/* Quick Scribe Note + Recent Activity */}
-            <QuickNoteStrip log={log} onSubmit={async (text) => {
-              await inspectionsApi.addScribeEntry(id, { entry_type: "scribe_note", content: text, tags: [] });
-              const logRes = await inspectionsApi.getLog(id);
-              setLog(logRes.data.entries ?? []);
-            }} />
+              </div>
 
-            </>
+              {/* ── Right: Live Scribe Sidebar ── */}
+              <div className={`hidden xl:flex flex-col flex-shrink-0 w-72 space-y-2`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
+                    <Mic className="w-3.5 h-3.5 text-primary" /> Live Feed
+                  </span>
+                  <button onClick={() => setShowScribeSidebar(v => !v)} className="text-[10px] text-muted-foreground hover:text-foreground">
+                    {showScribeSidebar ? "hide" : "show"}
+                  </button>
+                </div>
+                {showScribeSidebar && (
+                  <QuickNoteStrip log={log} onSubmit={async (text) => {
+                    await inspectionsApi.addScribeEntry(id, { entry_type: "scribe_note", content: text, tags: [] });
+                    const logRes = await inspectionsApi.getLog(id);
+                    setLog(logRes.data.entries ?? []);
+                  }} />
+                )}
+              </div>
+
+            </div>
           )}
         </div>
       )}
@@ -3924,364 +4205,498 @@ export default function WarRoomPage() {
 
       {/* ── People Tab ────────────────────────────────────────────────────────── */}
       {/* ── Team Tab ─────────────────────────────────────────────────────────── */}
-      {tab === "team" && (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <h2 className="font-semibold flex items-center gap-2"><Users className="w-4 h-4 text-primary" /> Inspection Team</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">All personnel involved — front room, prep room, SMEs, and FDA investigators.</p>
-            </div>
-            {canManageTeam && (
-              <button onClick={() => setShowAddTeamMember(f => !f)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
-                <Plus className="w-3.5 h-3.5" /> Add Member
-              </button>
-            )}
-          </div>
+      {tab === "team" && (() => {
+        const allInspectors = [
+          ...inspectors,
+          ...teamMembers.filter(m => m.room === "inspector"),
+        ];
+        const frontRoomMembers = teamMembers.filter(m => m.room === "front");
+        const prepRoomMembers  = teamMembers.filter(m => m.room === "prep");
+        const allSMEs          = [
+          ...smes,
+          ...teamMembers.filter(m => m.room === "sme"),
+        ];
 
-          {showAddTeamMember && (
-            <form onSubmit={async e => {
-              e.preventDefault();
-              if (!newTeamMember.name.trim()) return;
-              setSavingTeamMember(true);
-              try {
-                const res = await inspectionsApi.addTeamMember(id, {
-                  ...newTeamMember,
-                  topics: newTeamMember.topics.split(",").map(s => s.trim()).filter(Boolean),
-                  focus_areas: [],
-                });
-                setTeamMembers(prev => [...prev, res.data]);
-                setNewTeamMember({ name: "", title: "", email: "", phone: "", room: "prep", role: "", functional_area: "", topics: "", fda_district: "", notes: "" });
-                setShowAddTeamMember(false);
-              } finally { setSavingTeamMember(false); }
-            }} className="bg-card border rounded-xl p-5 space-y-3">
-              <h3 className="text-sm font-semibold">Add Team Member</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <input placeholder="Full name *" value={newTeamMember.name} onChange={e => setNewTeamMember(f => ({ ...f, name: e.target.value }))}
-                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                <input placeholder="Title / Role" value={newTeamMember.title} onChange={e => setNewTeamMember(f => ({ ...f, title: e.target.value }))}
-                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                <select value={newTeamMember.room} onChange={e => setNewTeamMember(f => ({ ...f, room: e.target.value }))}
-                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
-                  <option value="front">Front Room</option>
-                  <option value="prep">Prep Room</option>
-                  <option value="sme">SME / SPOC</option>
-                  <option value="inspector">FDA Inspector</option>
-                </select>
-                <select value={newTeamMember.role} onChange={e => setNewTeamMember(f => ({ ...f, role: e.target.value }))}
-                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
-                  <option value="">Select role…</option>
-                  <optgroup label="Front Room">
-                    <option value="host">Host</option>
-                    <option value="scribe">Scribe</option>
-                    <option value="front_runner">Front Runner</option>
-                  </optgroup>
-                  <optgroup label="Prep Room">
-                    <option value="prep_lead">Prep Lead</option>
-                    <option value="liaison">Functional Liaison</option>
-                    <option value="runner">Runner / Fetcher</option>
-                    <option value="doc_control">Document Control</option>
-                    <option value="qa_reviewer">QA Reviewer</option>
-                    <option value="tech_reviewer">Technical Reviewer</option>
-                  </optgroup>
-                  <optgroup label="SME / SPOC">
-                    <option value="sme">SME</option>
-                    <option value="spoc">SPOC</option>
-                  </optgroup>
-                  <optgroup label="External">
-                    <option value="inspector">FDA Inspector</option>
-                    <option value="observer">Observer</option>
-                    <option value="consultant">Consultant</option>
-                  </optgroup>
-                </select>
-                <input placeholder="Email" value={newTeamMember.email} onChange={e => setNewTeamMember(f => ({ ...f, email: e.target.value }))}
-                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                <input placeholder="FDA District (for inspectors)" value={newTeamMember.fda_district} onChange={e => setNewTeamMember(f => ({ ...f, fda_district: e.target.value }))}
-                  className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+        const AVAIL_COLORS: Record<string, string> = {
+          available:       "bg-emerald-100 text-emerald-800",
+          in_audit_room:   "bg-red-100 text-red-800",
+          on_standby:      "bg-blue-100 text-blue-800",
+          in_prep:         "bg-amber-100 text-amber-800",
+          unavailable:     "bg-gray-100 text-gray-600",
+          do_not_call:     "bg-red-200 text-red-900",
+        };
+
+        return (
+          <div className="space-y-4">
+            {/* Header */}
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h2 className="font-semibold flex items-center gap-2">
+                  <Users className="w-4 h-4 text-primary" /> Inspection Team
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Front room, prep room, SMEs, and FDA investigators.
+                </p>
               </div>
-              <input placeholder="Topics / areas of expertise (comma-separated)"
-                value={newTeamMember.topics} onChange={e => setNewTeamMember(f => ({ ...f, topics: e.target.value }))}
-                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
-              <div className="flex gap-2 justify-end">
-                <button type="button" onClick={() => setShowAddTeamMember(false)} className="px-3 py-2 text-sm border rounded-lg hover:bg-accent">Cancel</button>
-                <button type="submit" disabled={savingTeamMember}
-                  className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg font-medium disabled:opacity-60">
-                  {savingTeamMember ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                  {savingTeamMember ? "Adding…" : "Add Member"}
+              {canManageTeam && (
+                <button onClick={() => setShowAddTeamMember(f => !f)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+                  <Plus className="w-3.5 h-3.5" /> Add Member
                 </button>
-              </div>
-            </form>
-          )}
+              )}
+            </div>
 
-          {/* Room sections */}
-          {(["front", "prep", "sme", "inspector"] as const).map(room => {
-            const ROOM_META: Record<string, { label: string; icon: any; desc: string; color: string }> = {
-              front: { label: "Front Room", icon: Shield, desc: "Host, scribe, and front runner", color: "text-blue-700 bg-blue-50 border-blue-200" },
-              prep: { label: "Prep Room", icon: Users, desc: "Lead, liaisons, runners, reviewers", color: "text-emerald-700 bg-emerald-50 border-emerald-200" },
-              sme: { label: "SMEs & SPOCs", icon: Star, desc: "Subject-matter experts on standby", color: "text-amber-700 bg-amber-50 border-amber-200" },
-              inspector: { label: "FDA Investigators", icon: AlertTriangle, desc: "External inspection team", color: "text-red-700 bg-red-50 border-red-200" },
-            };
-            const meta = ROOM_META[room];
-            const Icon = meta.icon;
-            // Combine new team members + legacy SMEs (for sme room) + legacy inspectors (for inspector room)
-            const newMembers = teamMembers.filter(m => m.room === room);
-            const legacyMembers: any[] = room === "sme" ? smes : room === "inspector" ? inspectors : [];
-            const allMembers = [...newMembers, ...legacyMembers];
-            if (allMembers.length === 0 && room !== "prep") return null;
-            return (
-              <div key={room}>
-                <div className="flex items-center gap-2 mb-3">
-                  <span className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border ${meta.color}`}>
-                    <Icon className="w-3 h-3" /> {meta.label}
-                  </span>
-                  <span className="text-xs text-muted-foreground">{meta.desc}</span>
-                  {allMembers.length > 0 && <span className="text-xs font-bold text-muted-foreground ml-auto">{allMembers.length} member{allMembers.length !== 1 ? "s" : ""}</span>}
+            {/* Add Member Form */}
+            {showAddTeamMember && (
+              <form onSubmit={async e => {
+                e.preventDefault();
+                if (!newTeamMember.name.trim()) return;
+                setSavingTeamMember(true);
+                try {
+                  const res = await inspectionsApi.addTeamMember(id, {
+                    ...newTeamMember,
+                    topics: newTeamMember.topics.split(",").map(s => s.trim()).filter(Boolean),
+                    focus_areas: [],
+                  });
+                  setTeamMembers(prev => [...prev, res.data]);
+                  setNewTeamMember({ name: "", title: "", email: "", phone: "", room: "prep", role: "", functional_area: "", topics: "", fda_district: "", notes: "" });
+                  setShowAddTeamMember(false);
+                } finally { setSavingTeamMember(false); }
+              }} className="bg-card border rounded-xl p-5 space-y-3">
+                <h3 className="text-sm font-semibold">Add Team Member</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <input placeholder="Full name *" value={newTeamMember.name} onChange={e => setNewTeamMember(f => ({ ...f, name: e.target.value }))}
+                    className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                  <input placeholder="Title / Role" value={newTeamMember.title} onChange={e => setNewTeamMember(f => ({ ...f, title: e.target.value }))}
+                    className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                  <select value={newTeamMember.room} onChange={e => setNewTeamMember(f => ({ ...f, room: e.target.value }))}
+                    className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                    <option value="front">Audit Room (Front)</option>
+                    <option value="prep">Prep Room</option>
+                    <option value="sme">SME / SPOC</option>
+                    <option value="inspector">FDA Inspector</option>
+                  </select>
+                  <select value={newTeamMember.role} onChange={e => setNewTeamMember(f => ({ ...f, role: e.target.value }))}
+                    className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                    <option value="">Select role…</option>
+                    <optgroup label="Audit Room">
+                      <option value="host">Host</option>
+                      <option value="scribe">Scribe</option>
+                      <option value="front_runner">Front Runner</option>
+                    </optgroup>
+                    <optgroup label="Prep Room">
+                      <option value="prep_lead">Prep Lead</option>
+                      <option value="librarian">Librarian</option>
+                      <option value="liaison">Functional Liaison</option>
+                      <option value="runner">Runner / Fetcher</option>
+                      <option value="doc_specialist">Document Specialist</option>
+                      <option value="qa_reviewer">QA Reviewer</option>
+                      <option value="tech_reviewer">Technical Reviewer</option>
+                    </optgroup>
+                    <optgroup label="SME / SPOC">
+                      <option value="sme">SME</option>
+                      <option value="spoc">SPOC</option>
+                    </optgroup>
+                    <optgroup label="External">
+                      <option value="inspector">FDA Inspector</option>
+                      <option value="consultant">Consultant</option>
+                    </optgroup>
+                  </select>
+                  <input placeholder="Email" value={newTeamMember.email} onChange={e => setNewTeamMember(f => ({ ...f, email: e.target.value }))}
+                    className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                  <input placeholder="Phone" value={newTeamMember.phone ?? ""} onChange={e => setNewTeamMember(f => ({ ...f, phone: e.target.value }))}
+                    className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                  <input placeholder="FDA District (for inspectors)" value={newTeamMember.fda_district} onChange={e => setNewTeamMember(f => ({ ...f, fda_district: e.target.value }))}
+                    className="col-span-2 border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
                 </div>
-                {allMembers.length === 0 ? (
-                  <div className="bg-muted/20 border border-dashed rounded-xl px-4 py-6 text-center">
-                    <p className="text-xs text-muted-foreground">No {meta.label.toLowerCase()} members added yet</p>
-                    <button onClick={() => { setNewTeamMember(f => ({ ...f, room })); setShowAddTeamMember(true); }}
-                      className="text-xs text-primary hover:underline mt-1">+ Add one</button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {newMembers.map(m => {
-                      const avail = m.availability;
-                      const availColors: Record<string, string> = {
-                        available: "bg-emerald-100 text-emerald-800",
-                        in_audit_room: "bg-red-100 text-red-800",
-                        on_standby: "bg-blue-100 text-blue-800",
-                        in_prep: "bg-amber-100 text-amber-800",
-                        unavailable: "bg-gray-100 text-gray-600",
-                        do_not_call: "bg-red-200 text-red-900",
-                      };
-                      const isExpanded = expandedTeamMember === m.id;
-                      return (
-                        <div key={m.id} className="bg-card border rounded-xl overflow-hidden">
-                          <div className="flex items-start gap-3 px-4 py-3">
-                            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                              <span className="text-xs font-bold text-primary">{m.name.slice(0,2).toUpperCase()}</span>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-start justify-between gap-2">
-                                <div>
-                                  <p className="text-sm font-semibold">{m.name}</p>
-                                  <p className="text-xs text-muted-foreground">{[m.title, m.functional_area].filter(Boolean).join(" · ")}</p>
-                                  <div className="flex flex-wrap gap-1 mt-1">
-                                    {m.role && <span className="text-[10px] px-1.5 py-0.5 bg-muted rounded text-muted-foreground capitalize">{m.role.replace(/_/g, " ")}</span>}
-                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${availColors[avail] ?? availColors.available}`}>{avail.replace(/_/g, " ")}</span>
-                                    {m.topics.slice(0,3).map(t => <span key={t} className="text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded">{t}</span>)}
-                                  </div>
-                                </div>
-                                <div className="flex gap-1 flex-shrink-0">
-                                  <select value={avail} onChange={async e => {
-                                    const res = await inspectionsApi.updateTeamMember(id, m.id, { availability: e.target.value });
-                                    setTeamMembers(prev => prev.map(x => x.id === m.id ? res.data : x));
-                                  }} className="text-[10px] border rounded px-1.5 py-1 bg-background">
-                                    {["available","in_audit_room","on_standby","in_prep","unavailable","do_not_call"].map(s => <option key={s} value={s}>{s.replace(/_/g," ")}</option>)}
-                                  </select>
-                                  <button onClick={() => setExpandedTeamMember(isExpanded ? null : m.id)}
-                                    className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-accent">
-                                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
-                                  </button>
-                                  <button onClick={async () => { await inspectionsApi.deleteTeamMember(id, m.id); setTeamMembers(prev => prev.filter(x => x.id !== m.id)); }}
-                                    className="p-1.5 rounded-lg border border-border text-muted-foreground hover:text-red-500">
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
+                <input placeholder="Topics / areas of expertise (comma-separated)"
+                  value={newTeamMember.topics} onChange={e => setNewTeamMember(f => ({ ...f, topics: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                <div className="flex gap-2 justify-end">
+                  <button type="button" onClick={() => setShowAddTeamMember(false)} className="px-3 py-2 text-sm border rounded-lg hover:bg-accent">Cancel</button>
+                  <button type="submit" disabled={savingTeamMember}
+                    className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg font-medium disabled:opacity-60">
+                    {savingTeamMember ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                    {savingTeamMember ? "Adding…" : "Add Member"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Three-column room layout */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+
+              {/* ── Audit Room ── */}
+              <div className="bg-card border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
+                  <Shield className="w-3.5 h-3.5 text-blue-600" />
+                  <h3 className="font-bold text-sm">Audit Room</h3>
+                  <span className="ml-auto text-[10px] text-muted-foreground">
+                    {allInspectors.length + frontRoomMembers.length} people
+                  </span>
+                </div>
+                <div className="p-4 space-y-4">
+                  {/* Investigators */}
+                  {allInspectors.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-3">
+                        {allInspectors.length > 1 ? `Inspectors (${allInspectors.length})` : "Inspector"}
+                      </p>
+                      <div className="space-y-4">
+                        {allInspectors.map(insp => (
+                          <TeamPersonCard
+                            key={insp.id}
+                            name={insp.name}
+                            role={(insp as any).role ?? "FDA Inspector"}
+                            email={(insp as any).email}
+                            phone={(insp as any).phone}
+                            colorOverride="bg-red-100 text-red-700"
+                          />
+                        ))}
+                      </div>
+                      {frontRoomMembers.length > 0 && <div className="mt-4 border-t" />}
+                    </div>
+                  )}
+
+                  {/* Company Front Room Team */}
+                  {frontRoomMembers.length > 0 ? (
+                    <div>
+                      {allInspectors.length > 0 && (
+                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-3">Company Team</p>
+                      )}
+                      <div className="space-y-4">
+                        {frontRoomMembers.map(m => (
+                          <TeamPersonCard
+                            key={m.id}
+                            name={m.name}
+                            role={m.role ?? m.title ?? "Front Room"}
+                            email={m.email}
+                            phone={m.phone}
+                            availBadge={m.availability && m.availability !== "available" ? { label: m.availability.replace(/_/g, " "), cls: AVAIL_COLORS[m.availability] ?? AVAIL_COLORS.available } : undefined}
+                            assignedTo={frontRoomAssignment[m.id]}
+                            allInspectors={allInspectors.length > 1 ? allInspectors : undefined}
+                            onAssign={allInspectors.length > 1 ? (name) => {
+                              const updated = { ...frontRoomAssignment, [m.id]: name };
+                              setFrontRoomAssignment(updated);
+                              try { sessionStorage.setItem(`clyira_frassign_${id}`, JSON.stringify(updated)); } catch {}
+                            } : undefined}
+                            onExpand={() => setExpandedTeamMember(expandedTeamMember === m.id ? null : m.id)}
+                            isExpanded={expandedTeamMember === m.id}
+                          >
+                            {m.approved_talking_points.length > 0 && (
+                              <div>
+                                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Talking Points</p>
+                                <ul className="space-y-1">
+                                  {m.approved_talking_points.map((tp, i) => (
+                                    <li key={i} className="flex items-start gap-1.5 text-xs"><CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0 mt-0.5" />{tp}</li>
+                                  ))}
+                                </ul>
                               </div>
-                            </div>
-                          </div>
-                          {isExpanded && (
-                            <div className="border-t px-4 py-3 space-y-3 bg-muted/20">
-                              {m.approved_talking_points.length > 0 && (
-                                <div>
-                                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Approved Talking Points</p>
-                                  <ul className="space-y-1">{m.approved_talking_points.map((tp, i) => <li key={i} className="flex items-start gap-2 text-xs"><CheckCircle2 className="w-3 h-3 text-emerald-500 mt-0.5 flex-shrink-0" />{tp}</li>)}</ul>
-                                </div>
-                              )}
-                              {m.do_not_volunteer.length > 0 && (
-                                <div>
-                                  <p className="text-[10px] font-semibold text-red-600 uppercase tracking-wide mb-1.5">Do NOT Volunteer</p>
-                                  <ul className="space-y-1">{m.do_not_volunteer.map((dnv, i) => <li key={i} className="flex items-start gap-2 text-xs text-red-700"><XCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />{dnv}</li>)}</ul>
-                                </div>
-                              )}
-                              {m.likely_questions.length > 0 && (
-                                <div>
-                                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Mock Q&A</p>
-                                  <div className="space-y-2">{m.likely_questions.map((qa, i) => <div key={i} className="bg-card border rounded-lg p-2.5"><p className="text-xs font-medium mb-0.5">Q: {qa.question}</p><p className="text-xs text-muted-foreground">A: {qa.recommended_answer}</p></div>)}</div>
-                                </div>
-                              )}
-                              {m.fda_district && <p className="text-xs text-muted-foreground">FDA District: {m.fda_district}</p>}
-                              {m.notes && <p className="text-xs text-muted-foreground italic">{m.notes}</p>}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                    {/* Legacy SMEs rendered in sme room */}
-                    {room === "sme" && smes.map(sme => {
-                      const availColors: Record<string, string> = {
-                        available: "bg-emerald-100 text-emerald-800",
-                        in_audit_room: "bg-red-100 text-red-800",
-                        on_standby: "bg-blue-100 text-blue-800",
-                        in_prep: "bg-amber-100 text-amber-800",
-                        unavailable: "bg-gray-100 text-gray-600",
-                        do_not_call: "bg-red-200 text-red-900",
-                      };
-                      const isExpanded = expandedSME === sme.id;
-                      const isCoaching = coachingSME === sme.id;
-                      return (
-                        <div key={sme.id} className="bg-card border rounded-xl overflow-hidden">
-                          <div className="flex items-start gap-3 p-4">
-                            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                              <span className="text-xs font-bold text-primary">{sme.name.slice(0,2).toUpperCase()}</span>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-start justify-between gap-2">
-                                <div>
-                                  <p className="text-sm font-semibold">{sme.name}</p>
-                                  <p className="text-xs text-muted-foreground">{[sme.title, sme.department].filter(Boolean).join(" · ")}</p>
-                                  <div className="flex flex-wrap gap-1 mt-1">
-                                    <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${availColors[sme.availability] ?? availColors.available}`}>{sme.availability.replace(/_/g," ")}</span>
-                                    {sme.qa_cleared && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 flex items-center gap-0.5 font-medium"><BadgeCheck className="w-2.5 h-2.5" />QA Cleared</span>}
-                                    {sme.topics.slice(0,3).map(t => <span key={t} className="text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded">{t}</span>)}
-                                  </div>
-                                </div>
-                                <div className="flex gap-1 flex-shrink-0">
-                                  <select value={sme.availability} onChange={async e => {
-                                    const res = await inspectionsApi.updateSME(id, sme.id, { availability: e.target.value });
-                                    setSMEs(prev => prev.map(s => s.id === sme.id ? res.data : s));
-                                  }} className="text-[10px] border rounded px-1.5 py-1 bg-background">
-                                    {["available","in_audit_room","on_standby","in_prep","unavailable","do_not_call"].map(s => <option key={s} value={s}>{s.replace(/_/g," ")}</option>)}
-                                  </select>
-                                  <button onClick={() => inspectionsApi.qaClearSME(id, sme.id).then(r => setSMEs(prev => prev.map(s => s.id === sme.id ? r.data : s)))}
-                                    className={`p-1.5 rounded-lg border text-xs transition-colors ${sme.qa_cleared ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "border-border text-muted-foreground hover:text-emerald-600"}`}
-                                    title="Toggle QA clearance"><BadgeCheck className="w-3.5 h-3.5" /></button>
-                                  <button onClick={() => handleCoachSME(sme.id)} disabled={isCoaching}
-                                    className="flex items-center gap-1 px-2 py-1.5 text-[10px] border rounded-lg font-medium hover:bg-accent disabled:opacity-50">
-                                    {isCoaching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3 text-primary" />}{isCoaching ? "…" : "AI Coach"}
-                                  </button>
-                                  <button onClick={() => setExpandedSME(isExpanded ? null : sme.id)}
-                                    className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-accent">
-                                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
-                                  </button>
-                                  <button onClick={async () => { await inspectionsApi.deleteSME(id, sme.id); setSMEs(prev => prev.filter(s => s.id !== sme.id)); }}
-                                    className="p-1.5 rounded-lg border border-border text-muted-foreground hover:text-red-500"><Trash2 className="w-3.5 h-3.5" /></button>
-                                </div>
+                            )}
+                            {m.do_not_volunteer.length > 0 && (
+                              <div>
+                                <p className="text-[10px] font-semibold text-red-600 uppercase tracking-wide mb-1">Do NOT Volunteer</p>
+                                <ul className="space-y-1">
+                                  {m.do_not_volunteer.map((dnv, i) => (
+                                    <li key={i} className="flex items-start gap-1.5 text-xs text-red-700"><XCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />{dnv}</li>
+                                  ))}
+                                </ul>
                               </div>
-                            </div>
-                          </div>
-                          {isExpanded && (
-                            <div className="border-t px-4 py-3 space-y-3 bg-muted/20">
-                              {sme.approved_talking_points.length > 0 && (
-                                <div><p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Approved Talking Points</p><ul className="space-y-1">{sme.approved_talking_points.map((tp, i) => <li key={i} className="flex items-start gap-2 text-xs"><CheckCircle2 className="w-3 h-3 text-emerald-500 mt-0.5 flex-shrink-0" />{tp}</li>)}</ul></div>
-                              )}
-                              {sme.do_not_volunteer.length > 0 && (
-                                <div><p className="text-[10px] font-semibold text-red-600 uppercase tracking-wide mb-1.5">Do NOT Volunteer</p><ul className="space-y-1">{sme.do_not_volunteer.map((dnv, i) => <li key={i} className="flex items-start gap-2 text-xs text-red-700"><XCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />{dnv}</li>)}</ul></div>
-                              )}
-                              {sme.likely_questions.length > 0 && (
-                                <div><p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Mock Q&A</p><div className="space-y-2">{sme.likely_questions.map((qa, i) => <div key={i} className="bg-card border rounded-lg p-2.5"><p className="text-xs font-medium mb-0.5">Q: {qa.question}</p><p className="text-xs text-muted-foreground">A: {qa.recommended_answer}</p></div>)}</div></div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                    {/* Legacy inspectors rendered in inspector room */}
-                    {room === "inspector" && inspectors.map(insp => {
-                      const brief = inspectorBriefs[insp.id];
-                      const isExpanded = expandedBrief === insp.id;
-                      const isBriefing = briefingInspector === insp.id;
-                      return (
-                        <div key={insp.id} className="bg-card border rounded-xl overflow-hidden">
-                          <div className="px-4 py-3 flex items-start justify-between gap-3">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <p className="font-semibold text-sm">{insp.name}</p>
-                                <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 border border-amber-200 rounded text-amber-800 capitalize">{insp.role.replace("_", " ")}</span>
-                              </div>
-                              <p className="text-xs text-muted-foreground mt-0.5">{insp.fda_district || "District not specified"}{insp.email && ` · ${insp.email}`}</p>
-                            </div>
-                            <div className="flex items-center gap-2 flex-shrink-0">
-                              <button onClick={async () => {
-                                if (brief) { setExpandedBrief(isExpanded ? null : insp.id); return; }
-                                setBriefingInspector(insp.id); setExpandedBrief(insp.id);
-                                try { const res = await inspectionsApi.briefInspector(id, insp.id); setInspectorBriefs(b => ({ ...b, [insp.id]: res.data.brief })); }
-                                catch { setInspectorBriefs(b => ({ ...b, [insp.id]: null })); }
-                                finally { setBriefingInspector(null); }
-                              }} disabled={isBriefing}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors disabled:opacity-60 ${brief ? "bg-primary/10 border-primary/20 text-primary" : "bg-muted border-border text-muted-foreground hover:text-foreground"}`}>
-                                {isBriefing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
-                                {isBriefing ? "Briefing…" : brief ? (isExpanded ? "Hide Brief" : "View Brief") : "AI Brief"}
-                              </button>
-                              <button onClick={async () => { await inspectionsApi.deleteInspector(id, insp.id); await loadTabData("team"); }}
-                                className="text-muted-foreground hover:text-red-500 p-1"><Trash2 className="w-3.5 h-3.5" /></button>
-                            </div>
-                          </div>
-                          {isExpanded && (
-                            <div className="border-t bg-muted/10 px-4 py-3">
-                              {isBriefing ? <div className="flex items-center gap-3 text-sm text-muted-foreground py-2"><Loader2 className="w-4 h-4 animate-spin text-primary" />Researching inspector background…</div>
-                              : brief ? (
-                                <div className="space-y-3">
-                                  {brief.district_profile && <div className="bg-card border rounded-lg px-3 py-2"><p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-1">District Profile</p><p className="text-xs">{brief.district_profile}</p></div>}
-                                  {brief.likely_focus_areas?.length > 0 && <div><p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-1.5">Expected Focus Areas</p><div className="flex flex-wrap gap-1.5">{brief.likely_focus_areas.map((f: string, i: number) => <span key={i} className="text-xs px-2 py-0.5 bg-amber-50 border border-amber-200 rounded-full text-amber-800">{f}</span>)}</div></div>}
-                                  {brief.red_flags?.length > 0 && <div className="bg-red-50 border border-red-100 rounded-lg px-3 py-2"><p className="text-[10px] font-bold text-red-700 uppercase tracking-wide mb-1">Prepare These Areas</p><ul className="space-y-0.5">{brief.red_flags.map((f: string, i: number) => <li key={i} className="text-xs text-red-800">• {f}</li>)}</ul></div>}
-                                </div>
-                              ) : <p className="text-xs text-muted-foreground py-1">Brief failed. Try again.</p>}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {room === "inspector" && (
-                  <form onSubmit={handleSaveInspector} className="mt-3 bg-card border rounded-xl p-4 space-y-3">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Add Investigator</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <input value={newInspector.name} onChange={e => setNewInspector(f => ({ ...f, name: e.target.value }))} placeholder="Full name *" className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                      <input value={newInspector.fda_district} onChange={e => setNewInspector(f => ({ ...f, fda_district: e.target.value }))} placeholder="FDA District / Agency office" className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                      <input value={newInspector.email} onChange={e => setNewInspector(f => ({ ...f, email: e.target.value }))} placeholder="Email (optional)" className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                      <select value={newInspector.role} onChange={e => setNewInspector(f => ({ ...f, role: e.target.value }))} className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
-                        <option value="lead">Lead Investigator</option>
-                        <option value="secondary">Secondary</option>
-                        <option value="observer">Observer</option>
-                      </select>
+                            )}
+                          </TeamPersonCard>
+                        ))}
+                      </div>
                     </div>
-                    <input value={newInspector.notes} onChange={e => setNewInspector(f => ({ ...f, notes: e.target.value }))} placeholder="Known focus areas, previous inspections…" className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                    <div className="flex justify-end">
-                      <button type="submit" disabled={savingInspector || !newInspector.name.trim()}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-60">
-                        {savingInspector ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
-                      </button>
-                    </div>
-                  </form>
-                )}
-                {room === "sme" && (
-                  <form onSubmit={handleSaveSME} className="mt-3 bg-card border rounded-xl p-4 space-y-3">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Add SME / SPOC</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <input placeholder="Name *" value={newSME.name} onChange={e => setNewSME(f => ({ ...f, name: e.target.value }))} className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                      <input placeholder="Title" value={newSME.title} onChange={e => setNewSME(f => ({ ...f, title: e.target.value }))} className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                      <input placeholder="Department" value={newSME.department} onChange={e => setNewSME(f => ({ ...f, department: e.target.value }))} className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                      <input placeholder="Email" value={newSME.email} onChange={e => setNewSME(f => ({ ...f, email: e.target.value }))} className="border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                    </div>
-                    <input placeholder="Topics (comma-separated)" value={newSME.topics} onChange={e => setNewSME(f => ({ ...f, topics: e.target.value }))} className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                    <div className="flex gap-2 justify-end">
-                      <button type="button" onClick={() => setShowAddSME(false)} className="px-3 py-2 text-sm border rounded-lg hover:bg-accent">Cancel</button>
-                      <button type="submit" disabled={savingSME}
-                        className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg font-medium disabled:opacity-60">
-                        {savingSME ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}{savingSME ? "Saving…" : "Add SME"}
-                      </button>
-                    </div>
-                  </form>
-                )}
+                  ) : allInspectors.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-4">No audit room team added yet</p>
+                  ) : null}
+
+                  {canManageTeam && (
+                    <button onClick={() => { setNewTeamMember(f => ({ ...f, room: "front" })); setShowAddTeamMember(true); }}
+                      className="w-full border border-dashed rounded-lg py-1.5 text-xs text-primary hover:bg-primary/5 transition-colors">
+                      + Add person
+                    </button>
+                  )}
+                </div>
               </div>
-            );
-          })}
-        </div>
-      )}
+
+              {/* ── Prep Room ── */}
+              <div className="bg-card border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
+                  <Users className="w-3.5 h-3.5 text-emerald-600" />
+                  <h3 className="font-bold text-sm">Prep Room</h3>
+                  <span className="ml-auto text-[10px] text-muted-foreground">{prepRoomMembers.length} people</span>
+                </div>
+                <div className="p-4 space-y-4">
+                  {prepRoomMembers.length > 0 ? (
+                    prepRoomMembers.map(m => (
+                      <TeamPersonCard
+                        key={m.id}
+                        name={m.name}
+                        role={m.role ?? m.title ?? "Prep Room"}
+                        email={m.email}
+                        phone={m.phone}
+                        availBadge={m.availability && m.availability !== "available" ? { label: m.availability.replace(/_/g, " "), cls: AVAIL_COLORS[m.availability] ?? AVAIL_COLORS.available } : undefined}
+                        onExpand={() => setExpandedTeamMember(expandedTeamMember === m.id ? null : m.id)}
+                        isExpanded={expandedTeamMember === m.id}
+                      >
+                        {m.topics.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {m.topics.map(t => <span key={t} className="text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded">{t}</span>)}
+                          </div>
+                        )}
+                        {m.notes && <p className="text-xs text-muted-foreground italic">{m.notes}</p>}
+                      </TeamPersonCard>
+                    ))
+                  ) : (
+                    <p className="text-xs text-muted-foreground text-center py-4">No prep room team added yet</p>
+                  )}
+                  {canManageTeam && (
+                    <button onClick={() => { setNewTeamMember(f => ({ ...f, room: "prep" })); setShowAddTeamMember(true); }}
+                      className="w-full border border-dashed rounded-lg py-1.5 text-xs text-primary hover:bg-primary/5 transition-colors">
+                      + Add person
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* ── SMEs & SPOCs ── */}
+              <div className="bg-card border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
+                  <Star className="w-3.5 h-3.5 text-amber-500" />
+                  <h3 className="font-bold text-sm">SMEs & SPOCs</h3>
+                  <span className="ml-auto text-[10px] text-muted-foreground">{allSMEs.length} on standby</span>
+                </div>
+                <div className="p-4 space-y-4">
+                  {allSMEs.length > 0 ? (
+                    allSMEs.map(s => {
+                      const smeData = s as any;
+                      const dept = smeData.department ?? smeData.functional_area ?? smeData.title ?? "SME";
+                      const avail = smeData.availability ?? "available";
+                      return (
+                        <TeamPersonCard
+                          key={smeData.id}
+                          name={smeData.name}
+                          role={dept}
+                          email={smeData.email}
+                          phone={smeData.phone}
+                          availBadge={avail !== "available" ? { label: avail.replace(/_/g, " "), cls: AVAIL_COLORS[avail] ?? AVAIL_COLORS.available } : undefined}
+                          onExpand={() => setExpandedSME(expandedSME === smeData.id ? null : smeData.id)}
+                          isExpanded={expandedSME === smeData.id}
+                        >
+                          {smeData.topics?.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {smeData.topics.slice(0, 5).map((t: string) => <span key={t} className="text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded">{t}</span>)}
+                            </div>
+                          )}
+                          {smeData.approved_talking_points?.length > 0 && (
+                            <div>
+                              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Talking Points</p>
+                              <ul className="space-y-1">
+                                {smeData.approved_talking_points.map((tp: string, i: number) => (
+                                  <li key={i} className="flex items-start gap-1.5 text-xs"><CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0 mt-0.5" />{tp}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </TeamPersonCard>
+                      );
+                    })
+                  ) : (
+                    <p className="text-xs text-muted-foreground text-center py-4">No SMEs added yet</p>
+                  )}
+                  {canManageTeam && (
+                    <button onClick={() => { setNewTeamMember(f => ({ ...f, room: "sme" })); setShowAddTeamMember(true); }}
+                      className="w-full border border-dashed rounded-lg py-1.5 text-xs text-primary hover:bg-primary/5 transition-colors">
+                      + Add SME
+                    </button>
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Inspector Profile Tab ─────────────────────────────────────────────── */}
+      {tab === "inspector_profile" && (() => {
+        const allInsp = [
+          ...inspectors,
+          ...teamMembers.filter(m => m.room === "inspector"),
+        ];
+        if (allInsp.length === 0) {
+          return (
+            <div className="bg-muted/30 border border-dashed rounded-xl px-8 py-16 text-center">
+              <UserCheck className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
+              <h3 className="font-semibold mb-1">No inspectors added yet</h3>
+              <p className="text-sm text-muted-foreground mb-4 max-w-sm mx-auto">
+                Add FDA investigators on the Team tab to view their profiles and get AI briefings.
+              </p>
+              <button onClick={() => setTab("team" as any)}
+                className="text-sm text-primary hover:underline">Go to Team tab →</button>
+            </div>
+          );
+        }
+        return (
+          <div className="space-y-4">
+            <div>
+              <h2 className="font-semibold flex items-center gap-2">
+                <UserCheck className="w-4 h-4 text-primary" /> Inspector Profiles
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Background, focus areas, and real-time AI intelligence on each investigator.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {allInsp.map(insp => {
+                const brief = inspectorBriefs[(insp as any).id];
+                const isBriefing = briefingInspector === (insp as any).id;
+                const isExpanded = expandedBrief === (insp as any).id;
+                const focusAreas: string[] = (insp as any).focus_areas ?? [];
+                const noteKey = (insp as any).id;
+
+                return (
+                  <div key={(insp as any).id} className="bg-card border rounded-xl overflow-hidden">
+                    {/* Profile header */}
+                    <div className="px-5 py-4 flex items-start gap-4 border-b bg-gradient-to-r from-red-50/60 to-transparent">
+                      <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                        <span className="text-lg font-bold text-red-700">
+                          {insp.name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="font-bold text-base">{insp.name}</h3>
+                            <p className="text-sm text-muted-foreground capitalize">
+                              {((insp as any).role ?? "FDA Inspector").replace(/_/g, " ")}
+                            </p>
+                            {(insp as any).fda_district && (
+                              <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                                <Building2 className="w-3 h-3" />
+                                {(insp as any).fda_district}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex gap-1.5 flex-shrink-0">
+                            {(insp as any).email && (
+                              <a href={`mailto:${(insp as any).email}`}
+                                className="p-1.5 border rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent">
+                                <Mail className="w-3.5 h-3.5" />
+                              </a>
+                            )}
+                            <button
+                              onClick={async () => {
+                                setBriefingInspector((insp as any).id);
+                                try {
+                                  const res = await inspectionsApi.briefInspector(id, (insp as any).id);
+                                  setInspectorBriefs(b => ({ ...b, [(insp as any).id]: res.data.brief }));
+                                  setExpandedBrief((insp as any).id);
+                                } catch {}
+                                finally { setBriefingInspector(null); }
+                              }}
+                              disabled={isBriefing}
+                              className="flex items-center gap-1 px-2.5 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-60"
+                            >
+                              {isBriefing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                              {isBriefing ? "Briefing…" : "AI Brief"}
+                            </button>
+                            <button onClick={() => setExpandedBrief(isExpanded ? null : (insp as any).id)}
+                              className="p-1.5 border rounded-lg text-muted-foreground hover:bg-accent">
+                              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Focus areas */}
+                    <div className="px-5 py-3 border-b space-y-3">
+                      <div>
+                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-2">Known Focus Areas</p>
+                        {focusAreas.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {focusAreas.map(f => (
+                              <span key={f} className="text-xs px-2 py-0.5 bg-red-50 border border-red-200 text-red-700 rounded-full">{f}</span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground italic">No focus areas recorded — use AI Brief to generate intel</p>
+                        )}
+                      </div>
+
+                      {(insp as any).notes_on_style && (
+                        <div>
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-1">Investigation Style</p>
+                          <p className="text-xs text-muted-foreground">{(insp as any).notes_on_style}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* AI Brief (expanded) */}
+                    {isExpanded && brief && (
+                      <div className="px-5 py-3 border-b space-y-3 bg-amber-50/40">
+                        <p className="text-[10px] font-bold text-amber-800 uppercase tracking-wide flex items-center gap-1">
+                          <Zap className="w-3 h-3" /> AI Intelligence Brief
+                        </p>
+                        {brief.next_likely_focus && (
+                          <div className="bg-white border border-amber-200 rounded-lg px-3 py-2">
+                            <p className="text-[10px] font-semibold text-amber-700 mb-0.5">Likely Next Focus</p>
+                            <p className="text-xs">{brief.next_likely_focus}</p>
+                          </div>
+                        )}
+                        {brief.building_toward && (
+                          <div className="bg-white border border-red-200 rounded-lg px-3 py-2">
+                            <p className="text-[10px] font-semibold text-red-700 mb-0.5">Building Toward</p>
+                            <p className="text-xs">{brief.building_toward}</p>
+                          </div>
+                        )}
+                        {brief.recommended_smes?.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Recommended SMEs</p>
+                            <div className="flex flex-wrap gap-1">
+                              {brief.recommended_smes.map((s: string) => (
+                                <span key={s} className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-full">{s}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {brief.talking_points?.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Talking Points</p>
+                            <ul className="space-y-1">
+                              {brief.talking_points.map((tp: string, i: number) => (
+                                <li key={i} className="flex items-start gap-1.5 text-xs"><CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0 mt-0.5" />{tp}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Real-time observation notes */}
+                    <div className="px-5 py-3">
+                      <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-2">
+                        War Room Notes on {insp.name.split(" ")[0]}
+                      </p>
+                      <textarea
+                        value={inspectorNotes[noteKey] ?? ((insp as any).notes ?? "")}
+                        onChange={e => setInspectorNotes(n => ({ ...n, [noteKey]: e.target.value }))}
+                        placeholder={`Observations about this inspector's behavior, interests, demeanor during this inspection…`}
+                        rows={3}
+                        className="w-full text-xs border rounded-lg px-3 py-2 bg-background resize-none focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      />
+                      <p className="text-[10px] text-muted-foreground mt-1">Notes are session-only until saved to the inspector record.</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Scribe Tab ────────────────────────────────────────────────────────── */}
       {tab === "scribe" && (
