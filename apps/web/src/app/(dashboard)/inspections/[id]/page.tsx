@@ -2320,7 +2320,6 @@ export default function WarRoomPage() {
   const [showColumnCustomizer, setShowColumnCustomizer] = useState(false);
   const [showScribeSidebar, setShowScribeSidebar] = useState(true);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
-  const [activePredictionInspector, setActivePredictionInspector] = useState<string | null>(null);
   const [scribePanelOpen, setScribePanelOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
@@ -3377,43 +3376,9 @@ export default function WarRoomPage() {
                 </div>
               )}
 
-              {/* Investigator tracks row */}
-              {investigatorTracks.length > 0 && (
-                <TracksRow
-                  tracks={investigatorTracks}
-                  activeInvestigator={filterInvestigator}
-                  onFilter={name => setFilterInvestigator(name)}
-                />
-              )}
-
               {/* SME Room Board */}
               {smeRoomStatuses.length > 0 && (
                 <SMERoomBoard statuses={smeRoomStatuses} />
-              )}
-
-              {/* AI Prediction Strip */}
-              {investigatorTracks.length > 0 && (
-                <PredictionStrip
-                  tracks={investigatorTracks}
-                  activeInvestigator={filterInvestigator}
-                  allRequests={allRequests}
-                  smeStatuses={smeRoomStatuses}
-                  inspectorBrief={activePredictionInspector ? (inspectorBriefs[
-                    [...teamMembers.filter(m => m.room === "inspector"), ...inspectors].find(i => i.name === activePredictionInspector)?.id ?? ""
-                  ] ?? null) : null}
-                  onGetIntel={async (name) => {
-                    setActivePredictionInspector(name);
-                    const inspObj = [...teamMembers.filter(m => m.room === "inspector"), ...inspectors].find(i => i.name === name);
-                    if (!inspObj?.id) return;
-                    setBriefingInspector(inspObj.id);
-                    try {
-                      const res = await inspectionsApi.briefInspector(id, inspObj.id);
-                      setInspectorBriefs(b => ({ ...b, [inspObj.id]: res.data.brief }));
-                    } catch { setInspectorBriefs(b => ({ ...b, [inspObj?.id ?? ""]: null })); }
-                    finally { setBriefingInspector(null); }
-                  }}
-                  briefLoading={briefingInspector !== null}
-                />
               )}
 
               {/* Table Toolbar: preset pills + sort + log button */}
