@@ -31,6 +31,9 @@ class EvidenceImport(Base, TimestampMixin):
     # Storage path
     file_path = Column(String(500))
 
+    # Full parsed row set stored at upload time so /map can re-ingest without a second upload
+    raw_rows = Column(JSONB, default=list)
+
 
 class EvidenceObject(Base, TimestampMixin):
     """A single normalized evidence record extracted from an EvidenceImport."""

@@ -109,16 +109,19 @@ SUB_SECTOR_KEYWORDS = {
 }
 
 CFR_PATTERN = re.compile(
-    r'(?:21\s+CFR\s+(?:Part\s+)?[\d.]+(?:\([a-z]\))?'
-    r'|21 U\.S\.C\.\s+\d+'
-    r'|section\s+\d+\(\w\)\(\d\)'
-    r'|FD&C Act\s+section\s+\d+)',
+    r'(?:21\s+CFR\s+(?:Part\s+)?(?:§§?\s*)?[\d.]+(?:\([a-z0-9]+\))*'
+    r'|21\s+U\.S\.C\.\s+\d+(?:\([a-z]\))?'
+    r'|section\s+\d+\(\w\)\(\d+\)'
+    r'|FD&C\s+Act\s+section\s+\d+)',
     re.IGNORECASE,
 )
 
 
 def extract_cfr_citations(text: str) -> list[str]:
-    return list(dict.fromkeys(CFR_PATTERN.findall(text)))
+    raw = CFR_PATTERN.findall(text)
+    # Strip malformed trailing open-parens that appear when FDA redacts (b)(4) content
+    cleaned = [c.rstrip('(').strip() for c in raw]
+    return list(dict.fromkeys(c for c in cleaned if c))
 
 
 def map_categories(text: str) -> list[str]:
@@ -152,6 +155,7 @@ OPENFDA_BASE = "https://api.fda.gov"
 OPENFDA_ENDPOINTS = {
     "drug_enforcement": f"{OPENFDA_BASE}/drug/enforcement.json",
     "device_enforcement": f"{OPENFDA_BASE}/device/enforcement.json",
+    "food_enforcement": f"{OPENFDA_BASE}/food/enforcement.json",
 }
 
 
@@ -361,41 +365,66 @@ async def _fetch_wl_bulk(
     ]
 
     for url in urls_to_try:
-        try:
-            resp = await client.get(url, timeout=20, follow_redirects=True)
-            if resp.status_code != 200:
-                continue
-            soup = BeautifulSoup(resp.text, "lxml")
-            rows = soup.select("table tr")[1:]  # Skip header
-            for row in rows[:50]:  # Cap per year
-                cols = row.find_all("td")
-                if len(cols) < 3:
-                    continue
-                company = cols[0].get_text(strip=True)
-                subject = cols[1].get_text(strip=True) if len(cols) > 1 else ""
-                date_str = cols[2].get_text(strip=True) if len(cols) > 2 else ""
-                full_text = f"{company} {subject}"
-                records.append({
-                    "agency": "FDA",
-                    "record_type": "warning_letter",
-                    "reference_number": f"WL-{date_str[:4]}-{generate_uuid()[:6]}",
-                    "issue_date": date_str[:10],
-                    "company_cited": company[:255],
-                    "sub_sectors": map_sub_sectors(full_text),
-                    "observation_categories": map_categories(full_text),
-                    "cfr_citations": extract_cfr_citations(full_text),
-                    "title": subject[:500],
-                    "summary": subject[:500],
-                    "observations": [],
-                    "outcome": "warning_letter_issued",
-                    "pattern_tags": [],
-                    "severity_indicator": "high",
-                    "trending": False,
-                    "trend_velocity": None,
-                })
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            log.debug(f"Bulk WL fetch skip ({url}): {e}")
+        page_url = url
+        seen_on_page: set[str] = set()
+        while page_url:
+            try:
+                resp = await client.get(page_url, timeout=20, follow_redirects=True)
+                if resp.status_code != 200:
+                    break
+                soup = BeautifulSoup(resp.text, "lxml")
+                rows = soup.select("table tr")[1:]  # Skip header
+                if not rows:
+                    break
+                page_count = 0
+                for row in rows:
+                    cols = row.find_all("td")
+                    if len(cols) < 3:
+                        continue
+                    company = cols[0].get_text(strip=True)
+                    subject = cols[1].get_text(strip=True) if len(cols) > 1 else ""
+                    date_str = cols[2].get_text(strip=True) if len(cols) > 2 else ""
+                    ref = f"WL-{date_str[:10]}-{company[:20]}".replace(" ", "-")
+                    if ref in seen_on_page:
+                        continue
+                    seen_on_page.add(ref)
+                    full_text = f"{company} {subject}"
+                    records.append({
+                        "agency": "FDA",
+                        "record_type": "warning_letter",
+                        "reference_number": ref[:100],
+                        "issue_date": date_str[:10],
+                        "company_cited": company[:255],
+                        "sub_sectors": map_sub_sectors(full_text),
+                        "observation_categories": map_categories(full_text),
+                        "cfr_citations": extract_cfr_citations(full_text),
+                        "title": subject[:500],
+                        "summary": subject[:500],
+                        "observations": [],
+                        "outcome": "warning_letter_issued",
+                        "pattern_tags": [],
+                        "severity_indicator": "high",
+                        "trending": False,
+                        "trend_velocity": None,
+                    })
+                    page_count += 1
+                log.debug(f"  WL bulk page {page_url}: {page_count} rows")
+
+                # Follow pagination — look for a "Next" link
+                next_link = soup.find("a", string=re.compile(r"next|>", re.I))
+                if next_link and next_link.get("href"):
+                    href = next_link["href"]
+                    if href.startswith("http"):
+                        page_url = href
+                    else:
+                        from urllib.parse import urljoin
+                        page_url = urljoin(page_url, href)
+                else:
+                    page_url = None
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                log.debug(f"Bulk WL fetch skip ({page_url}): {e}")
+                break
 
     return records
 
@@ -565,8 +594,8 @@ async def write_to_db(records: list[dict], db_url: str, dry_run: bool = False) -
 async def main():
     parser = argparse.ArgumentParser(description="Seed Clyira enforcement corpus from public sources")
     parser.add_argument("--years", type=int, default=3, help="Years of history to fetch (default: 3)")
-    parser.add_argument("--source", choices=["all", "fda", "wl", "ema"], default="all",
-                        help="Data source: all, fda (openFDA), wl (warning letters), ema")
+    parser.add_argument("--source", choices=["all", "fda", "wl", "ema", "food"], default="all",
+                        help="Data source: all, fda (openFDA drug+device), food (openFDA food), wl (warning letters), ema")
     parser.add_argument("--dry-run", action="store_true", help="Print records without inserting")
     parser.add_argument("--db", default=None, help="Override DATABASE_URL")
     args = parser.parse_args()
@@ -605,6 +634,13 @@ async def main():
             device_records = [parse_openfda_record(r, "device") for r in raw_device]
             log.info(f"  Parsed {len(device_records)} device enforcement records")
             all_records.extend(device_records)
+
+        if args.source in ("all", "food"):
+            log.info("Fetching openFDA food enforcement records…")
+            raw_food = await fetch_openfda(client, OPENFDA_ENDPOINTS["food_enforcement"], args.years)
+            food_records = [parse_openfda_record(r, "food") for r in raw_food]
+            log.info(f"  Parsed {len(food_records)} food enforcement records")
+            all_records.extend(food_records)
 
         if args.source in ("all", "wl"):
             log.info("Fetching FDA Warning Letters…")

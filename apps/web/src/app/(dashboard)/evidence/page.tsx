@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import {
   Upload, FileText, Database, Loader2, X, Check, ChevronRight,
   AlertTriangle, Trash2, Eye, CheckCircle2, ArrowRight, Info,
-  Table, Layers, Zap, Plus, RefreshCw,
+  Table, Layers, Zap, Plus, RefreshCw, ShieldCheck, ShieldAlert,
 } from "lucide-react";
 import { evidenceApi } from "@/lib/api";
 
@@ -124,7 +124,7 @@ function UploadZone({ onUploaded }: { onUploaded: (imp: any) => void }) {
           dragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/20"
         }`}
       >
-        <input ref={inputRef} type="file" accept=".csv,.tsv,.txt" className="hidden"
+        <input ref={inputRef} type="file" accept=".csv,.tsv,.txt,.xlsx,.xls" className="hidden"
           onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
         {uploading ? (
           <div className="space-y-2">
@@ -135,7 +135,7 @@ function UploadZone({ onUploaded }: { onUploaded: (imp: any) => void }) {
           <div className="space-y-2">
             <Upload className="w-10 h-10 text-muted-foreground/40 mx-auto" />
             <p className="font-semibold text-sm">Drop CSV here or click to browse</p>
-            <p className="text-xs text-muted-foreground">CSV or TSV · Max 10 MB · 5,000 rows</p>
+            <p className="text-xs text-muted-foreground">CSV, TSV, or Excel (.xlsx) · Max 10 MB · 5,000 rows</p>
           </div>
         )}
       </div>
@@ -165,31 +165,24 @@ function ColumnMapper({
     return m;
   });
   const [saving, setSaving] = useState(false);
-  const [ingesting, setIngesting] = useState(false);
   const [error, setError] = useState("");
 
   const handleSave = async () => {
-    const cleanMapping: Record<string, string> = {};
-    Object.entries(mapping).forEach(([col, field]) => {
-      if (field && field !== "_skip") cleanMapping[col] = field;
-    });
-    if (Object.keys(cleanMapping).length === 0) {
+    if (Object.keys(mapping).length === 0) {
       setError("Map at least one column to a field.");
       return;
     }
     setSaving(true);
     setError("");
     try {
-      await evidenceApi.mapColumns(imp.import_id, entityType, cleanMapping);
-      // Ingest the preview rows
-      if (imp.preview?.length > 0) {
-        setIngesting(true);
-        await evidenceApi.ingest(imp.import_id, imp.preview);
-      }
-      onMapped();
+      // /map stores the mapping AND re-ingests all stored rows server-side
+      const res = await evidenceApi.mapColumns(imp.import_id, entityType, mapping);
+      const created = res.data?.objects_created ?? 0;
+      if (created === 0) setError("No rows were ingested — check your column mapping.");
+      else onMapped();
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? "Failed to save mapping.");
-    } finally { setSaving(false); setIngesting(false); }
+    } finally { setSaving(false); }
   };
 
   return (
@@ -273,10 +266,10 @@ function ColumnMapper({
       )}
 
       <div className="flex gap-2">
-        <button onClick={handleSave} disabled={saving || ingesting}
+        <button onClick={handleSave} disabled={saving}
           className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium disabled:opacity-60">
-          {(saving || ingesting) ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-          {ingesting ? "Ingesting…" : saving ? "Saving…" : "Apply Mapping"}
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+          {saving ? "Saving…" : "Apply Mapping"}
         </button>
         <button onClick={onCancel} className="px-4 py-2.5 border rounded-xl text-sm font-medium hover:bg-accent">Cancel</button>
       </div>
@@ -406,12 +399,150 @@ function ObjectsPanel({ imp, onClose }: { imp: EvidenceImport; onClose: () => vo
   );
 }
 
+// ── Gaps Panel ────────────────────────────────────────────────────────────────
+interface GapEntry {
+  finding_id: string;
+  finding_title: string;
+  severity: string;
+  level: string;
+  matched_entity_types: string[];
+  evidence_records_found: number;
+}
+
+function GapsPanel({ assessmentId, onClose }: { assessmentId: string; onClose: () => void }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    evidenceApi.getGaps(assessmentId)
+      .then(r => setData(r.data))
+      .catch(() => setError("Could not load cross-reference data."))
+      .finally(() => setLoading(false));
+  }, [assessmentId]);
+
+  const score = data?.coverage_score ?? 0;
+  const scoreColor = score >= 70 ? "text-emerald-600" : score >= 40 ? "text-amber-600" : "text-red-600";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="bg-card border rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-2xl mx-0 sm:mx-4 max-h-[85vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0">
+          <div>
+            <h3 className="font-semibold">Evidence Cross-Reference</h3>
+            <p className="text-xs text-muted-foreground">How well your Evidence Fabric supports this assessment's findings</p>
+          </div>
+          <button onClick={onClose}><X className="w-4 h-4 text-muted-foreground" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : error ? (
+            <div className="text-center py-8 text-sm text-muted-foreground">{error}</div>
+          ) : data ? (
+            <>
+              {/* Score summary */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-muted/30 border rounded-xl px-4 py-3 text-center">
+                  <p className={`text-3xl font-bold tabular-nums ${scoreColor}`}>{score}%</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5 font-medium uppercase tracking-wide">Evidence Coverage</p>
+                </div>
+                <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3 text-center">
+                  <p className="text-3xl font-bold tabular-nums text-emerald-700">{data.supported_by_evidence}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5 font-medium uppercase tracking-wide">Supported</p>
+                </div>
+                <div className="bg-red-50 border border-red-100 rounded-xl px-4 py-3 text-center">
+                  <p className="text-3xl font-bold tabular-nums text-red-700">{data.not_supported_by_evidence}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5 font-medium uppercase tracking-wide">No Evidence</p>
+                </div>
+              </div>
+
+              {/* Entity type coverage */}
+              {data.entity_type_coverage?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Entity Type Coverage</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {data.entity_type_coverage.map((c: any) => (
+                      <div key={c.entity_type} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs ${
+                        c.has_evidence ? "bg-emerald-50 border-emerald-200" : "bg-muted/30 border-border"
+                      }`}>
+                        {c.has_evidence
+                          ? <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                          : <ShieldAlert className="w-3.5 h-3.5 text-muted-foreground/40 flex-shrink-0" />}
+                        <span className="capitalize font-medium">{c.entity_type.replace(/_/g, " ")}</span>
+                        {c.has_evidence && <span className="ml-auto text-emerald-700 font-semibold">{c.record_count}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Unsupported findings */}
+              {data.unsupported?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                    <ShieldAlert className="w-3.5 h-3.5 text-amber-500" /> Findings With No Supporting Evidence ({data.unsupported.length})
+                  </p>
+                  <div className="space-y-1.5">
+                    {data.unsupported.map((f: GapEntry) => (
+                      <div key={f.finding_id} className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-100 rounded-lg">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium leading-snug">{f.finding_title}</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            {f.level} · {f.severity} · needs: {f.matched_entity_types.join(", ")}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Supported findings */}
+              {data.supported?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" /> Findings Supported by Evidence ({data.supported.length})
+                  </p>
+                  <div className="space-y-1.5">
+                    {data.supported.map((f: GapEntry) => (
+                      <div key={f.finding_id} className="flex items-start gap-2 px-3 py-2.5 bg-emerald-50 border border-emerald-100 rounded-lg">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium leading-snug">{f.finding_title}</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            {f.evidence_records_found} evidence record{f.evidence_records_found !== 1 ? "s" : ""} found
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {data.total_findings_checked === 0 && (
+                <div className="text-center py-6 text-sm text-muted-foreground">
+                  No entity-traceable findings in this assessment, or no evidence has been imported yet.
+                </div>
+              )}
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function EvidencePage() {
   const [imports, setImports] = useState<EvidenceImport[]>([]);
   const [loading, setLoading] = useState(true);
   const [pendingImport, setPendingImport] = useState<any>(null);
   const [viewingImport, setViewingImport] = useState<EvidenceImport | null>(null);
+  const [gapsAssessmentId, setGapsAssessmentId] = useState<string | null>(null);
   const [showUpload, setShowUpload] = useState(false);
 
   const loadImports = useCallback(async () => {
@@ -429,13 +560,22 @@ export default function EvidencePage() {
     setImports(prev => prev.filter(i => i.id !== id));
   };
 
-  const totalRecords = imports.reduce((sum, i) => sum + (i.record_count ?? 0), 0);
-  const entityTypes = Array.from(new Set(imports.map(i => i.entity_type).filter(Boolean)));
+  const [stats, setStats] = useState<any>(null);
+
+  useEffect(() => {
+    evidenceApi.getStats().then(r => setStats(r.data)).catch(() => {});
+  }, [imports]);
+
+  const totalRecords = stats?.total_records ?? imports.reduce((sum, i) => sum + (i.record_count ?? 0), 0);
+  const entityTypes = Object.keys(stats?.by_entity_type ?? {});
 
   return (
     <div className="space-y-6">
       {viewingImport && (
         <ObjectsPanel imp={viewingImport} onClose={() => setViewingImport(null)} />
+      )}
+      {gapsAssessmentId && (
+        <GapsPanel assessmentId={gapsAssessmentId} onClose={() => setGapsAssessmentId(null)} />
       )}
 
       {/* Header */}

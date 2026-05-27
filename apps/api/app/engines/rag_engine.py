@@ -1,11 +1,15 @@
 """
-RAG Engine — BM25 search over 2,919 FDA Warning Letter observations.
+RAG Engine — BM25 search over FDA Warning Letter + Form 483 observations.
 Lazy-loaded once per process at first query; thread-safe singleton.
 
-Path resolution order:
-  1. RAG_INDEX_PATH env var (Render volume or override)
-  2. apps/api/rag_index/observations.jsonl (bundled in repo)
-  3. ~/Documents/Clyira-Corpus/rag_index/observations.jsonl (local dev)
+Loads all observations*.jsonl files from the rag_index directory so that
+Warning Letter observations (observations.jsonl) and Form 483 observations
+(observations_483.jsonl) are searched together.
+
+Path resolution order for the index directory:
+  1. RAG_INDEX_PATH env var (directory or single-file path)
+  2. apps/api/rag_index/ (bundled in repo)
+  3. ~/Documents/Clyira-Corpus/rag_index/ (local dev)
 """
 import json
 import logging
@@ -17,20 +21,26 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_REPO_INDEX = Path(__file__).parent.parent.parent / "rag_index" / "observations.jsonl"
+_REPO_INDEX_DIR = Path(__file__).parent.parent.parent / "rag_index"
 _ENV_INDEX = os.getenv("RAG_INDEX_PATH")
-_LOCAL_INDEX = Path.home() / "Documents" / "Clyira-Corpus" / "rag_index" / "observations.jsonl"
+_LOCAL_INDEX_DIR = Path.home() / "Documents" / "Clyira-Corpus" / "rag_index"
 
-INDEX_PATH = (
-    Path(_ENV_INDEX) if _ENV_INDEX
-    else _REPO_INDEX if _REPO_INDEX.exists()
-    else _LOCAL_INDEX
-)
+
+def _resolve_index_dir() -> Path:
+    if _ENV_INDEX:
+        p = Path(_ENV_INDEX)
+        return p.parent if p.is_file() else p
+    if _REPO_INDEX_DIR.exists():
+        return _REPO_INDEX_DIR
+    return _LOCAL_INDEX_DIR
+
+
+INDEX_DIR = _resolve_index_dir()
 
 _lock = threading.Lock()
 _bm25 = None
 _corpus: list[dict] = []
-_cfr_freq: dict[str, int] = {}   # normalized CFR key → Warning Letter observation count
+_cfr_freq: dict[str, int] = {}   # normalized CFR key → observation count
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -69,8 +79,8 @@ def _build_cfr_freq(corpus: list[dict]) -> dict[str, int]:
 
 def _load_index() -> bool:
     global _bm25, _corpus, _cfr_freq
-    if not INDEX_PATH.exists():
-        logger.warning(f"RAG index not found at {INDEX_PATH} — enforcement matching disabled")
+    if not INDEX_DIR.exists():
+        logger.warning(f"RAG index directory not found at {INDEX_DIR} — enforcement matching disabled")
         return False
     try:
         from rank_bm25 import BM25Okapi
@@ -78,14 +88,24 @@ def _load_index() -> bool:
         logger.warning("rank-bm25 not installed — enforcement matching disabled")
         return False
 
-    logger.info(f"Loading BM25 index from {INDEX_PATH}")
-    with open(INDEX_PATH, 'r', encoding='utf-8') as f:
-        _corpus = [json.loads(line) for line in f if line.strip()]
+    # Load all observations*.jsonl files so WL + 483 observations are searched together
+    obs_files = sorted(INDEX_DIR.glob("observations*.jsonl"))
+    if not obs_files:
+        logger.warning(f"No observations*.jsonl found in {INDEX_DIR} — enforcement matching disabled")
+        return False
 
-    tokenized = [_tokenize(doc['text']) for doc in _corpus]
+    combined: list[dict] = []
+    for path in obs_files:
+        count_before = len(combined)
+        with open(path, 'r', encoding='utf-8') as f:
+            combined.extend(json.loads(line) for line in f if line.strip())
+        logger.info(f"  Loaded {len(combined) - count_before} records from {path.name}")
+
+    _corpus = combined
+    tokenized = [_tokenize(doc.get('text', '')) for doc in _corpus]
     _bm25 = BM25Okapi(tokenized)
     _cfr_freq = _build_cfr_freq(_corpus)
-    logger.info(f"BM25 index ready: {len(_corpus)} observations, {len(_cfr_freq)} unique CFR sections")
+    logger.info(f"BM25 index ready: {len(_corpus)} observations across {len(obs_files)} files, {len(_cfr_freq)} unique CFR sections")
     return True
 
 

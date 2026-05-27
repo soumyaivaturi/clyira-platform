@@ -165,12 +165,12 @@ export const evidenceApi = {
     api.post("/evidence/import", formData, { headers: { "Content-Type": "multipart/form-data" } }),
   mapColumns: (importId: string, entity_type: string, column_mapping: Record<string, string>) =>
     api.post(`/evidence/import/${importId}/map`, { entity_type, column_mapping }),
-  ingest: (importId: string, rows: Record<string, string>[]) =>
-    api.post(`/evidence/ingest/${importId}`, rows),
   listImports: () => api.get("/evidence/imports"),
   listObjects: (importId: string, limit = 100, offset = 0) =>
     api.get(`/evidence/imports/${importId}/objects`, { params: { limit, offset } }),
   deleteImport: (importId: string) => api.delete(`/evidence/imports/${importId}`),
+  getStats: () => api.get("/evidence/stats"),
+  getGaps: (assessmentId: string) => api.get(`/evidence/gaps/${assessmentId}`),
 };
 
 // ── Electronic Signatures ─────────────────────────────────────────────────────
