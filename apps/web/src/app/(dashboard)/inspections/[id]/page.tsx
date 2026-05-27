@@ -3141,22 +3141,8 @@ export default function WarRoomPage() {
             <LiveClock />
           </div>
 
-          {/* Right: status chips + controls */}
+          {/* Right: controls */}
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            {/* Overdue chip */}
-            {overdueCount > 0 && (
-              <button onClick={() => { setTab("requests"); setActivePresetId("overdue"); }}
-                className="flex items-center gap-1 px-2 py-1 bg-red-100 text-red-700 border border-red-200 rounded-lg text-[11px] font-bold hover:bg-red-200 transition-colors">
-                <AlertTriangle className="w-3 h-3" />{overdueCount} overdue
-              </button>
-            )}
-            {/* QA Pending chip */}
-            {qaPendingCount > 0 && (
-              <button onClick={() => { setTab("requests"); setActivePresetId("qa_review"); }}
-                className="flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 border border-purple-200 rounded-lg text-[11px] font-bold hover:bg-purple-200 transition-colors">
-                <Shield className="w-3 h-3" />{qaPendingCount} QA
-              </button>
-            )}
             {/* Live users */}
             {inspection.status === "active" && (
               <div className="flex items-center gap-1 px-2 py-1 border rounded-lg text-[11px] text-muted-foreground">
@@ -3259,19 +3245,32 @@ export default function WarRoomPage() {
       {(() => {
         const completionPct = allRequests.length
           ? Math.round((resolvedRequests.length / allRequests.length) * 100) : 0;
+        const kpis: { label: string; value: string | number; color: string; action?: () => void }[] = [
+          { label: "Open", value: openRows.length, color: openRows.length > 0 ? "text-amber-600" : "",
+            action: () => { setTab("requests"); setActivePresetId("all"); setFilterOverdueOnly(false); setFilterQAPendingOnly(false); } },
+          { label: "Overdue", value: overdueCount, color: overdueCount > 0 ? "text-red-600" : "",
+            action: () => { setTab("requests"); setActivePresetId("overdue"); } },
+          { label: "QA Pending", value: qaPendingCount, color: qaPendingCount > 0 ? "text-purple-600" : "",
+            action: () => { setTab("requests"); setActivePresetId("qa_review"); } },
+          { label: "Resolved", value: resolvedRows.length, color: resolvedRows.length > 0 ? "text-emerald-600" : "",
+            action: () => { setTab("requests"); setActivePresetId("all"); } },
+          { label: "Done %", value: `${completionPct}%`, color: completionPct === 100 ? "text-emerald-600" : completionPct > 0 ? "text-primary" : "" },
+        ];
         return (
-          <div className="bg-card border rounded-xl grid grid-cols-5 divide-x">
-            {[
-              { label: "Open", value: openRows.length, color: openRows.length > 0 ? "text-amber-600" : "" },
-              { label: "Overdue", value: overdueCount, color: overdueCount > 0 ? "text-red-600" : "" },
-              { label: "QA Pending", value: qaPendingCount, color: qaPendingCount > 0 ? "text-purple-600" : "" },
-              { label: "Resolved", value: resolvedRows.length, color: resolvedRows.length > 0 ? "text-emerald-600" : "" },
-              { label: "Done %", value: `${completionPct}%`, color: completionPct === 100 ? "text-emerald-600" : completionPct > 0 ? "text-primary" : "" },
-            ].map(kpi => (
-              <div key={kpi.label} className="px-3 py-2.5 text-center">
-                <p className={`text-xl font-bold tabular-nums ${kpi.color || "text-foreground"}`}>{kpi.value}</p>
-                <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mt-0.5">{kpi.label}</p>
-              </div>
+          <div className="bg-card border rounded-xl grid grid-cols-5 divide-x overflow-hidden">
+            {kpis.map(kpi => (
+              kpi.action ? (
+                <button key={kpi.label} onClick={kpi.action}
+                  className="px-3 py-2.5 text-center hover:bg-accent transition-colors group">
+                  <p className={`text-xl font-bold tabular-nums ${kpi.color || "text-foreground"}`}>{kpi.value}</p>
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mt-0.5 group-hover:text-foreground transition-colors">{kpi.label}</p>
+                </button>
+              ) : (
+                <div key={kpi.label} className="px-3 py-2.5 text-center">
+                  <p className={`text-xl font-bold tabular-nums ${kpi.color || "text-foreground"}`}>{kpi.value}</p>
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mt-0.5">{kpi.label}</p>
+                </div>
+              )
             ))}
           </div>
         );
