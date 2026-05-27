@@ -2322,6 +2322,12 @@ export default function WarRoomPage() {
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [scribePanelOpen, setScribePanelOpen] = useState(false);
 
+  // Notification config state
+  const [notifConfig, setNotifConfig] = useState<Record<string, { label: string; enabled: boolean; recipients: string[]; subject: string; body: string }>>({});
+  const [notifSaving, setNotifSaving] = useState(false);
+  const [notifTesting, setNotifTesting] = useState<string | null>(null);
+  const [testEmail, setTestEmail] = useState("");
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     setLoadError("");
@@ -2348,12 +2354,14 @@ export default function WarRoomPage() {
         setSMEs(smeRes.data.smes ?? []);
         setInspectors(peopleRes.data.inspectors ?? []);
       } else if (t === "prep") {
-        const [binderRes, deliveriesRes] = await Promise.all([
+        const [binderRes, deliveriesRes, notifRes] = await Promise.all([
           inspectionsApi.listBinder(id),
           inspectionsApi.listDeliveries(id),
+          inspectionsApi.getNotificationConfig(id),
         ]);
         setBinderDocs(binderRes.data.binder_docs ?? []);
         setDeliveries(deliveriesRes.data.deliveries ?? []);
+        setNotifConfig(notifRes.data.events ?? {});
       } else if (t === "chat") {
         const r = await inspectionsApi.listMessages(id);
         setChatMessages(r.data.messages ?? []);
@@ -5119,6 +5127,131 @@ export default function WarRoomPage() {
                   <Download className="w-3 h-3" /> {exp.label}
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* ── Email Notification Settings ── */}
+          <div className="bg-card border rounded-xl overflow-hidden">
+            <div className="px-5 py-4 border-b flex items-center justify-between gap-3">
+              <div>
+                <h3 className="font-semibold flex items-center gap-2 text-sm">
+                  <Bell className="w-4 h-4 text-primary" /> Automated Email Notifications
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Configure who gets notified when key inspection events happen. Emails send automatically.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="email"
+                  placeholder="test@company.com"
+                  value={testEmail}
+                  onChange={e => setTestEmail(e.target.value)}
+                  className="text-xs border rounded-lg px-2.5 py-1.5 bg-background w-44 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+                <button
+                  onClick={async () => {
+                    setNotifSaving(true);
+                    try {
+                      await inspectionsApi.saveNotificationConfig(id, notifConfig);
+                    } finally { setNotifSaving(false); }
+                  }}
+                  disabled={notifSaving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-60"
+                >
+                  {notifSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                  Save
+                </button>
+              </div>
+            </div>
+
+            <div className="divide-y">
+              {Object.entries(notifConfig).length === 0 ? (
+                <div className="px-5 py-8 text-center text-sm text-muted-foreground">
+                  Loading notification settings…
+                </div>
+              ) : (
+                Object.entries(notifConfig).map(([eventKey, evt]) => (
+                  <div key={eventKey} className="px-5 py-4 space-y-3">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => setNotifConfig(prev => ({
+                            ...prev,
+                            [eventKey]: { ...prev[eventKey], enabled: !prev[eventKey].enabled },
+                          }))}
+                          className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${evt.enabled ? "bg-primary" : "bg-muted-foreground/30"}`}
+                        >
+                          <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${evt.enabled ? "translate-x-4" : "translate-x-0.5"}`} />
+                        </button>
+                        <div>
+                          <p className="text-sm font-medium">{evt.label}</p>
+                          <p className="text-xs text-muted-foreground capitalize">{eventKey.replace(/_/g, " ")}</p>
+                        </div>
+                      </div>
+                      {evt.enabled && testEmail && (
+                        <button
+                          onClick={async () => {
+                            setNotifTesting(eventKey);
+                            try {
+                              await inspectionsApi.testNotification(id, eventKey, testEmail);
+                            } finally { setNotifTesting(null); }
+                          }}
+                          disabled={notifTesting === eventKey}
+                          className="flex items-center gap-1 px-2.5 py-1 border rounded-lg text-xs text-muted-foreground hover:text-foreground disabled:opacity-60 flex-shrink-0"
+                        >
+                          {notifTesting === eventKey ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                          Test
+                        </button>
+                      )}
+                    </div>
+
+                    {evt.enabled && (
+                      <div className="ml-12 space-y-2">
+                        {/* Recipients */}
+                        <div>
+                          <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">Recipients (comma-separated emails)</label>
+                          <input
+                            type="text"
+                            value={(evt.recipients ?? []).join(", ")}
+                            onChange={e => setNotifConfig(prev => ({
+                              ...prev,
+                              [eventKey]: {
+                                ...prev[eventKey],
+                                recipients: e.target.value.split(",").map(s => s.trim()).filter(Boolean),
+                              },
+                            }))}
+                            placeholder="qa@company.com, director@company.com, team-list@company.com"
+                            className="mt-1 w-full text-xs border rounded-lg px-3 py-1.5 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                          />
+                        </div>
+                        {/* Subject */}
+                        <div>
+                          <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">Subject</label>
+                          <input
+                            type="text"
+                            value={evt.subject ?? ""}
+                            onChange={e => setNotifConfig(prev => ({ ...prev, [eventKey]: { ...prev[eventKey], subject: e.target.value } }))}
+                            className="mt-1 w-full text-xs border rounded-lg px-3 py-1.5 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                          />
+                        </div>
+                        {/* Body */}
+                        <div>
+                          <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                            Message — use {`{{inspector_name}}`}, {`{{inspection_title}}`}, {`{{day_number}}`}
+                          </label>
+                          <textarea
+                            rows={3}
+                            value={evt.body ?? ""}
+                            onChange={e => setNotifConfig(prev => ({ ...prev, [eventKey]: { ...prev[eventKey], body: e.target.value } }))}
+                            className="mt-1 w-full text-xs border rounded-lg px-3 py-1.5 bg-background resize-none focus:outline-none focus:ring-2 focus:ring-primary/20"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

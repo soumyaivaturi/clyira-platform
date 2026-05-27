@@ -388,6 +388,11 @@ export const inspectionsApi = {
   deleteTeamMember: (id: string, memberId: string) => api.delete(`/inspections/${id}/team/${memberId}`),
   notifyTeam: (id: string, event_type: string, inspector_name?: string) =>
     api.post(`/inspections/${id}/notify-team`, { event_type, inspector_name }),
+  getNotificationConfig: (id: string) => api.get(`/inspections/${id}/notification-config`),
+  saveNotificationConfig: (id: string, events: Record<string, unknown>) =>
+    api.put(`/inspections/${id}/notification-config`, { events }),
+  testNotification: (id: string, event_key: string, test_email: string) =>
+    api.post(`/inspections/${id}/notification-config/test`, { event_key, test_email }),
 
   // §9 Binder
   listBinder: (id: string) => api.get(`/inspections/${id}/binder`),

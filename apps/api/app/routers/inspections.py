@@ -283,6 +283,7 @@ async def activate_inspection(
     inspection.status = "active"
     inspection.current_phase = "opening_meeting"
     await db.commit()
+    asyncio.create_task(_fire_notification(db, inspection_id, "inspection_activated"))
     return _inspection_out(inspection)
 
 
@@ -299,6 +300,7 @@ async def close_inspection(
     if not inspection.end_date:
         inspection.end_date = now.date().isoformat()
     await db.commit()
+    asyncio.create_task(_fire_notification(db, inspection_id, "inspection_closed"))
     return _inspection_out(inspection)
 
 
@@ -1375,6 +1377,12 @@ async def add_scribe_entry(
     db.add(entry)
     await db.commit()
     await db.refresh(entry)
+
+    # Auto-fire notification for inspector lifecycle events
+    _NOTIF_EVENTS = {"inspector_arrived", "inspector_on_break", "inspectors_left"}
+    if data.entry_type in _NOTIF_EVENTS:
+        inspector_name = data.tags[0] if data.tags else None
+        asyncio.create_task(_fire_notification(db, inspection_id, data.entry_type, inspector_name))
 
     return {
         "id": entry.id,
@@ -3813,3 +3821,174 @@ async def notify_team(
         logging.getLogger(__name__).warning(f"notify_team failed: {e}")
 
     return {"sent": emails_sent, "event_type": body.event_type}
+
+
+# ── Notification Config ────────────────────────────────────────────────────────
+
+EVENT_DEFAULTS = {
+    "inspection_activated": {
+        "label": "Inspection goes live",
+        "enabled": False,
+        "recipients": [],
+        "subject": "Inspection Started — {{inspection_title}}",
+        "body": "The {{inspection_title}} inspection is now active. All team members please report to your assigned positions.",
+    },
+    "inspector_arrived": {
+        "label": "Inspector arrives on-site",
+        "enabled": True,
+        "recipients": [],
+        "subject": "🔴 Inspector On-Site — {{inspection_title}}",
+        "body": "{{inspector_name}} is now on-site. The inspection is live. Please ensure all pre-inspection preparations are complete and team members are at their positions.",
+    },
+    "inspector_on_break": {
+        "label": "Inspector takes a break",
+        "enabled": False,
+        "recipients": [],
+        "subject": "Inspector on Break — {{inspection_title}}",
+        "body": "{{inspector_name}} has taken a break. Use this time to review any open requests and prepare for the next session.",
+    },
+    "inspectors_left": {
+        "label": "Inspector leaves for the day",
+        "enabled": True,
+        "recipients": [],
+        "subject": "✅ Inspector Departed — {{inspection_title}}",
+        "body": "{{inspector_name}} has left the facility. Day {{day_number}} complete. Please begin end-of-day debrief and document any open commitments.",
+    },
+    "inspection_closed": {
+        "label": "Inspection officially closed",
+        "enabled": False,
+        "recipients": [],
+        "subject": "Inspection Closed — {{inspection_title}}",
+        "body": "The {{inspection_title}} inspection has been officially closed. Post-inspection activities (483 response, CAPA tracking) are now active.",
+    },
+}
+
+
+def _build_default_config() -> dict:
+    return {"events": {k: dict(v) for k, v in EVENT_DEFAULTS.items()}}
+
+
+def _render_template(template: str, inspection, inspector_name: str | None = None) -> str:
+    day = 1
+    if inspection.start_date:
+        try:
+            from datetime import date
+            start = date.fromisoformat(inspection.start_date)
+            day = max(1, (date.today() - start).days + 1)
+        except Exception:
+            pass
+    return (template
+        .replace("{{inspection_title}}", inspection.title or "")
+        .replace("{{inspector_name}}", inspector_name or "the inspector")
+        .replace("{{day_number}}", str(day))
+    )
+
+
+class NotificationConfigIn(BaseModel):
+    events: dict  # event_key → {enabled, recipients, subject, body}
+
+
+@router.get("/{inspection_id}/notification-config")
+async def get_notification_config(
+    inspection_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    inspection = await _verify_inspection(db, inspection_id, current_user.company_id)
+    stored = inspection.notification_config or {}
+    # Merge stored config on top of defaults so new event types always appear
+    defaults = _build_default_config()
+    for key, default_event in defaults["events"].items():
+        if key not in stored.get("events", {}):
+            defaults["events"][key] = default_event
+        else:
+            # Merge: keep defaults for missing fields
+            merged = dict(default_event)
+            merged.update(stored["events"][key])
+            defaults["events"][key] = merged
+    return defaults
+
+
+@router.put("/{inspection_id}/notification-config")
+async def update_notification_config(
+    inspection_id: str,
+    body: NotificationConfigIn,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    inspection = await _verify_inspection(db, inspection_id, current_user.company_id)
+    from sqlalchemy import text as _text
+    await db.execute(
+        _text("UPDATE inspections SET notification_config = :cfg WHERE id = :id"),
+        {"cfg": __import__("json").dumps({"events": body.events}), "id": inspection_id},
+    )
+    await db.commit()
+    return {"saved": True}
+
+
+@router.post("/{inspection_id}/notification-config/test")
+async def test_notification(
+    inspection_id: str,
+    body: dict,  # {event_key: str, test_email: str}
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Send a test email for a specific event to a single address."""
+    from app.services.email_service import _send, _base_email, _email_available
+    if not _email_available():
+        return {"sent": False, "reason": "email_not_configured"}
+
+    inspection = await _verify_inspection(db, inspection_id, current_user.company_id)
+    cfg = (inspection.notification_config or {}).get("events", {})
+    event_key = body.get("event_key", "inspector_arrived")
+    test_email = body.get("test_email", current_user.email)
+    event_defaults = EVENT_DEFAULTS.get(event_key, {})
+    event_cfg = cfg.get(event_key, event_defaults)
+
+    subject = _render_template(event_cfg.get("subject", event_defaults.get("subject", "Test")), inspection)
+    raw_body = event_cfg.get("body", event_defaults.get("body", ""))
+    rendered_body = _render_template(raw_body, inspection)
+    html_body = f"""
+<h2 style="margin:0 0 8px;color:#1e293b;font-size:16px;font-weight:700;">
+  [TEST] {event_defaults.get('label', event_key)}
+</h2>
+<p style="margin:0 0 20px;color:#64748b;font-size:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;">
+  {rendered_body}
+</p>
+<p style="margin:0;color:#94a3b8;font-size:12px;">This is a test notification from Clyira. No action required.</p>"""
+
+    sent = await _send(to=test_email, subject=f"[TEST] {subject}", html=_base_email(html_body))
+    return {"sent": sent, "to": test_email}
+
+
+async def _fire_notification(db: AsyncSession, inspection_id: str, event_key: str, inspector_name: str | None = None):
+    """Fire configured email notifications for an event. Silently no-ops on any error."""
+    try:
+        from app.services.email_service import _send, _base_email, _email_available
+        if not _email_available():
+            return
+        inspection = await db.get(Inspection, inspection_id)
+        if not inspection:
+            return
+        cfg = (inspection.notification_config or {}).get("events", {})
+        event_cfg = {**EVENT_DEFAULTS.get(event_key, {}), **cfg.get(event_key, {})}
+        if not event_cfg.get("enabled", False):
+            return
+        recipients: list[str] = event_cfg.get("recipients", [])
+        if not recipients:
+            return
+
+        subject = _render_template(event_cfg.get("subject", ""), inspection, inspector_name)
+        raw_body = event_cfg.get("body", "")
+        rendered = _render_template(raw_body, inspection, inspector_name)
+        html = f"""
+<h2 style="margin:0 0 12px;color:#1e293b;font-size:17px;font-weight:700;">{EVENT_DEFAULTS.get(event_key, {}).get('label', event_key)}</h2>
+<p style="margin:0 0 20px;color:#475569;font-size:14px;line-height:1.6;">{rendered}</p>
+<a href="https://clyira-platform-web.vercel.app/inspections/{inspection_id}"
+   style="display:inline-block;background:#1e3a5f;color:#fff;text-decoration:none;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;">
+  Open War Room →
+</a>"""
+        tasks = [_send(to=r, subject=subject, html=_base_email(html)) for r in recipients if r]
+        await asyncio.gather(*tasks, return_exceptions=True)
+    except Exception as e:
+        logger.warning(f"_fire_notification({event_key}) failed: {e}")

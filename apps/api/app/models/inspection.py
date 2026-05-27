@@ -70,6 +70,7 @@ class Inspection(Base, TimestampMixin):
     lessons_learned = Column(JSONB, default=list)
     sign_offs = Column(JSONB, default=dict)  # {qa_lead: bool, site_director: bool, reg_affairs: bool, legal: bool}
     closed_at = Column(String(50))          # ISO timestamp when inspection moved to post_inspection
+    notification_config = Column(JSONB, default=dict)  # per-event email notification settings
 
     # Relationships
     company = relationship("Company", back_populates="inspections")
