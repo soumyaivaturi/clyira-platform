@@ -374,6 +374,19 @@ export const inspectionsApi = {
   convertMessageToRequest: (id: string, messageId: string) =>
     api.post(`/inspections/${id}/chat/${messageId}/convert`),
 
+  // Team members
+  listTeam: (id: string, room?: string) => api.get(`/inspections/${id}/team`, { params: room ? { room } : {} }),
+  addTeamMember: (id: string, data: {
+    name: string; room: string; role?: string; email?: string; phone?: string;
+    title?: string; company?: string; functional_area?: string;
+    topics?: string[]; fda_district?: string; focus_areas?: string[];
+    approved_talking_points?: string[]; do_not_volunteer?: string[];
+    known_weak_areas?: string; notes?: string; availability?: string;
+  }) => api.post(`/inspections/${id}/team`, data),
+  updateTeamMember: (id: string, memberId: string, data: Record<string, any>) =>
+    api.patch(`/inspections/${id}/team/${memberId}`, data),
+  deleteTeamMember: (id: string, memberId: string) => api.delete(`/inspections/${id}/team/${memberId}`),
+
   // §9 Binder
   listBinder: (id: string) => api.get(`/inspections/${id}/binder`),
   seedBinder: (id: string) => api.post(`/inspections/${id}/binder/seed`),

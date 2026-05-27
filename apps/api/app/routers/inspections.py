@@ -31,6 +31,7 @@ from app.models.inspection_evidence_package import InspectionEvidencePackage
 from app.models.inspection_sme import InspectionSME
 from app.models.inspection_capa import InspectionCAPA
 from app.models.inspection_binder_doc import InspectionBinderDoc
+from app.models.inspection_team_member import InspectionTeamMember
 from app.models.user import User
 from app.models.base import generate_uuid
 
@@ -3588,3 +3589,155 @@ async def inspection_websocket(websocket: WebSocket, inspection_id: str):
             "inspection_id": inspection_id,
             "connected": room.count,
         })
+
+
+# ── §Team Member CRUD ────────────────────────────────────────────────────────
+
+def _member_out(m: InspectionTeamMember) -> dict:
+    return {
+        "id": m.id,
+        "inspection_id": m.inspection_id,
+        "user_id": m.user_id,
+        "name": m.name,
+        "email": m.email,
+        "phone": m.phone,
+        "title": m.title,
+        "company": m.company,
+        "room": m.room,
+        "role": m.role,
+        "secondary_roles": m.secondary_roles or [],
+        "functional_area": m.functional_area,
+        "topics": m.topics or [],
+        "approved_talking_points": m.approved_talking_points or [],
+        "do_not_volunteer": m.do_not_volunteer or [],
+        "known_weak_areas": m.known_weak_areas,
+        "likely_questions": m.likely_questions or [],
+        "fda_district": m.fda_district,
+        "focus_areas": m.focus_areas or [],
+        "notes_on_style": m.notes_on_style,
+        "availability": m.availability,
+        "notes": m.notes,
+        "created_at": str(m.created_at),
+    }
+
+
+class TeamMemberIn(BaseModel):
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    title: Optional[str] = None
+    company: Optional[str] = None
+    room: str = "prep"
+    role: Optional[str] = None
+    secondary_roles: list = []
+    functional_area: Optional[str] = None
+    topics: list = []
+    approved_talking_points: list = []
+    do_not_volunteer: list = []
+    known_weak_areas: Optional[str] = None
+    likely_questions: list = []
+    fda_district: Optional[str] = None
+    focus_areas: list = []
+    notes_on_style: Optional[str] = None
+    availability: str = "available"
+    notes: Optional[str] = None
+
+
+class TeamMemberUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    title: Optional[str] = None
+    company: Optional[str] = None
+    room: Optional[str] = None
+    role: Optional[str] = None
+    secondary_roles: Optional[list] = None
+    functional_area: Optional[str] = None
+    topics: Optional[list] = None
+    approved_talking_points: Optional[list] = None
+    do_not_volunteer: Optional[list] = None
+    known_weak_areas: Optional[str] = None
+    likely_questions: Optional[list] = None
+    fda_district: Optional[str] = None
+    focus_areas: Optional[list] = None
+    notes_on_style: Optional[str] = None
+    availability: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@router.get("/{inspection_id}/team")
+async def list_team_members(
+    inspection_id: str,
+    room: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    q = select(InspectionTeamMember).where(InspectionTeamMember.inspection_id == inspection_id)
+    if room:
+        q = q.where(InspectionTeamMember.room == room)
+    q = q.order_by(InspectionTeamMember.created_at)
+    result = await db.execute(q)
+    members = result.scalars().all()
+    return {"members": [_member_out(m) for m in members]}
+
+
+@router.post("/{inspection_id}/team", status_code=201)
+async def add_team_member(
+    inspection_id: str,
+    body: TeamMemberIn,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    member = InspectionTeamMember(
+        id=generate_uuid(),
+        inspection_id=inspection_id,
+        **body.model_dump(),
+    )
+    db.add(member)
+    await db.commit()
+    await db.refresh(member)
+    return _member_out(member)
+
+
+@router.patch("/{inspection_id}/team/{member_id}")
+async def update_team_member(
+    inspection_id: str,
+    member_id: str,
+    body: TeamMemberUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    result = await db.execute(
+        select(InspectionTeamMember).where(
+            InspectionTeamMember.id == member_id,
+            InspectionTeamMember.inspection_id == inspection_id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=404, detail="Team member not found")
+    for field, value in body.model_dump(exclude_none=True).items():
+        setattr(member, field, value)
+    await db.commit()
+    await db.refresh(member)
+    return _member_out(member)
+
+
+@router.delete("/{inspection_id}/team/{member_id}", status_code=204)
+async def delete_team_member(
+    inspection_id: str,
+    member_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    result = await db.execute(
+        select(InspectionTeamMember).where(
+            InspectionTeamMember.id == member_id,
+            InspectionTeamMember.inspection_id == inspection_id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=404, detail="Team member not found")
+    await db.delete(member)
+    await db.commit()
