@@ -17,6 +17,7 @@ import {
   Bell, Download, GitMerge, Database, BookMarked,
   ShieldCheck, ShieldOff, AlertCircle,
   UserCheck, Phone, Mail, Building2, Fingerprint,
+  SlidersHorizontal, Layers,
 } from "lucide-react";
 import { inspectionsApi } from "@/lib/api";
 import { InspStatusBadge } from "@/components/shared/badges";
@@ -2328,6 +2329,16 @@ export default function WarRoomPage() {
   const [notifTesting, setNotifTesting] = useState<string | null>(null);
   const [testEmail, setTestEmail] = useState("");
 
+  // Command Center state
+  const [cmdCenterPrefs, setCmdCenterPrefs] = useState<Record<string, boolean>>(() => {
+    if (typeof window !== "undefined") {
+      try { return JSON.parse(localStorage.getItem(`clyira_cmdcenter_${id}`) ?? "{}"); } catch { return {}; }
+    }
+    return {};
+  });
+  const [showCmdCenterSettings, setShowCmdCenterSettings] = useState(false);
+  const [showIntelPanel, setShowIntelPanel] = useState(false);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     setLoadError("");
@@ -3294,6 +3305,386 @@ export default function WarRoomPage() {
                 </div>
               )
             ))}
+          </div>
+        );
+      })()}
+
+      {/* ── Command Center ─────────────────────────────────────────────────── */}
+      {inspection.status === "active" && (() => {
+        const showPanel = (key: string) => cmdCenterPrefs[key] !== false;
+
+        const ACTIVITY_LABELS: Record<string, string> = {
+          inspector_arrived: "Arrived", inspector_on_break: "On Break",
+          lunch_break: "Lunch", quiet_time: "Quiet Time",
+          end_of_day_debrief: "EOD Debrief", inspectors_left: "Left",
+        };
+        const ACTIVITY_KEYS = new Set(Object.keys(ACTIVITY_LABELS));
+        const currentPhaseObj = PHASES.find(p => p.key === inspection.current_phase);
+        const currentActivityLabel = ACTIVITY_KEYS.has(inspection.current_phase ?? "")
+          ? ACTIVITY_LABELS[inspection.current_phase!] : null;
+        const lastNote = log.filter(e => e.entry_type === "scribe_note").slice(-1)[0];
+
+        const attnItems: { text: string; color: string; dot: string; action: () => void }[] = [];
+        requestRows.filter(r => r.is_overdue && !DONE_STATUSES.includes(r.stage)).slice(0, 2).forEach(r =>
+          attnItems.push({ text: `${r.req_number} overdue`, color: "text-red-600", dot: "bg-red-500",
+            action: () => { setTab("requests"); setActivePresetId("overdue"); } }));
+        requestRows.filter(r => !r.owner && !DONE_STATUSES.includes(r.stage)).slice(0, 1).forEach(r =>
+          attnItems.push({ text: `${r.req_number} no owner`, color: "text-amber-600", dot: "bg-amber-500",
+            action: () => { setTab("requests"); setActivePresetId("all"); } }));
+        const aiReadyCount = requestRows.filter(r => (r.raw.ai_talking_points?.length ?? 0) > 0 && !DONE_STATUSES.includes(r.stage)).length;
+        if (aiReadyCount > 0) attnItems.push({ text: `${aiReadyCount} AI brief${aiReadyCount > 1 ? "s" : ""} ready`,
+          color: "text-primary", dot: "bg-primary", action: () => setTab("requests") });
+
+        const catCounts: Record<string, number> = {};
+        allRequests.slice(-15).forEach(r => { if (r.category) catCounts[r.category] = (catCounts[r.category] ?? 0) + 1; });
+        const sortedCats = Object.entries(catCounts).sort((a, b) => b[1] - a[1]);
+        const primaryFocus = sortedCats[0]?.[0]?.replace(/_/g, " ");
+        const emergingFocus = sortedCats[1]?.[0]?.replace(/_/g, " ");
+        const last15Reqs = allRequests.filter(r => Date.now() - new Date(r.created_at).getTime() < 15 * 60 * 1000);
+        const overdueRowCount = requestRows.filter(r => r.is_overdue && !DONE_STATUSES.includes(r.stage)).length;
+        const patternText = last15Reqs.length >= 2
+          ? `${last15Reqs.length} requests in last 15 min`
+          : overdueRowCount >= 3 ? `${overdueRowCount} overdue items` : null;
+
+        const topSMEs = smeRoomStatuses.slice(0, 4);
+        const visibleCount = [showPanel("situation"), showPanel("attention"), showPanel("focus"), showPanel("sme_status")].filter(Boolean).length;
+        if (visibleCount === 0 && !showIntelPanel) return null;
+
+        const gridCols = visibleCount >= 4 ? "grid-cols-4" : visibleCount === 3 ? "grid-cols-3"
+          : visibleCount === 2 ? "grid-cols-2" : "grid-cols-1";
+
+        const SME_SLOT: Record<string, { label: string; cls: string }> = {
+          in_room:     { label: "In room",   cls: "bg-emerald-50 border-emerald-200 text-emerald-700" },
+          next_up:     { label: "On deck",   cls: "bg-blue-50 border-blue-200 text-blue-700" },
+          standby:     { label: "Preparing", cls: "bg-amber-50 border-amber-200 text-amber-700" },
+          do_not_call: { label: "Hold",      cls: "bg-red-50 border-red-200 text-red-700" },
+          off_site:    { label: "Off site",  cls: "bg-gray-50 border-gray-200 text-gray-500" },
+        };
+
+        return (
+          <div className="space-y-2.5">
+            {/* Header row */}
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 select-none">
+                Command Center
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setShowIntelPanel(v => !v)}
+                  className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-medium border transition-colors cursor-pointer ${
+                    showIntelPanel
+                      ? "bg-primary/10 border-primary/20 text-primary"
+                      : "border-border text-muted-foreground hover:text-foreground hover:bg-accent"
+                  }`}
+                >
+                  <Layers className="w-3 h-3" />Intelligence
+                </button>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowCmdCenterSettings(v => !v)}
+                    className={`p-1 rounded-md transition-colors cursor-pointer ${
+                      showCmdCenterSettings ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                    }`}
+                    title="Customize panels"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                  </button>
+                  {showCmdCenterSettings && (
+                    <div className="absolute top-8 right-0 z-50 bg-popover border rounded-xl shadow-xl p-3 w-52">
+                      <p className="text-[11px] font-semibold text-foreground mb-2.5">Visible Panels</p>
+                      {[
+                        { key: "situation", label: "Current Moment" },
+                        { key: "attention", label: "Needs My Attention" },
+                        { key: "focus",     label: "Inspector Focus" },
+                        { key: "sme_status", label: "SME Status" },
+                      ].map(p => (
+                        <label key={p.key} className="flex items-center gap-2.5 py-1.5 cursor-pointer group select-none">
+                          <input
+                            type="checkbox"
+                            checked={showPanel(p.key)}
+                            onChange={e => {
+                              const next = { ...cmdCenterPrefs, [p.key]: e.target.checked };
+                              setCmdCenterPrefs(next);
+                              if (typeof window !== "undefined")
+                                localStorage.setItem(`clyira_cmdcenter_${id}`, JSON.stringify(next));
+                            }}
+                            className="rounded"
+                          />
+                          <span className="text-xs text-muted-foreground group-hover:text-foreground transition-colors">
+                            {p.label}
+                          </span>
+                        </label>
+                      ))}
+                      <div className="border-t mt-2 pt-2 flex justify-end">
+                        <button onClick={() => setShowCmdCenterSettings(false)}
+                          className="text-[10px] text-primary hover:underline cursor-pointer">
+                          Done
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 4-panel cards */}
+            {visibleCount > 0 && (
+              <div className={`grid ${gridCols} gap-3`}>
+                {showPanel("situation") && (
+                  <div className="bg-card border rounded-xl p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Current Moment</p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 mb-3">Live context</p>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-muted-foreground w-10 flex-shrink-0">Phase</span>
+                        {currentActivityLabel ? (
+                          <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-md leading-none">
+                            {currentActivityLabel}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md leading-none">
+                            {currentPhaseObj?.short ?? "Opening"}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <span className="text-[10px] text-muted-foreground w-10 flex-shrink-0 mt-0.5">Topic</span>
+                        {lastNote ? (
+                          <span className="text-[11px] font-medium text-foreground leading-snug line-clamp-2">
+                            {lastNote.content.length > 60 ? lastNote.content.slice(0, 60) + "…" : lastNote.content}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground/50 italic">No notes yet</span>
+                        )}
+                      </div>
+                      {inspection.agency && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-muted-foreground w-10 flex-shrink-0">Agency</span>
+                          <span className="text-[11px] font-medium">{inspection.agency}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {showPanel("attention") && (
+                  <div className="bg-card border rounded-xl p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Needs My Attention</p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 mb-3">Items requiring action</p>
+                    {attnItems.length === 0 ? (
+                      <div className="flex items-center gap-1.5 py-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                        <span className="text-[11px] text-emerald-700 font-medium">All clear</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {attnItems.slice(0, 3).map((item, i) => (
+                          <button key={i} onClick={item.action}
+                            className="w-full flex items-center gap-2 text-left hover:bg-accent/60 rounded-md px-1 py-0.5 -mx-1 transition-colors cursor-pointer group">
+                            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${item.dot}`} />
+                            <span className={`text-[11px] font-medium ${item.color} group-hover:underline`}>
+                              {item.text}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {showPanel("focus") && (
+                  <div className="bg-card border rounded-xl p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Inspector Focus</p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 mb-3">Short signal, not a full report</p>
+                    {!primaryFocus ? (
+                      <span className="text-[10px] text-muted-foreground/50 italic">Not enough data yet</span>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-start gap-2">
+                          <span className="text-[10px] text-muted-foreground w-14 flex-shrink-0 mt-0.5">Primary</span>
+                          <span className="text-[11px] font-semibold text-foreground capitalize">{primaryFocus}</span>
+                        </div>
+                        {emergingFocus && (
+                          <div className="flex items-start gap-2">
+                            <span className="text-[10px] text-muted-foreground w-14 flex-shrink-0 mt-0.5">Emerging</span>
+                            <span className="text-[11px] font-medium text-foreground/80 capitalize">{emergingFocus}</span>
+                          </div>
+                        )}
+                        {patternText && (
+                          <div className="flex items-start gap-2">
+                            <span className="text-[10px] text-muted-foreground w-14 flex-shrink-0 mt-0.5">Pattern</span>
+                            <span className="text-[11px] font-bold text-red-600">{patternText}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {showPanel("sme_status") && (
+                  <div className="bg-card border rounded-xl p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">SME Status</p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 mb-3">Room flow</p>
+                    {topSMEs.length === 0 ? (
+                      <span className="text-[10px] text-muted-foreground/50 italic">No SMEs assigned yet</span>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {topSMEs.map((sme, i) => {
+                          const slotCfg = SME_SLOT[sme.room_slot] ?? { label: "Standby", cls: "bg-muted border-border text-muted-foreground" };
+                          const initials = sme.name.split(" ").map((w: string) => w[0] ?? "").join("").slice(0, 2).toUpperCase();
+                          return (
+                            <div key={i} className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <div className="w-[18px] h-[18px] rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                                  <span className="text-[8px] font-bold text-primary leading-none">{initials}</span>
+                                </div>
+                                <span className="text-[11px] font-medium truncate">{sme.title ?? sme.name}</span>
+                              </div>
+                              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-md border flex-shrink-0 ${slotCfg.cls}`}>
+                                {slotCfg.label}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Intelligence Panel — collapsible */}
+            {showIntelPanel && (() => {
+              const recentNotes = log.filter(e => e.entry_type === "scribe_note").slice(-3).reverse();
+              const riskReqs = requestRows
+                .filter(r => (r.criticality === "critical" || r.criticality === "high") && !DONE_STATUSES.includes(r.stage))
+                .slice(0, 3);
+              const commitmentReqs = allRequests.filter(r => r.category === "commitment");
+              const doneCommits = commitmentReqs.filter(r => DONE_STATUSES.includes(r.status)).length;
+              const openCommits = commitmentReqs.filter(r => !DONE_STATUSES.includes(r.status)).length;
+              const completionPct = allRequests.length ? Math.round((resolvedRequests.length / allRequests.length) * 100) : 0;
+              const openHighCount = requestRows.filter(r =>
+                (r.criticality === "critical" || r.criticality === "high") && !DONE_STATUSES.includes(r.stage)).length;
+              return (
+                <div className="bg-card border rounded-xl p-4 grid grid-cols-4 gap-6">
+                  {/* Live Scribe Short Notes */}
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Live Scribe — Short Notes</p>
+                      <p className="text-[10px] text-muted-foreground/60 mt-0.5">Only the last few meaningful moments</p>
+                    </div>
+                    {recentNotes.length === 0 ? (
+                      <p className="text-[10px] text-muted-foreground/50 italic">No notes yet</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {recentNotes.map((note, i) => (
+                          <div key={i} className="flex gap-2">
+                            <span className="text-[9px] text-muted-foreground/50 font-mono flex-shrink-0 mt-0.5">
+                              {new Date(note.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                            <span className="text-[10px] text-foreground/80 leading-snug">
+                              {note.content.length > 65 ? note.content.slice(0, 65) + "…" : note.content}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <button onClick={() => setTab("scribe")}
+                      className="text-[10px] text-primary hover:underline cursor-pointer mt-1">
+                      Quick note — Enter to save →
+                    </button>
+                  </div>
+
+                  {/* Risk Flags */}
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Risk Flags</p>
+                      <p className="text-[10px] text-muted-foreground/60 mt-0.5">Top 3 only</p>
+                    </div>
+                    {riskReqs.length === 0 ? (
+                      <div className="flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />
+                        <span className="text-[10px] text-emerald-700">No critical/high items</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {riskReqs.map((r, i) => (
+                          <button key={i}
+                            onClick={() => { setTab("requests"); setActivePresetId("all"); }}
+                            className="w-full flex items-start gap-2 text-left hover:bg-accent/50 rounded-md px-1 py-0.5 -mx-1 transition-colors cursor-pointer">
+                            <span className={`text-[9px] font-bold px-1 py-0.5 rounded border flex-shrink-0 mt-0.5 ${
+                              r.criticality === "critical"
+                                ? "bg-red-50 border-red-200 text-red-700"
+                                : "bg-orange-50 border-orange-200 text-orange-700"
+                            }`}>
+                              {r.criticality === "critical" ? "High" : "Med"}
+                            </span>
+                            <span className="text-[10px] text-foreground/80 leading-snug line-clamp-2">
+                              {r.request_text.length > 50 ? r.request_text.slice(0, 50) + "…" : r.request_text}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Commitments & Follow-Ups */}
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Commitments & Follow-Ups</p>
+                      <p className="text-[10px] text-muted-foreground/60 mt-0.5">Track what was promised</p>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl font-bold text-foreground tabular-nums leading-none">{doneCommits}</span>
+                        <span className="text-[10px] text-muted-foreground">Confirmed commitments</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xl font-bold tabular-nums leading-none ${openCommits > 0 ? "text-amber-600" : "text-foreground"}`}>
+                          {openCommits}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">Potential commitments detected</span>
+                      </div>
+                    </div>
+                    <button onClick={() => { setTab("requests"); setActivePresetId("all"); }}
+                      className="text-[10px] text-primary hover:underline cursor-pointer mt-1">
+                      Open Log → before EOD
+                    </button>
+                  </div>
+
+                  {/* End-of-Day Readiness */}
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">End-of-Day Readiness</p>
+                      <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                        {openHighCount > 0 ? `${openHighCount} critical/high still open` : "On track"}
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-muted-foreground">Resolution</span>
+                        <span className={`text-[11px] font-bold tabular-nums ${
+                          completionPct >= 80 ? "text-emerald-600" : completionPct >= 50 ? "text-amber-600" : "text-red-600"
+                        }`}>{completionPct}%</span>
+                      </div>
+                      <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${
+                          completionPct >= 80 ? "bg-emerald-500" : completionPct >= 50 ? "bg-amber-500" : "bg-red-400"
+                        }`} style={{ width: `${completionPct}%` }} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-muted-foreground">Open requests</span>
+                        <button
+                          onClick={() => { setTab("requests"); setActivePresetId("all"); }}
+                          className={`text-[11px] font-bold tabular-nums cursor-pointer hover:underline ${openRequests.length > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                          {openRequests.length}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         );
       })()}
