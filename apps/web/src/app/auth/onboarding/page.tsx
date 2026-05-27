@@ -231,11 +231,8 @@ export default function OnboardingPage() {
       <div className="w-full max-w-2xl">
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-2.5 mb-4">
-            <ClyiraLogo />
-            <span className="font-brand text-2xl font-bold tracking-tight" style={{ letterSpacing: "0.04em" }}>
-              CLYIRA<span style={{ color: "#7654c9" }}>.</span>AI
-            </span>
+          <div className="flex justify-center mb-4">
+            <ClyiraLogo className="h-12 w-auto" />
           </div>
           <h1 className="text-xl font-semibold">Configure your regulatory workspace</h1>
           <p className="text-sm text-muted-foreground mt-1">

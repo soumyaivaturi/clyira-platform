@@ -104,11 +104,8 @@ export default function DashboardLayout({
       <aside className="w-64 border-r bg-card flex flex-col">
         {/* Logo */}
         <div className="h-16 flex items-center px-6 border-b">
-          <Link href="/dashboard" className="flex items-center gap-2.5">
-            <ClyiraLogo />
-            <span className="font-brand font-bold text-lg tracking-tight" style={{ letterSpacing: "0.04em" }}>
-              CLYIRA<span style={{ color: "#7654c9" }}>.</span>AI
-            </span>
+          <Link href="/dashboard">
+            <ClyiraLogo className="h-7 w-auto" />
           </Link>
         </div>
 

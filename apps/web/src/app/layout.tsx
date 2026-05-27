@@ -1,13 +1,8 @@
 import type { Metadata } from "next";
-import { Inter, Orbitron } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
-const orbitron = Orbitron({
-  subsets: ["latin"],
-  weight: ["700", "900"],
-  variable: "--font-brand",
-});
 
 export const metadata: Metadata = {
   title: "Clyira — Quality Intelligence Platform",
@@ -22,7 +17,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${inter.className} ${orbitron.variable}`}>
+      <body className={inter.className}>
         <div className="min-h-screen flex flex-col">{children}</div>
       </body>
     </html>

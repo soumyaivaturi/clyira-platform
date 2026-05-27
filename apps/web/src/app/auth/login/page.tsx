@@ -44,12 +44,8 @@ function LoginForm() {
   return (
     <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* Logo */}
-        <div className="flex items-center justify-center gap-2.5 mb-8">
-          <ClyiraLogo />
-          <span className="font-brand text-2xl font-bold tracking-tight" style={{ letterSpacing: "0.04em" }}>
-            CLYIRA<span style={{ color: "#7654c9" }}>.</span>AI
-          </span>
+        <div className="flex justify-center mb-8">
+          <ClyiraLogo className="h-12 w-auto" />
         </div>
 
         <div className="bg-card border rounded-xl p-8 shadow-sm">

@@ -73,7 +73,6 @@ const config: Config = {
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "sans-serif"],
-        brand: ["var(--font-brand)", "Orbitron", "sans-serif"],
       },
       animation: {
         marquee: "marquee 35s linear infinite",
