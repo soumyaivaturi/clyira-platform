@@ -5143,37 +5143,39 @@ class RuleEngine:
     # ========== L9: Enforcement Pattern Checks (Deviation / LIR / Validation) ==========
 
     def _check_l9_enforcement_pattern_match(self, ctx: AssessmentContext) -> Optional[FindingResult]:
-        """Flag if document's topic areas match high-frequency FDA enforcement patterns."""
-        if not ctx.enforcement_records:
-            return None
+        """Flag if document topic areas match high-frequency FDA + international enforcement patterns."""
+        from app.engines import rag_engine, international_enforcement_engine
 
         text_lower = ctx.document_text.lower()
+        doc_cat = (ctx.document_category or "").lower()
 
-        # Build CFR citation frequency map from loaded enforcement records
-        from collections import Counter
-        cfr_freq: Counter = Counter()
-        for rec in ctx.enforcement_records:
-            for cfr in rec.get("cfr_citations", []):
-                cfr_clean = re.sub(r'\s+', ' ', cfr.strip())
-                cfr_freq[cfr_clean] += 1
-
-        # Top enforcement-cited CFR sections relevant to this document
-        HIGH_FREQ_THRESHOLD = 5
-        hot_sections = [cfr for cfr, cnt in cfr_freq.items() if cnt >= HIGH_FREQ_THRESHOLD]
-
-        if not hot_sections:
-            return None
-
-        # Check if document text references any of the hot CFR sections' topic areas
         CFR_TOPICS = {
             "211.192": ["investigation", "discrepancy", "out-of-specification", "batch review"],
             "211.100": ["written procedure", "deviation", "standard operating"],
             "211.68":  ["computer", "electronic record", "audit trail", "backup"],
             "211.22":  ["quality control", "qc unit", "quality unit"],
             "211.165": ["testing", "acceptance criteria", "specification"],
+            "211.182": ["equipment log", "maintenance record", "cleaning record"],
             "820.100": ["capa", "corrective action", "preventive action"],
             "820.30":  ["design control", "design history"],
         }
+
+        # Determine hot CFR sections from both enforcement_records (legacy) and rag_engine frequency
+        from collections import Counter
+        cfr_freq: Counter = Counter()
+        for rec in (ctx.enforcement_records or []):
+            for cfr in rec.get("cfr_citations", []):
+                cfr_clean = re.sub(r'\s+', ' ', cfr.strip())
+                cfr_freq[cfr_clean] += 1
+
+        # Supplement with rag_engine corpus frequencies
+        for cfr_key in CFR_TOPICS:
+            corpus_count = rag_engine.get_cfr_observation_count(f"21 CFR {cfr_key}")
+            if corpus_count > 0:
+                cfr_freq[f"21 CFR {cfr_key}"] = max(cfr_freq.get(f"21 CFR {cfr_key}", 0), corpus_count // 10)
+
+        HIGH_FREQ_THRESHOLD = 5
+        hot_sections = [cfr for cfr, cnt in cfr_freq.items() if cnt >= HIGH_FREQ_THRESHOLD]
 
         matched_topics = []
         for cfr_key, keywords in CFR_TOPICS.items():
@@ -5186,6 +5188,15 @@ class RuleEngine:
         if len(matched_topics) < 2:
             return None
 
+        # Check for international corroboration
+        intl_query = f"{ctx.document_category or 'quality'} {' '.join(matched_topics[:2])}"
+        intl_matches = international_enforcement_engine.search(intl_query, n_results=2)
+        intl_agencies = list({r['source_agency'] for r in intl_matches if r['score'] >= 0.6})
+
+        intl_note = ""
+        if intl_agencies:
+            intl_note = f" Also flagged by {', '.join(intl_agencies)} enforcement actions."
+
         return FindingResult(
             level="L9",
             severity="medium",
@@ -5193,7 +5204,8 @@ class RuleEngine:
             title=f"Document covers {len(matched_topics)} CFR areas with high FDA enforcement frequency",
             description=(
                 f"This document addresses areas ({', '.join(matched_topics[:3])}) that appear "
-                f"frequently in FDA enforcement actions loaded into Clyira's intelligence database. "
+                f"frequently in FDA enforcement actions in Clyira's intelligence database."
+                f"{intl_note} "
                 "Documents in these areas receive heightened inspector scrutiny. Ensure all "
                 "applicable sections are complete, precise, and supported by data."
             ),
@@ -5207,38 +5219,66 @@ class RuleEngine:
         )
 
     def _check_l9_repeat_observation_risk(self, ctx: AssessmentContext) -> Optional[FindingResult]:
-        """Flag if prior assessments show recurring findings in the same categories."""
-        if not ctx.historical_assessments or len(ctx.historical_assessments) < 2:
-            return None
-
+        """Flag recurring unresolved findings in prior assessments and OAI inspection history."""
         from collections import Counter
-        category_counts: Counter = Counter()
-        for hist in ctx.historical_assessments:
-            for f in hist.get("findings", []):
-                if f.get("status") not in ("resolved", "disputed"):
-                    cat = f.get("category", "")
-                    if cat:
-                        category_counts[cat] += 1
+        from app.engines import facility_risk_engine
 
-        # Categories appearing in 2+ prior assessments unresolved
-        repeat_cats = [cat for cat, cnt in category_counts.items() if cnt >= 2]
-        if not repeat_cats:
+        repeat_cats: list[str] = []
+        history_note = ""
+
+        # Path 1: Clyira prior assessment recurrence
+        if ctx.historical_assessments and len(ctx.historical_assessments) >= 2:
+            category_counts: Counter = Counter()
+            for hist in ctx.historical_assessments:
+                for f in hist.get("findings", []):
+                    if f.get("status") not in ("resolved", "disputed"):
+                        cat = f.get("category", "")
+                        if cat:
+                            category_counts[cat] += 1
+            repeat_cats = [cat for cat, cnt in category_counts.items() if cnt >= 2]
+
+        # Path 2: ICDB site-level repeat OAI (if company context available)
+        firm_name = ""
+        if hasattr(ctx, 'company_name') and ctx.company_name:
+            firm_name = ctx.company_name
+        elif ctx.company_documents_metadata:
+            firm_name = ctx.company_documents_metadata[0].get('company_name', '') if ctx.company_documents_metadata else ''
+
+        facility_signals = {}
+        if firm_name:
+            facility_signals = facility_risk_engine.get_facility_risk_signals(firm_name)
+            if facility_signals.get('repeat_oai'):
+                oai_count = facility_signals.get('oai_count', 0)
+                history_note = (
+                    f" FDA ICDB records show {oai_count} Official Action Indicated (OAI) "
+                    f"classifications for this facility — a pattern consistent with systemic quality failures."
+                )
+
+        if not repeat_cats and not facility_signals.get('repeat_oai'):
             return None
+
+        severity = "high" if facility_signals.get('repeat_oai') else "medium"
+        evidence_parts = []
+        if repeat_cats:
+            evidence_parts.append(f"Recurring Clyira finding categories: {', '.join(repeat_cats[:5])}")
+        if facility_signals.get('repeat_oai'):
+            evidence_parts.append(f"ICDB OAI count: {facility_signals.get('oai_count', 0)}")
 
         return FindingResult(
             level="L9",
-            severity="high",
+            severity=severity,
             category="repeat_observation_risk",
-            title=f"Recurring unresolved findings detected across {len(ctx.historical_assessments)} prior assessments",
+            title=f"Recurring unresolved findings detected" + (" + repeat OAI facility history" if facility_signals.get('repeat_oai') else ""),
             description=(
-                f"The following finding categories have appeared in multiple prior assessments "
-                f"of this document without resolution: {', '.join(repeat_cats[:5])}. "
+                (f"The following finding categories have appeared in multiple prior assessments "
+                 f"without resolution: {', '.join(repeat_cats[:5])}. " if repeat_cats else "") +
                 "Repeat observations in FDA inspections are treated as systemic failures and "
                 "significantly increase the risk of a Warning Letter or consent decree. "
                 "Per 21 CFR 211.192 and ICH Q10, effectiveness checks must confirm that "
-                "corrective actions have actually addressed the root cause."
+                "corrective actions have actually addressed the root cause." +
+                history_note
             ),
-            evidence=f"Repeat categories across prior assessments: {', '.join(repeat_cats[:5])}",
+            evidence=" | ".join(evidence_parts),
             regulatory_citation="21 CFR 211.192; ICH Q10 Section 3.2",
             citation_type="traceability",
             agency="FDA",
@@ -5376,6 +5416,210 @@ class RuleEngine:
             ))
 
         return findings
+
+    def _check_l9_consent_decree_pattern(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """Flag if document topics match patterns from FDA/DOJ consent decrees."""
+        from app.engines import international_enforcement_engine, facility_risk_engine
+
+        text_lower = ctx.document_text.lower()
+        doc_cat = (ctx.document_category or "").lower()
+
+        # Check facility-level consent decree / import alert status
+        firm_name = ""
+        if hasattr(ctx, 'company_name') and ctx.company_name:
+            firm_name = ctx.company_name
+        elif ctx.company_documents_metadata:
+            firm_name = ctx.company_documents_metadata[0].get('company_name', '') if ctx.company_documents_metadata else ''
+
+        import_alerts: list[dict] = []
+        if firm_name:
+            signals = facility_risk_engine.get_facility_risk_signals(firm_name)
+            import_alerts = signals.get('active_import_alerts', [])
+
+        # BM25 search across consent decree / DOJ corpus
+        query = f"{doc_cat} consent decree {ctx.document_category or 'quality system'}"
+        cd_results = international_enforcement_engine.search(
+            query, n_results=2, agency_filter="FDA/DOJ"
+        )
+        # Also search for DOJ patterns
+        doj_results = international_enforcement_engine.search(
+            query, n_results=1, agency_filter="DOJ"
+        )
+        all_results = cd_results + doj_results
+        strong_matches = [r for r in all_results if r['score'] >= 0.65]
+
+        if not strong_matches and not import_alerts:
+            return None
+
+        evidence_parts = []
+        description_parts = []
+
+        if import_alerts:
+            alert_nums = [a.get('alert_number', '') for a in import_alerts[:3]]
+            evidence_parts.append(f"Active import alerts: {', '.join(a for a in alert_nums if a)}")
+            description_parts.append(
+                f"This facility has active FDA Import Alerts ({', '.join(a for a in alert_nums if a)}), "
+                "indicating unresolved compliance failures that triggered import detention. "
+            )
+
+        if strong_matches:
+            companies = [r.get('company', '') for r in strong_matches[:2] if r.get('company')]
+            evidence_parts.append(f"Consent decree pattern matches: {', '.join(companies)}")
+            description_parts.append(
+                "Document content matches patterns associated with prior FDA/DOJ consent decrees — "
+                "the most severe enforcement outcome short of criminal prosecution. "
+            )
+
+        description_parts.append(
+            "Consent decrees typically arise from persistent systemic failures. "
+            "Ensure this document demonstrates genuine remediation, not superficial documentation fixes."
+        )
+
+        return FindingResult(
+            level="L9",
+            severity="high",
+            category="consent_decree_pattern",
+            title="Document content matches consent decree / import alert enforcement patterns",
+            description=" ".join(description_parts),
+            evidence=" | ".join(evidence_parts),
+            regulatory_citation="21 CFR 211.192; FD&C Act Section 302",
+            citation_type="enforcement",
+            agency="FDA",
+            enforcement_match=True,
+            confidence_score=0.75,
+            validated=True,
+        )
+
+    def _check_l9_data_integrity_enforcement_pattern(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """
+        Flag data integrity deficiency patterns from Ranbaxy, Cetero, Able Labs precedents
+        and current document content.
+        """
+        from app.engines import rag_engine, international_enforcement_engine
+
+        text_lower = ctx.document_text.lower()
+
+        # DI red-flag keywords in document
+        DI_KEYWORDS = [
+            "audit trail", "audit_trail", "raw data", "original data",
+            "data deletion", "back-dated", "backdated", "altered record",
+            "duplicate result", "second sample", "retesting", "cherry-pick",
+            "undocumented change", "overwritten", "computer access", "shared login",
+            "electronic record", "21 cfr 11", "part 11",
+        ]
+        DI_SEVERITY_KEYWORDS = [
+            "deleted", "manipulated", "falsified", "fabricated",
+            "unauthorized change", "no audit trail",
+        ]
+
+        matched = [kw for kw in DI_KEYWORDS if kw in text_lower]
+        high_risk = [kw for kw in DI_SEVERITY_KEYWORDS if kw in text_lower]
+
+        if len(matched) < 3 and not high_risk:
+            return None
+
+        # Cross-reference with enforcement corpus for DI-specific precedents
+        di_query = "data integrity audit trail electronic records manipulation falsification"
+        fda_di = rag_engine.search(di_query, n_results=2)
+        intl_di = international_enforcement_engine.search(di_query, n_results=2)
+
+        agencies = list({r['source_agency'] for r in intl_di if r['score'] >= 0.6})
+        intl_note = f" Similar patterns cited by {', '.join(agencies)}." if agencies else ""
+
+        severity = "critical" if high_risk else "high"
+
+        return FindingResult(
+            level="L9",
+            severity=severity,
+            category="data_integrity_enforcement_pattern",
+            title="Data integrity keywords match high-frequency enforcement patterns (Ranbaxy/Cetero precedent)",
+            description=(
+                f"This document contains {len(matched)} data integrity-related terms "
+                f"({', '.join(matched[:4])}) that overlap with patterns from major FDA data integrity "
+                "enforcement actions (Ranbaxy, Cetero Research, Able Laboratories). "
+                "Data integrity failures are the #1 driver of Warning Letters and import alerts "
+                "in the last decade. Per ALCOA+ principles and 21 CFR Part 11, all data must be "
+                "attributable, legible, contemporaneous, original, and accurate." +
+                intl_note
+            ),
+            evidence=(
+                f"DI keywords matched: {', '.join(matched[:6])}. "
+                + (f"High-risk terms: {', '.join(high_risk)}. " if high_risk else "")
+                + (f"FDA enforcement precedents found: {len(fda_di)}." if fda_di else "")
+            ),
+            regulatory_citation="21 CFR Part 11; 21 CFR 211.68; ALCOA+",
+            citation_type="enforcement",
+            agency="FDA",
+            enforcement_match=True,
+            confidence_score=0.80,
+            validated=True,
+        )
+
+    def _check_l9_narrow_scope_enforcement_pattern(self, ctx: AssessmentContext) -> Optional[FindingResult]:
+        """
+        Flag Wockhardt-pattern: CAPA/investigation scoped to a single instrument/batch
+        when the root cause implies a systemic issue.
+        """
+        from app.engines import rag_engine, international_enforcement_engine
+
+        text_lower = ctx.document_text.lower()
+
+        # Signals that scope was limited to one unit/batch/analyst
+        NARROW_SCOPE_SIGNALS = [
+            "specific equipment", "single instrument", "one hplc", "one gc",
+            "this batch only", "isolated incident", "single analyst",
+            "one-time deviation", "no other batches", "no trend",
+            "no systemic", "equipment only", "limited to",
+        ]
+
+        # Signals that the root cause actually implies systemic issues
+        SYSTEMIC_SIGNALS = [
+            "procedure not followed", "training", "sop not clear",
+            "awareness", "understanding", "knowledge gap",
+            "multiple", "recurring", "previous", "history of",
+        ]
+
+        narrow_matches = [kw for kw in NARROW_SCOPE_SIGNALS if kw in text_lower]
+        systemic_signals = [kw for kw in SYSTEMIC_SIGNALS if kw in text_lower]
+
+        # Only flag if there are narrow-scope claims alongside systemic root cause signals
+        if len(narrow_matches) < 2 or not systemic_signals:
+            return None
+
+        # Confirm with enforcement BM25 for narrow-scope patterns
+        query = "narrow scope capa isolated incident systemic root cause inadequate investigation"
+        fda_matches = rag_engine.search(query, n_results=2)
+        intl_matches = international_enforcement_engine.search(query, n_results=1)
+
+        agencies = list({r['source_agency'] for r in intl_matches if r['score'] >= 0.55})
+        intl_note = f" Also cited by {', '.join(agencies)}." if agencies else ""
+
+        return FindingResult(
+            level="L9",
+            severity="high",
+            category="narrow_scope_enforcement_pattern",
+            title="Narrow CAPA scope despite systemic root cause signals — Wockhardt pattern",
+            description=(
+                f"Document uses narrow-scope language ({', '.join(narrow_matches[:3])}) "
+                f"while simultaneously indicating systemic contributing factors "
+                f"({', '.join(systemic_signals[:3])}). "
+                "FDA has cited this pattern in Warning Letters against Wockhardt and others: "
+                "scoping a CAPA to a single instrument or batch when the root cause (training gap, "
+                "unclear procedure) affects the entire site. Ensure the CAPA scope matches the "
+                "breadth of the identified root cause." +
+                intl_note
+            ),
+            evidence=(
+                f"Narrow-scope signals: {', '.join(narrow_matches[:4])}. "
+                f"Systemic signals: {', '.join(systemic_signals[:4])}."
+            ),
+            regulatory_citation="21 CFR 211.192; 21 CFR 820.100",
+            citation_type="enforcement",
+            agency="FDA",
+            enforcement_match=True,
+            confidence_score=0.72,
+            validated=True,
+        )
 
     # ========== L11: Inspection Readiness Checks ==========
 

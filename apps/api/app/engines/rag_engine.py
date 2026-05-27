@@ -159,12 +159,13 @@ def search(
             continue
         doc = _corpus[idx]
         results.append({
-            'text': doc['text'][:1200],
-            'company': doc['company'],
-            'year': doc['year'],
-            'office': doc['office'],
-            'source_url': doc['source_url'],
-            'cfr_citations': doc['cfr_citations'],
+            'text': doc.get('text', doc.get('observation_text', ''))[:1200],
+            'company': doc.get('company', doc.get('firm_name', '')),
+            'year': doc.get('year', doc.get('issue_date', '')[:4] if doc.get('issue_date') else ''),
+            'office': doc.get('office', doc.get('district', '')),
+            'source_url': doc.get('source_url', ''),
+            'cfr_citations': doc.get('cfr_citations', []),
+            'source_type': doc.get('source_type', 'warning_letter'),
             'score': round(float(score), 2),
         })
     return results
@@ -188,6 +189,13 @@ def format_enforcement_excerpt(precedents: list[dict]) -> str:
         return ""
     parts = []
     for p in precedents:
-        header = f"[{p['company']}, {p['office']} Warning Letter {p['year']}]"
+        source_type = p.get('source_type', 'warning_letter')
+        label = {
+            'warning_letter': 'Warning Letter',
+            '483': 'Form 483',
+            'consent_decree': 'Consent Decree',
+            'import_alert': 'Import Alert',
+        }.get(source_type, source_type.replace('_', ' ').title())
+        header = f"[{p['company']}, {p['office']} {label} {p['year']}]"
         parts.append(f"{header}\n{p['text'][:600]}")
     return "\n\n---\n\n".join(parts)
