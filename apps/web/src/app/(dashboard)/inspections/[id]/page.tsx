@@ -376,14 +376,18 @@ const INVESTIGATOR_COLORS = [
 ];
 
 const ALL_COLUMNS: ColumnDef[] = [
-  { key: "req_number", label: "REQ #", width: 64, defaultVisible: true, sortable: true },
-  { key: "investigator", label: "Inv.", width: 36, defaultVisible: true, sortable: true },
-  { key: "topic", label: "Topic", width: 96, defaultVisible: true, sortable: true },
-  { key: "request_text", label: "Request", width: 0, defaultVisible: true, sortable: false },
-  { key: "owner", label: "Owner", width: 80, defaultVisible: true, sortable: true },
-  { key: "age", label: "Age", width: 56, defaultVisible: true, sortable: true },
-  { key: "stage", label: "Stage", width: 80, defaultVisible: true, sortable: true },
-  { key: "criticality", label: "Crit.", width: 52, defaultVisible: false, sortable: true },
+  { key: "req_number",   label: "REQ #",       width: 64,  defaultVisible: true,  sortable: true },
+  { key: "investigator", label: "Inv.",         width: 36,  defaultVisible: true,  sortable: true },
+  { key: "criticality",  label: "Priority",     width: 68,  defaultVisible: true,  sortable: true },
+  { key: "topic",        label: "Category",     width: 80,  defaultVisible: false, sortable: true },
+  { key: "request_text", label: "Request",      width: 0,   defaultVisible: true,  sortable: false },
+  { key: "owner",        label: "With",         width: 96,  defaultVisible: true,  sortable: true },
+  { key: "sme",          label: "SME",          width: 80,  defaultVisible: false, sortable: false },
+  { key: "age",          label: "Age",          width: 56,  defaultVisible: true,  sortable: true },
+  { key: "due",          label: "Due",          width: 80,  defaultVisible: true,  sortable: true },
+  { key: "stage",        label: "Stage",        width: 80,  defaultVisible: true,  sortable: true },
+  { key: "attachments",  label: "Docs",         width: 40,  defaultVisible: false, sortable: false },
+  { key: "ai",           label: "AI",           width: 28,  defaultVisible: false, sortable: false },
 ];
 
 const SYSTEM_VIEW_PRESETS: TableViewPreset[] = [
@@ -392,7 +396,7 @@ const SYSTEM_VIEW_PRESETS: TableViewPreset[] = [
     name: "All Requests",
     is_system: true,
     filters: {},
-    visible_columns: ["req_number", "investigator", "request_text", "owner", "age", "stage"],
+    visible_columns: ["req_number", "investigator", "criticality", "request_text", "owner", "age", "due", "stage"],
     group_by: "none",
     sort_by: "age",
     sort_dir: "desc",
@@ -402,7 +406,7 @@ const SYSTEM_VIEW_PRESETS: TableViewPreset[] = [
     name: "Overdue",
     is_system: true,
     filters: { overdue_only: true },
-    visible_columns: ["req_number", "investigator", "request_text", "owner", "age", "stage"],
+    visible_columns: ["req_number", "investigator", "criticality", "request_text", "owner", "age", "due", "stage"],
     group_by: "none",
     sort_by: "age",
     sort_dir: "desc",
@@ -412,7 +416,7 @@ const SYSTEM_VIEW_PRESETS: TableViewPreset[] = [
     name: "QA Pending",
     is_system: true,
     filters: { qa_pending_only: true },
-    visible_columns: ["req_number", "investigator", "request_text", "owner", "stage"],
+    visible_columns: ["req_number", "investigator", "request_text", "owner", "stage", "attachments"],
     group_by: "none",
     sort_by: "age",
     sort_dir: "desc",
@@ -422,7 +426,7 @@ const SYSTEM_VIEW_PRESETS: TableViewPreset[] = [
     name: "By Investigator",
     is_system: true,
     filters: {},
-    visible_columns: ["req_number", "request_text", "owner", "age", "stage"],
+    visible_columns: ["req_number", "criticality", "request_text", "owner", "age", "due", "stage"],
     group_by: "investigator",
     sort_by: "age",
     sort_dir: "desc",
@@ -789,6 +793,7 @@ function RequestDetailModal({
   teamOptions: { name: string; role: string | null }[];
 }) {
   // subTab removed — drawer is now single-scroll
+  const [isExpanded, setIsExpanded] = useState(false);
   const [docs, setDocs] = useState<RequestDocument[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
@@ -918,8 +923,10 @@ function RequestDetailModal({
 
   return (
     <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-black/25 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="bg-card border-l shadow-2xl w-full max-w-[440px] h-full flex flex-col overflow-hidden">
+      <div className={`${isExpanded ? "hidden" : "flex-1"} bg-black/25 backdrop-blur-[2px]`} onClick={onClose} />
+      <div className={`bg-card border-l shadow-2xl h-full flex flex-col overflow-hidden transition-all duration-200 ${
+        isExpanded ? "w-full max-w-none" : "w-full max-w-[440px]"
+      }`}>
 
         {/* ── Drawer Header ── */}
         <div className="flex items-start justify-between px-5 py-4 border-b flex-shrink-0 bg-card">
@@ -941,7 +948,15 @@ function RequestDetailModal({
               <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{timeAgo(req.created_at)}</span>
             </div>
           </div>
-          <button onClick={onClose} className="flex-shrink-0 p-1 hover:bg-accent rounded"><X className="w-4 h-4 text-muted-foreground" /></button>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button onClick={() => setIsExpanded(v => !v)} title={isExpanded ? "Collapse" : "Expand full screen"}
+              className="p-1.5 hover:bg-accent rounded text-muted-foreground">
+              {isExpanded
+                ? <ChevronRight className="w-4 h-4" />
+                : <ArrowUpRight className="w-4 h-4" />}
+            </button>
+            <button onClick={onClose} className="p-1 hover:bg-accent rounded"><X className="w-4 h-4 text-muted-foreground" /></button>
+          </div>
         </div>
 
         {/* ── Scrollable single-page content ── */}
@@ -1228,43 +1243,83 @@ function LogEntryCard({ entry }: { entry: LogEntry }) {
 }
 
 // ── Request Table Row ─────────────────────────────────────────────────────────
-function RequestTableRow({ row, onClick }: { row: RequestRow; onClick: () => void }) {
+const CRIT_BADGE: Record<string, string> = {
+  critical: "bg-red-100 text-red-800 border-red-200",
+  high:     "bg-orange-100 text-orange-800 border-orange-200",
+  medium:   "bg-amber-100 text-amber-800 border-amber-200",
+  low:      "bg-blue-100 text-blue-800 border-blue-200",
+};
+const LEFT_BORDER: Record<string, string> = {
+  critical: "border-l-red-500",
+  high:     "border-l-orange-400",
+  medium:   "border-l-amber-400",
+  low:      "border-l-blue-400",
+};
+
+function RequestTableRow({ row, onClick, cols }: { row: RequestRow; onClick: () => void; cols: string[] }) {
   const statusCfg = REQUEST_STATUS_STYLES[row.stage] ?? REQUEST_STATUS_STYLES.open;
   const StatusIcon = statusCfg.icon;
   const isDone = ["fulfilled", "declined", "withdrawn", "closed", "released"].includes(row.stage);
   const colorClass = INVESTIGATOR_COLORS[row.color_index % INVESTIGATOR_COLORS.length];
-  const leftBorder: Record<string, string> = {
-    critical: "border-l-red-500",
-    high: "border-l-orange-400",
-    medium: "border-l-amber-400",
-    low: "border-l-blue-400",
-  };
+  const has = (key: string) => cols.includes(key);
+
   return (
     <div
       onClick={onClick}
-      className={`group flex items-center gap-2.5 px-3 py-2.5 border-l-[3px] rounded-r-lg cursor-pointer hover:bg-muted/40 transition-colors ${
-        row.is_overdue ? "border-l-red-500 bg-red-50/30" : (leftBorder[row.criticality] ?? "border-l-border")
+      className={`group flex items-center gap-2 px-3 py-2.5 border-l-[3px] cursor-pointer hover:bg-muted/40 transition-colors ${
+        row.is_overdue ? "border-l-red-500 bg-red-50/30" : (LEFT_BORDER[row.criticality] ?? "border-l-border")
       } ${isDone ? "opacity-55" : ""}`}
     >
-      <span className="text-[10px] font-mono font-bold text-muted-foreground w-[3.5rem] flex-shrink-0 truncate">{row.req_number}</span>
-      <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold flex-shrink-0 ${colorClass}`}
-        title={row.investigator_name ?? "Unknown"}>
-        {row.investigator_initial}
-      </span>
-      <span className="flex-1 text-sm font-medium truncate min-w-0 group-hover:text-primary transition-colors">{row.request_text}</span>
-      <span className={`text-[10px] font-semibold flex-shrink-0 w-[3.5rem] text-right hidden sm:block ${row.is_overdue ? "text-red-600 font-bold" : "text-muted-foreground"}`}>
-        {formatAge(row.age_minutes)}
-      </span>
-      <span className={`flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded border flex-shrink-0 ${statusCfg.className}`}>
-        <StatusIcon className="w-2.5 h-2.5" />{statusCfg.label}
-      </span>
-      <span className="flex-shrink-0 w-[5rem] flex justify-end">
-        <SlaCountdown dueAt={row.raw.due_at} slaMinutes={row.raw.sla_minutes} />
-      </span>
-      {row.raw.ai_talking_points?.length ? (
-        <Zap className="w-3 h-3 text-primary flex-shrink-0" aria-label="AI talking points ready" />
-      ) : (
-        <span className="w-3 h-3 flex-shrink-0" />
+      {has("req_number") && (
+        <span className="text-[10px] font-mono font-bold text-muted-foreground w-[3.5rem] flex-shrink-0 truncate">{row.req_number}</span>
+      )}
+      {has("investigator") && (
+        <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold flex-shrink-0 ${colorClass}`}
+          title={row.investigator_name ?? "Unknown"}>
+          {row.investigator_initial}
+        </span>
+      )}
+      {has("criticality") && (
+        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase flex-shrink-0 w-[4.5rem] text-center ${CRIT_BADGE[row.criticality] ?? CRIT_BADGE.medium}`}>
+          {row.criticality === "critical" ? "CRIT" : row.criticality.slice(0, 3).toUpperCase()}
+        </span>
+      )}
+      {has("topic") && (
+        <span className="text-[10px] text-muted-foreground flex-shrink-0 w-[5rem] truncate hidden sm:block capitalize">{row.topic.replace(/_/g, " ")}</span>
+      )}
+      {has("request_text") && (
+        <span className="flex-1 text-sm font-medium truncate min-w-0 group-hover:text-primary transition-colors">{row.request_text}</span>
+      )}
+      {has("owner") && (
+        <span className="text-[10px] text-muted-foreground flex-shrink-0 w-[5rem] truncate hidden sm:block">{row.owner ?? "—"}</span>
+      )}
+      {has("sme") && row.raw.assigned_to_title && (
+        <span className="text-[10px] text-muted-foreground flex-shrink-0 w-[4.5rem] truncate hidden md:block">{row.raw.assigned_to_title}</span>
+      )}
+      {has("age") && (
+        <span className={`text-[10px] font-semibold flex-shrink-0 w-[3rem] text-right hidden sm:block ${row.is_overdue ? "text-red-600" : "text-muted-foreground"}`}>
+          {formatAge(row.age_minutes)}
+        </span>
+      )}
+      {has("due") && (
+        <span className="flex-shrink-0 w-[5rem] flex justify-end">
+          <SlaCountdown dueAt={row.raw.due_at} slaMinutes={row.raw.sla_minutes} />
+        </span>
+      )}
+      {has("stage") && (
+        <span className={`flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded border flex-shrink-0 ${statusCfg.className}`}>
+          <StatusIcon className="w-2.5 h-2.5" />{statusCfg.label}
+        </span>
+      )}
+      {has("attachments") && (
+        <span className="flex-shrink-0 w-5 flex justify-center">
+          {row.evidence_status !== "none" ? <Paperclip className="w-3 h-3 text-muted-foreground" /> : <span className="w-3 h-3" />}
+        </span>
+      )}
+      {has("ai") && (
+        row.raw.ai_talking_points?.length
+          ? <Zap className="w-3 h-3 text-primary flex-shrink-0" aria-label="AI talking points ready" />
+          : <span className="w-3 h-3 flex-shrink-0" />
       )}
     </div>
   );
@@ -1583,6 +1638,153 @@ function ExecutiveSummaryOverlay({
           <ArrowRight className="w-3.5 h-3.5" />
           View full war room
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Investigator Scribe Lane ──────────────────────────────────────────────────
+function InvestigatorLane({
+  investigator,
+  colorIndex,
+  entries,
+  inspectorBrief,
+  onBriefRequest,
+  briefLoading,
+  onCapture,
+  allRequests,
+}: {
+  investigator: string | null;
+  colorIndex: number;
+  entries: LogEntry[];
+  inspectorBrief: any;
+  onBriefRequest: () => void;
+  briefLoading: boolean;
+  onCapture: (type: string, text: string) => Promise<void>;
+  allRequests: InspRequest[];
+}) {
+  const [note, setNote] = useState("");
+  const [noteType, setNoteType] = useState("scribe_note");
+  const [saving, setSaving] = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  const myRequests = investigator
+    ? allRequests.filter(r => r.inspector_name === investigator)
+    : allRequests;
+
+  const recentTopics = useMemo(() => {
+    const topicMap: Record<string, number> = {};
+    myRequests.slice(-10).forEach(r => {
+      const cat = r.category ?? "question";
+      topicMap[cat] = (topicMap[cat] ?? 0) + 1;
+    });
+    return Object.entries(topicMap).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  }, [myRequests]);
+
+  const colorClass = INVESTIGATOR_COLORS[colorIndex % INVESTIGATOR_COLORS.length];
+
+  const submit = async () => {
+    if (!note.trim() || saving) return;
+    setSaving(true);
+    try { await onCapture(noteType, note.trim()); setNote(""); }
+    finally { setSaving(false); }
+  };
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [entries.length]);
+
+  return (
+    <div className="flex flex-col border rounded-xl overflow-hidden bg-card min-h-0 h-full">
+      {/* Lane header */}
+      <div className="px-3 py-2.5 border-b bg-muted/20 flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold flex-shrink-0 ${colorClass}`}>
+            {investigator ? investigator.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase() : "?"}
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold truncate">{investigator ?? "Unassigned"}</p>
+            <p className="text-[10px] text-muted-foreground">{myRequests.length} requests · {entries.length} notes</p>
+          </div>
+          <button onClick={onBriefRequest} disabled={briefLoading}
+            title="Get AI Intel on this investigator"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold border border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors disabled:opacity-50">
+            {briefLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Zap className="w-2.5 h-2.5" />}
+            Intel
+          </button>
+        </div>
+        {/* Thread analysis */}
+        {recentTopics.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1.5">
+            <span className="text-[9px] text-muted-foreground uppercase tracking-wide">Thread:</span>
+            {recentTopics.map(([topic, count]) => (
+              <span key={topic} className="text-[9px] px-1.5 py-0.5 bg-primary/10 text-primary rounded font-medium">
+                {topic.replace(/_/g, " ")} ×{count}
+              </span>
+            ))}
+          </div>
+        )}
+        {/* AI brief prediction */}
+        {inspectorBrief?.next_likely_focus && (
+          <div className="mt-1.5 px-2 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-[10px]">
+            <span className="font-bold text-amber-800">Likely next: </span>
+            <span className="text-amber-700">{inspectorBrief.next_likely_focus}</span>
+          </div>
+        )}
+        {inspectorBrief?.building_toward && (
+          <div className="mt-1 px-2 py-1.5 bg-red-50 border border-red-200 rounded-lg text-[10px]">
+            <span className="font-bold text-red-800">Building toward: </span>
+            <span className="text-red-700">{inspectorBrief.building_toward}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Notes feed */}
+      <div className="flex-1 overflow-y-auto min-h-0 divide-y">
+        {entries.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-20 text-[11px] text-muted-foreground">
+            No notes yet
+          </div>
+        ) : (
+          entries.map(e => (
+            <div key={e.id} className="flex items-start gap-2 px-3 py-2">
+              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5 ${LOG_TYPE_CONFIG[e.entry_type]?.color ?? "text-muted-foreground bg-muted"}`}>
+                {LOG_TYPE_CONFIG[e.entry_type]?.label ?? e.entry_type}
+              </span>
+              <span className="text-xs flex-1 leading-snug">{e.content}</span>
+              <span className="text-[9px] text-muted-foreground flex-shrink-0 whitespace-nowrap">{timeAgo(e.created_at)}</span>
+            </div>
+          ))
+        )}
+        <div ref={endRef} />
+      </div>
+
+      {/* Capture input */}
+      <div className="border-t flex-shrink-0 bg-background">
+        <div className="flex gap-1.5 px-2 pt-2">
+          {["scribe_note", "observation", "deficiency"].map(t => (
+            <button key={t} onClick={() => setNoteType(t)}
+              className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                noteType === t ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:text-foreground"
+              }`}>
+              {t === "scribe_note" ? "Note" : t === "observation" ? "Obs." : "Def."}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 px-2 py-2">
+          <textarea
+            rows={2}
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit(); }}
+            placeholder={`Capture for ${investigator ?? "all"}… (⌘↵)`}
+            className="flex-1 text-xs border rounded-lg px-2 py-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20 resize-none"
+          />
+          <button onClick={submit} disabled={saving || !note.trim()}
+            className="flex-shrink-0 p-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40">
+            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -2611,11 +2813,11 @@ export default function WarRoomPage() {
             ...teamMembers.filter(m => m.room === "inspector").map(m => m.name),
             ...inspectors.map(m => m.name),
           ]}
-          onSubmit={async (type, text, _inspector) => {
+          onSubmit={async (type, text, inspector) => {
             await inspectionsApi.addScribeEntry(id, {
               entry_type: type,
               content: text,
-              tags: [],
+              tags: inspector ? [inspector] : [],
             });
             const logRes = await inspectionsApi.getLog(id);
             setLog(logRes.data.entries ?? []);
@@ -3098,15 +3300,17 @@ export default function WarRoomPage() {
                 </div>
               ) : (
                 <div className="bg-card border rounded-xl overflow-hidden">
-                  {/* Table column headers */}
-                  <div className="flex items-center gap-2.5 px-3 py-2 border-b bg-muted/30">
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide w-[3.5rem] flex-shrink-0">#</span>
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide w-[4rem] flex-shrink-0">Priority</span>
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex-1">Request</span>
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide w-[6.5rem] flex-shrink-0 hidden sm:block">Inspector</span>
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex-shrink-0">Stage</span>
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide w-[5rem] flex-shrink-0 text-right">SLA</span>
-                    <span className="w-3 h-3 flex-shrink-0" />
+                  {/* Table column headers — driven by activeColumns */}
+                  <div className="flex items-center gap-2 px-3 py-2 border-b bg-muted/30">
+                    {ALL_COLUMNS.filter(c => activeColumns.includes(c.key)).map(c => (
+                      <span key={c.key}
+                        onClick={() => { if (c.sortable) { setSortDir(d => sortColumn === c.key ? (d === "asc" ? "desc" : "asc") : "asc"); setSortColumn(c.key); } }}
+                        className={`text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex-shrink-0 select-none ${c.key === "request_text" ? "flex-1" : ""} ${c.sortable ? "cursor-pointer hover:text-foreground" : ""}`}
+                        style={c.key !== "request_text" && c.width ? { width: `${c.width}px` } : undefined}
+                      >
+                        {c.label}{sortColumn === c.key ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+                      </span>
+                    ))}
                   </div>
                   {/* Grouped or flat rows */}
                   {groupBy === "investigator" ? (
@@ -3140,7 +3344,7 @@ export default function WarRoomPage() {
                             {!isCollapsed && (
                               <div className="divide-y">
                                 {trackOpenRows.map(row => (
-                                  <RequestTableRow key={row.id} row={row} onClick={() => setSelectedRequest(row.raw)} />
+                                  <RequestTableRow key={row.id} row={row} cols={activeColumns} onClick={() => setSelectedRequest(row.raw)} />
                                 ))}
                               </div>
                             )}
@@ -3154,7 +3358,7 @@ export default function WarRoomPage() {
                       {openRows.length > 0 && (
                         <div className="divide-y">
                           {openRows.map(row => (
-                            <RequestTableRow key={row.id} row={row} onClick={() => setSelectedRequest(row.raw)} />
+                            <RequestTableRow key={row.id} row={row} cols={activeColumns} onClick={() => setSelectedRequest(row.raw)} />
                           ))}
                         </div>
                       )}
@@ -3169,7 +3373,7 @@ export default function WarRoomPage() {
                           </div>
                           <div className="divide-y">
                             {resolvedRows.map(row => (
-                              <RequestTableRow key={row.id} row={row} onClick={() => setSelectedRequest(row.raw)} />
+                              <RequestTableRow key={row.id} row={row} cols={activeColumns} onClick={() => setSelectedRequest(row.raw)} />
                             ))}
                           </div>
                         </>
@@ -4082,6 +4286,65 @@ export default function WarRoomPage() {
       {/* ── Scribe Tab ────────────────────────────────────────────────────────── */}
       {tab === "scribe" && (
         <div className="space-y-4">
+          {/* ── Multi-Lane View (2+ investigators) ── */}
+          {investigatorTracks.length >= 2 ? (
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="font-semibold flex items-center gap-2"><Mic className="w-4 h-4 text-primary" /> Scribe Feeds</h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">{investigatorTracks.length} investigator threads — all lanes live simultaneously</p>
+                </div>
+                <button
+                  onClick={() => {
+                    const el = document.documentElement;
+                    if (!document.fullscreenElement) el.requestFullscreen?.();
+                    else document.exitFullscreen?.();
+                  }}
+                  title="Prep Room Mode (fullscreen)"
+                  className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-accent">
+                  <ArrowUpRight className="w-3.5 h-3.5" /> Prep Room Mode
+                </button>
+              </div>
+              {/* Lane grid */}
+              <div className={`grid gap-3 ${investigatorTracks.length === 2 ? "grid-cols-2" : investigatorTracks.length === 3 ? "grid-cols-3" : "grid-cols-2 xl:grid-cols-4"}`}
+                style={{ height: "calc(100vh - 200px)", minHeight: "400px" }}>
+                {investigatorTracks.map(track => {
+                  const laneEntries = [...log].filter(e =>
+                    !e.tags?.length || e.tags.includes(track.investigator_name)
+                  );
+                  const inspObj = [...teamMembers.filter(m => m.room === "inspector"), ...inspectors].find(i => i.name === track.investigator_name);
+                  return (
+                    <InvestigatorLane
+                      key={track.investigator_name}
+                      investigator={track.investigator_name}
+                      colorIndex={track.color_index}
+                      entries={laneEntries}
+                      inspectorBrief={inspectorBriefs[inspObj?.id ?? ""] ?? null}
+                      onBriefRequest={async () => {
+                        if (!inspObj?.id) return;
+                        setBriefingInspector(inspObj.id);
+                        try {
+                          const res = await inspectionsApi.briefInspector(id, inspObj.id);
+                          setInspectorBriefs(b => ({ ...b, [inspObj.id]: res.data.brief }));
+                        } catch { setInspectorBriefs(b => ({ ...b, [inspObj.id]: null })); }
+                        finally { setBriefingInspector(null); }
+                      }}
+                      briefLoading={briefingInspector === inspObj?.id}
+                      onCapture={async (type, text) => {
+                        const tags = [track.investigator_name];
+                        await inspectionsApi.addScribeEntry(id, { entry_type: type, content: text, tags });
+                        const logRes = await inspectionsApi.getLog(id);
+                        setLog(logRes.data.entries ?? []);
+                      }}
+                      allRequests={allRequests}
+                    />
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            /* ── Single-investigator / no-investigator layout ── */
+            <>
           <div className="flex items-start justify-between gap-3">
             <p className="text-sm text-muted-foreground">
               Real-time scribe — capture every observation, question, and action item as it happens.
@@ -4224,6 +4487,8 @@ export default function WarRoomPage() {
                 </div>
               ))}
             </div>
+          )}
+            </>
           )}
         </div>
       )}
