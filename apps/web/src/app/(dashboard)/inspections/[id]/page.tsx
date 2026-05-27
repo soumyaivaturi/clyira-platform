@@ -445,11 +445,11 @@ function getDefaultPresetForRole(role: string | null): string {
 }
 
 function availabilityToSlot(availability: string): SMERoomSlot {
-  if (availability === "in_room") return "in_room";
-  if (availability === "next_up" || availability === "available") return "next_up";
-  if (availability === "standby") return "standby";
+  if (availability === "in_audit_room") return "in_room";
+  if (availability === "available") return "next_up";
+  if (availability === "on_standby" || availability === "in_prep") return "standby";
   if (availability === "do_not_call") return "do_not_call";
-  if (availability === "off_site" || availability === "unavailable") return "off_site";
+  if (availability === "unavailable") return "off_site";
   return "standby";
 }
 
@@ -614,61 +614,6 @@ function StageProgress({ status }: { status: string }) {
   );
 }
 
-// ── Phase Navigator ───────────────────────────────────────────────────────────
-function PhaseNavigator({
-  current,
-  status,
-  onPhaseChange,
-}: {
-  current: string | null;
-  status: string;
-  onPhaseChange: (p: string) => void;
-}) {
-  if (status !== "active") return null;
-  const currentIndex = PHASES.findIndex(p => p.key === current);
-
-  return (
-    <div className="bg-card border rounded-xl p-3">
-      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2.5 flex items-center gap-1.5">
-        <Activity className="w-3 h-3 text-primary" />
-        Inspection Phase
-      </p>
-      <div className="flex items-center gap-0">
-        {PHASES.map((phase, i) => {
-          const done = currentIndex > i;
-          const active = currentIndex === i;
-          return (
-            <div key={phase.key} className="flex items-center flex-1">
-              <button
-                onClick={() => onPhaseChange(phase.key)}
-                title={phase.label}
-                className={`flex-1 flex flex-col items-center gap-1 py-2 px-1 rounded-lg text-center transition-colors ${
-                  active
-                    ? "bg-primary/10 text-primary"
-                    : done
-                    ? "text-emerald-700 hover:bg-emerald-50"
-                    : "text-muted-foreground hover:bg-accent"
-                }`}
-              >
-                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                  active ? "bg-primary text-white" :
-                  done ? "bg-emerald-500 text-white" :
-                  "bg-muted text-muted-foreground"
-                }`}>
-                  {done ? <CheckCircle2 className="w-3 h-3" /> : i + 1}
-                </div>
-                <span className="text-[10px] font-medium leading-tight hidden sm:block">{phase.short}</span>
-              </button>
-              {i < PHASES.length - 1 && (
-                <div className={`h-0.5 flex-shrink-0 w-4 ${done ? "bg-emerald-400" : "bg-border"}`} />
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 // ── Add Request Modal ─────────────────────────────────────────────────────────
 const COMMON_LOCATIONS = [
@@ -1282,81 +1227,12 @@ function LogEntryCard({ entry }: { entry: LogEntry }) {
   );
 }
 
-// ── Compact Request Card ──────────────────────────────────────────────────────
-function RequestCard({
-  req,
-  inspectionId,
-  onOpen,
-}: {
-  req: InspRequest;
-  inspectionId: string;
-  onOpen: (req: InspRequest) => void;
-}) {
-  const statusCfg = REQUEST_STATUS_STYLES[req.status] ?? REQUEST_STATUS_STYLES.open;
-  const StatusIcon = statusCfg.icon;
-  const reqNum = req.request_number ? `REQ-${String(req.request_number).padStart(3, "0")}` : "REQ";
-
-  return (
-    <div
-      className={`border-l-4 rounded-r-xl border rounded-xl overflow-hidden cursor-pointer hover:shadow-sm transition-shadow ${CRITICALITY_COLORS[req.criticality] ?? "bg-card"}`}
-      onClick={() => onOpen(req)}
-    >
-      <div className="px-4 py-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[10px] font-bold text-primary font-mono">{reqNum}</span>
-              <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ${CRITICALITY_BADGE[req.criticality] ?? ""}`}>
-                {req.criticality}
-              </span>
-            </div>
-            <p className="text-sm font-medium leading-snug">{req.request_text}</p>
-            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-              {req.inspector_name && (
-                <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                  <User className="w-2.5 h-2.5" />{req.inspector_name}
-                </span>
-              )}
-              {req.location && (
-                <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                  <MapPin className="w-2.5 h-2.5" />{req.location}
-                </span>
-              )}
-              <span className="text-[10px] text-muted-foreground">{timeAgo(req.created_at)}</span>
-              {req.ai_talking_points?.length ? (
-                <span className="text-[10px] text-primary font-medium flex items-center gap-0.5">
-                  <Zap className="w-2.5 h-2.5" /> AI analyzed
-                </span>
-              ) : null}
-            </div>
-            <StageProgress status={req.status} />
-          </div>
-          <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-            <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${statusCfg.className}`}>
-              <StatusIcon className="w-2.5 h-2.5" />
-              {statusCfg.label}
-            </span>
-            <SlaCountdown dueAt={req.due_at} slaMinutes={req.sla_minutes} />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Request Table Row ─────────────────────────────────────────────────────────
-function RequestTableRow({ req, onClick }: { req: InspRequest; onClick: () => void }) {
-  const statusCfg = REQUEST_STATUS_STYLES[req.status] ?? REQUEST_STATUS_STYLES.open;
+function RequestTableRow({ row, onClick }: { row: RequestRow; onClick: () => void }) {
+  const statusCfg = REQUEST_STATUS_STYLES[row.stage] ?? REQUEST_STATUS_STYLES.open;
   const StatusIcon = statusCfg.icon;
-  const reqNum = req.request_number ? `REQ-${String(req.request_number).padStart(3, "0")}` : "REQ";
-  const DONE_STATUSES_ROW = ["fulfilled", "declined", "withdrawn", "closed", "released"];
-  const isDone = DONE_STATUSES_ROW.includes(req.status);
-  const critBadge: Record<string, string> = {
-    critical: "bg-red-100 text-red-800 border-red-200",
-    high: "bg-orange-100 text-orange-800 border-orange-200",
-    medium: "bg-amber-100 text-amber-800 border-amber-200",
-    low: "bg-blue-100 text-blue-800 border-blue-200",
-  };
+  const isDone = ["fulfilled", "declined", "withdrawn", "closed", "released"].includes(row.stage);
+  const colorClass = INVESTIGATOR_COLORS[row.color_index % INVESTIGATOR_COLORS.length];
   const leftBorder: Record<string, string> = {
     critical: "border-l-red-500",
     high: "border-l-orange-400",
@@ -1366,23 +1242,26 @@ function RequestTableRow({ req, onClick }: { req: InspRequest; onClick: () => vo
   return (
     <div
       onClick={onClick}
-      className={`group flex items-center gap-2.5 px-3 py-2.5 border-l-[3px] rounded-r-lg cursor-pointer hover:bg-muted/40 transition-colors ${leftBorder[req.criticality] ?? "border-l-border"} ${isDone ? "opacity-55" : ""}`}
+      className={`group flex items-center gap-2.5 px-3 py-2.5 border-l-[3px] rounded-r-lg cursor-pointer hover:bg-muted/40 transition-colors ${
+        row.is_overdue ? "border-l-red-500 bg-red-50/30" : (leftBorder[row.criticality] ?? "border-l-border")
+      } ${isDone ? "opacity-55" : ""}`}
     >
-      <span className="text-[10px] font-mono font-bold text-muted-foreground w-[3.5rem] flex-shrink-0 truncate">{reqNum}</span>
-      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase flex-shrink-0 w-[4rem] text-center ${critBadge[req.criticality] ?? critBadge.medium}`}>
-        {req.criticality === "critical" ? "CRIT" : req.criticality.slice(0, 3).toUpperCase()}
+      <span className="text-[10px] font-mono font-bold text-muted-foreground w-[3.5rem] flex-shrink-0 truncate">{row.req_number}</span>
+      <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold flex-shrink-0 ${colorClass}`}
+        title={row.investigator_name ?? "Unknown"}>
+        {row.investigator_initial}
       </span>
-      <span className="flex-1 text-sm font-medium truncate min-w-0 group-hover:text-primary transition-colors">{req.request_text}</span>
-      {req.inspector_name && (
-        <span className="text-xs text-muted-foreground truncate hidden sm:block w-[6.5rem] flex-shrink-0">{req.inspector_name}</span>
-      )}
+      <span className="flex-1 text-sm font-medium truncate min-w-0 group-hover:text-primary transition-colors">{row.request_text}</span>
+      <span className={`text-[10px] font-semibold flex-shrink-0 w-[3.5rem] text-right hidden sm:block ${row.is_overdue ? "text-red-600 font-bold" : "text-muted-foreground"}`}>
+        {formatAge(row.age_minutes)}
+      </span>
       <span className={`flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded border flex-shrink-0 ${statusCfg.className}`}>
         <StatusIcon className="w-2.5 h-2.5" />{statusCfg.label}
       </span>
       <span className="flex-shrink-0 w-[5rem] flex justify-end">
-        <SlaCountdown dueAt={req.due_at} slaMinutes={req.sla_minutes} />
+        <SlaCountdown dueAt={row.raw.due_at} slaMinutes={row.raw.sla_minutes} />
       </span>
-      {req.ai_talking_points?.length ? (
+      {row.raw.ai_talking_points?.length ? (
         <Zap className="w-3 h-3 text-primary flex-shrink-0" aria-label="AI talking points ready" />
       ) : (
         <span className="w-3 h-3 flex-shrink-0" />
@@ -1709,6 +1588,172 @@ function ExecutiveSummaryOverlay({
   );
 }
 
+// ── Quick Note Strip ──────────────────────────────────────────────────────────
+function QuickNoteStrip({
+  log,
+  onSubmit,
+}: {
+  log: LogEntry[];
+  onSubmit: (text: string) => Promise<void>;
+}) {
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!note.trim() || saving) return;
+    setSaving(true);
+    try { await onSubmit(note.trim()); setNote(""); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="bg-card border rounded-xl overflow-hidden mt-1">
+      <div className="px-4 py-2 border-b bg-muted/20 flex items-center gap-2">
+        <Mic className="w-3.5 h-3.5 text-primary" />
+        <span className="text-xs font-semibold">Activity Feed</span>
+        {log.length > 0 && <span className="text-[10px] text-muted-foreground ml-auto">{log.length} entries</span>}
+      </div>
+      {log.length > 0 && (
+        <div className="divide-y max-h-[8rem] overflow-y-auto">
+          {log.slice(-4).reverse().map(e => (
+            <div key={e.id} className="flex items-start gap-2.5 px-4 py-2">
+              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5 ${LOG_TYPE_CONFIG[e.entry_type]?.color ?? "text-muted-foreground bg-muted"}`}>
+                {LOG_TYPE_CONFIG[e.entry_type]?.label ?? e.entry_type}
+              </span>
+              <span className="text-xs text-muted-foreground line-clamp-1 flex-1">{e.content}</span>
+              <span className="text-[10px] text-muted-foreground flex-shrink-0">{timeAgo(e.created_at)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-2 px-3 py-2 border-t">
+        <input
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") submit(); }}
+          placeholder="Log a quick note… (Enter to save)"
+          className="flex-1 text-xs bg-transparent focus:outline-none placeholder:text-muted-foreground/50"
+        />
+        {saving
+          ? <Loader2 className="w-3 h-3 animate-spin text-muted-foreground flex-shrink-0" />
+          : <button onClick={submit} disabled={!note.trim()} className="flex-shrink-0 disabled:opacity-30"><Send className="w-3 h-3 text-muted-foreground" /></button>
+        }
+      </div>
+    </div>
+  );
+}
+
+// ── Role Picker Modal ─────────────────────────────────────────────────────────
+const ROLE_OPTIONS = [
+  { key: "host", label: "Inspection Host", desc: "Leads front room, final calls", icon: "🎙️" },
+  { key: "scribe", label: "Scribe", desc: "Logs requests and notes", icon: "✍️" },
+  { key: "front_runner", label: "Front Runner", desc: "Carries docs to prep room", icon: "🏃" },
+  { key: "prep_lead", label: "Prep Room Lead", desc: "Manages prep room workflow", icon: "📋" },
+  { key: "qa_reviewer", label: "QA Reviewer", desc: "Reviews documents before release", icon: "🔍" },
+  { key: "sme", label: "SME / Expert", desc: "Subject matter expert on standby", icon: "🧪" },
+  { key: "observer", label: "Observer", desc: "Read-only war room access", icon: "👁️" },
+];
+
+function RolePickerModal({
+  currentRoles,
+  inspectionId,
+  onConfirm,
+  onClose,
+  onRoleRequest,
+}: {
+  currentRoles: string[];
+  inspectionId: string;
+  onConfirm: (roles: string[]) => void;
+  onClose: () => void;
+  onRoleRequest: (text: string) => void;
+}) {
+  const [draftRoles, setDraftRoles] = useState<string[]>(currentRoles);
+  const [showRoleRequest, setShowRoleRequest] = useState(false);
+  const [requestText, setRequestText] = useState("");
+
+  const toggle = (key: string) =>
+    setDraftRoles(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="bg-card border rounded-2xl shadow-2xl w-full max-w-md mx-4">
+        <div className="px-6 pt-6 pb-2">
+          <h2 className="text-lg font-semibold">Select your roles</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Select all that apply — you can hold multiple roles during the same inspection.
+          </p>
+        </div>
+        <div className="px-6 py-4 grid grid-cols-2 gap-2">
+          {ROLE_OPTIONS.map(r => {
+            const selected = draftRoles.includes(r.key);
+            return (
+              <button
+                key={r.key}
+                onClick={() => toggle(r.key)}
+                className={`relative flex items-start gap-2.5 px-3 py-3 rounded-xl border text-left transition-all ${
+                  selected ? "border-primary bg-primary/5 ring-1 ring-primary/20" : "border-border hover:border-primary/40 hover:bg-accent"
+                }`}
+              >
+                {selected && (
+                  <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-primary flex items-center justify-center">
+                    <CheckCircle2 className="w-2.5 h-2.5 text-white" />
+                  </span>
+                )}
+                <span className="text-lg">{r.icon}</span>
+                <div>
+                  <p className="text-xs font-semibold">{r.label}</p>
+                  <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{r.desc}</p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        {showRoleRequest ? (
+          <div className="px-6 pb-3 space-y-2">
+            <p className="text-xs font-semibold text-muted-foreground">Request a role not listed:</p>
+            <div className="flex gap-2">
+              <input
+                value={requestText}
+                onChange={e => setRequestText(e.target.value)}
+                placeholder="e.g. Legal counsel, External consultant…"
+                className="flex-1 text-xs border rounded-lg px-2.5 py-1.5 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+              <button
+                onClick={() => { onRoleRequest(requestText); onClose(); }}
+                disabled={!requestText.trim()}
+                className="px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-semibold hover:bg-primary/90 disabled:opacity-50"
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="px-6 pb-2">
+            <button
+              onClick={() => setShowRoleRequest(true)}
+              className="text-xs text-primary hover:underline flex items-center gap-1"
+            >
+              <Plus className="w-3 h-3" /> Request a different role or approval
+            </button>
+          </div>
+        )}
+        <div className="px-6 pb-6 flex justify-between items-center pt-2 border-t mt-2">
+          <button onClick={onClose} className="text-xs text-muted-foreground hover:underline">
+            {currentRoles.length > 0 ? "Keep current roles" : "Skip for now"}
+          </button>
+          <button
+            onClick={() => onConfirm(draftRoles)}
+            disabled={draftRoles.length === 0}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+          >
+            {draftRoles.length === 0 ? "Select a role" : `Confirm ${draftRoles.length === 1 ? "role" : `${draftRoles.length} roles`}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function WarRoomPage() {
   const { id } = useParams<{ id: string }>();
@@ -1744,11 +1789,15 @@ export default function WarRoomPage() {
   const [closingSummary, setClosingSummary] = useState<string>("");
   const [runningAnalysis, setRunningAnalysis] = useState(false);
   const [generatingClosing, setGeneratingClosing] = useState(false);
-  const [myRole, setMyRole] = useState<string | null>(() => {
-    if (typeof window !== "undefined") return sessionStorage.getItem(`clyira_role_${id}`) ?? null;
-    return null;
+  const [myRoles, setMyRoles] = useState<string[]>(() => {
+    if (typeof window !== "undefined") {
+      try { return JSON.parse(sessionStorage.getItem(`clyira_roles_${id}`) ?? "[]"); }
+      catch { return []; }
+    }
+    return [];
   });
   const [showRolePicker, setShowRolePicker] = useState(false);
+  const [isExecViewHidden, setIsExecViewHidden] = useState(false);
 
   // Forms
   const [newCommitment, setNewCommitment] = useState({ commitment_text: "", committed_to: "", deadline_at: "" });
@@ -1830,9 +1879,7 @@ export default function WarRoomPage() {
   const [showAlerts, setShowAlerts] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [deletingFinding, setDeletingFinding] = useState<string | null>(null);
-  const [reqFilterCrit, setReqFilterCrit] = useState("all");
-  const [reqFilterInspector, setReqFilterInspector] = useState("all");
-  const [reqSort, setReqSort] = useState("newest");
+
   const [eodNotes, setEodNotes] = useState("");
   const [eodActionItems, setEodActionItems] = useState<string[]>([]);
   const [newEodAction, setNewEodAction] = useState("");
@@ -1983,8 +2030,8 @@ export default function WarRoomPage() {
 
   // Show role picker for active inspections when no role is set
   useEffect(() => {
-    if (inspection?.status === "active" && !myRole) setShowRolePicker(true);
-  }, [inspection?.status, myRole]);
+    if (inspection?.status === "active" && myRoles.length === 0) setShowRolePicker(true);
+  }, [inspection?.status, myRoles.length]);
 
   // Detect Web Speech API support (client-side only)
   useEffect(() => {
@@ -2328,12 +2375,13 @@ export default function WarRoomPage() {
   };
 
   // ── Role-based permissions ──────────────────────────────────────────────────
-  const isObserver = myRole === "observer";
-  const canLogRequest = !myRole || !isObserver;
-  const canAssign = !myRole || ["host", "prep_lead", "scribe"].includes(myRole);
-  const canManageTeam = !myRole || ["host", "prep_lead"].includes(myRole);
-  const canCloseInspection = !myRole || ["host"].includes(myRole);
-  const canQAReview = !myRole || ["host", "qa_reviewer", "prep_lead"].includes(myRole);
+  const hasRole = (...roles: string[]) => myRoles.length === 0 || roles.some(r => myRoles.includes(r));
+  const isObserver = myRoles.length > 0 && myRoles.every(r => r === "observer");
+  const canLogRequest = !isObserver;
+  const canAssign = hasRole("host", "prep_lead", "scribe");
+  const canManageTeam = hasRole("host", "prep_lead");
+  const canCloseInspection = hasRole("host");
+  const canQAReview = hasRole("host", "qa_reviewer", "prep_lead");
 
   const DONE_STATUSES = ["fulfilled", "declined", "withdrawn", "closed", "released"];
 
@@ -2475,6 +2523,9 @@ export default function WarRoomPage() {
     { key: "team", label: `Team${teamCount ? ` (${teamCount})` : ""}`, icon: Users },
     { key: "scribe", label: "Scribe", icon: Mic },
     { key: "chat", label: "Chat", icon: Hash },
+    { key: "eod", label: "End of Day", icon: Calendar },
+    { key: "prep", label: "Pre-Inspection", icon: FileText },
+    { key: "post", label: "Post-Inspection", icon: ClipboardList },
   ];
 
   if (loading) {
@@ -2511,76 +2562,48 @@ export default function WarRoomPage() {
 
       {/* Role Picker Modal */}
       {showRolePicker && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-card border rounded-2xl shadow-2xl w-full max-w-md mx-4">
-            <div className="px-6 pt-6 pb-2">
-              <h2 className="text-lg font-semibold">What's your role today?</h2>
-              <p className="text-sm text-muted-foreground mt-1">This personalises your war-room view.</p>
-            </div>
-            <div className="px-6 py-4 grid grid-cols-2 gap-2">
-              {[
-                { key: "host", label: "Inspection Host", desc: "Leads front room, final calls", icon: "🎙️" },
-                { key: "scribe", label: "Scribe", desc: "Logs requests and notes", icon: "✍️" },
-                { key: "front_runner", label: "Front Runner", desc: "Carries docs to prep room", icon: "🏃" },
-                { key: "prep_lead", label: "Prep Room Lead", desc: "Manages prep room workflow", icon: "📋" },
-                { key: "qa_reviewer", label: "QA Reviewer", desc: "Reviews documents before release", icon: "🔍" },
-                { key: "sme", label: "SME / Expert", desc: "Subject matter expert on standby", icon: "🧪" },
-                { key: "observer", label: "Observer", desc: "Read-only war room access", icon: "👁️" },
-              ].map(r => (
-                <button
-                  key={r.key}
-                  onClick={() => {
-                    setMyRole(r.key);
-                    if (typeof window !== "undefined") sessionStorage.setItem(`clyira_role_${id}`, r.key);
-                    // Apply role-based default view preset
-                    const defaultPreset = getDefaultPresetForRole(r.key);
-                    setActivePresetId(defaultPreset);
-                    const preset = SYSTEM_VIEW_PRESETS.find(p => p.id === defaultPreset);
-                    if (preset) setGroupBy(preset.group_by);
-                    // Open scribe panel automatically for scribe role
-                    if (r.key === "scribe") setScribePanelOpen(true);
-                    setShowRolePicker(false);
-                  }}
-                  className={`flex items-start gap-2.5 px-3 py-3 rounded-xl border text-left transition-all hover:border-primary hover:bg-primary/5 ${myRole === r.key ? "border-primary bg-primary/5" : ""}`}
-                >
-                  <span className="text-lg">{r.icon}</span>
-                  <div>
-                    <p className="text-xs font-semibold">{r.label}</p>
-                    <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{r.desc}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-            <div className="px-6 pb-6 flex justify-between items-center">
-              <button onClick={() => setShowRolePicker(false)} className="text-xs text-muted-foreground hover:underline">
-                Skip for now
-              </button>
-              {myRole && (
-                <button
-                  onClick={() => setShowRolePicker(false)}
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
-                  Continue as {myRole.replace(/_/g, " ")}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        <RolePickerModal
+          currentRoles={myRoles}
+          inspectionId={id}
+          onConfirm={roles => {
+            setMyRoles(roles);
+            if (typeof window !== "undefined")
+              sessionStorage.setItem(`clyira_roles_${id}`, JSON.stringify(roles));
+            if (roles.length > 0) {
+              const primaryRole = roles.find(r => r !== "observer") ?? roles[0];
+              const defaultPreset = getDefaultPresetForRole(primaryRole);
+              setActivePresetId(defaultPreset);
+              const preset = SYSTEM_VIEW_PRESETS.find(p => p.id === defaultPreset);
+              if (preset) setGroupBy(preset.group_by);
+              if (roles.includes("scribe")) setScribePanelOpen(true);
+            }
+            setShowRolePicker(false);
+          }}
+          onClose={() => setShowRolePicker(false)}
+          onRoleRequest={text => {
+            setChatInput(`[Role request] ${text}`);
+            setTab("chat");
+          }}
+        />
       )}
 
-      {/* Role badge (click to change) */}
-      {myRole && inspection.status === "active" && (
+      {/* Role badge (click to change/add) */}
+      {myRoles.length > 0 && inspection.status === "active" && (
         <button
           onClick={() => setShowRolePicker(true)}
-          className="fixed bottom-4 left-4 z-40 flex items-center gap-1.5 px-3 py-2 bg-card border rounded-xl shadow-lg text-xs font-semibold hover:bg-accent"
-          title="Change your role"
+          className="fixed bottom-4 left-4 z-40 flex items-center gap-1.5 px-3 py-2 bg-card border rounded-xl shadow-lg text-xs font-semibold hover:bg-accent max-w-[180px]"
+          title="Change roles"
         >
-          <User className="w-3 h-3 text-primary" />
-          {myRole.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+          <User className="w-3 h-3 text-primary flex-shrink-0" />
+          <span className="truncate">
+            {myRoles.slice(0, 2).map(r => r.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())).join(" · ")}
+            {myRoles.length > 2 && ` +${myRoles.length - 2}`}
+          </span>
         </button>
       )}
 
-      {/* Scribe Capture Panel — floating, only for scribe role */}
-      {myRole === "scribe" && inspection.status === "active" && (
+      {/* Scribe Capture Panel — floating, only when scribe role is active */}
+      {myRoles.includes("scribe") && inspection.status === "active" && (
         <ScribeCapturePanel
           open={scribePanelOpen}
           onToggle={() => setScribePanelOpen(f => !f)}
@@ -2687,8 +2710,10 @@ export default function WarRoomPage() {
           <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
             <h1 className="text-sm font-semibold tracking-tight truncate">{inspection.title}</h1>
             <InspStatusBadge status={inspection.status} />
-            {inspection.start_date && (() => {
-              const day = Math.max(1, Math.ceil((Date.now() - new Date(inspection.start_date).getTime()) / 86400000));
+            {(() => {
+              const day = inspection.start_date
+                ? Math.max(1, Math.ceil((Date.now() - new Date(inspection.start_date).getTime()) / 86400000))
+                : 1;
               return (
                 <span className="flex-shrink-0 flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded-full">
                   <Calendar className="w-2.5 h-2.5" />Day {day}
@@ -2914,7 +2939,7 @@ export default function WarRoomPage() {
       {tab === "requests" && (
         <div className="space-y-3">
           {/* Executive overlay */}
-          {(myRole === "site_head" || myRole === "executive") ? (
+          {!isExecViewHidden && (myRoles.includes("site_head") || myRoles.includes("executive")) ? (
             <ExecutiveSummaryOverlay
               openCount={openRows.length}
               overdueCount={overdueCount}
@@ -2922,7 +2947,7 @@ export default function WarRoomPage() {
               resolvedCount={resolvedRows.length}
               totalCount={allRequests.length}
               topFindings={potentialFindings.filter(f => f.status === "tracking")}
-              onExitExecView={() => { setMyRole(null); setShowRolePicker(false); }}
+              onExitExecView={() => setIsExecViewHidden(true)}
             />
           ) : (
             <>
@@ -3012,6 +3037,35 @@ export default function WarRoomPage() {
                     </button>
                   )}
                 </div>
+                {/* Column customizer */}
+                <div className="relative flex-shrink-0">
+                  <button
+                    onClick={() => setShowColumnCustomizer(v => !v)}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all flex items-center gap-1 ${
+                      showColumnCustomizer ? "bg-primary/10 text-primary border-primary/40" : "border-border text-muted-foreground hover:border-primary/40"
+                    }`}
+                  >
+                    <Eye className="w-3 h-3" /> Cols
+                  </button>
+                  {showColumnCustomizer && (
+                    <div className="absolute right-0 top-full mt-1 z-20 bg-card border rounded-xl shadow-lg p-3 w-44">
+                      <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide mb-2">Show columns</p>
+                      {ALL_COLUMNS.map(col => (
+                        <label key={col.key} className="flex items-center gap-2 py-1 cursor-pointer hover:text-foreground text-xs">
+                          <input
+                            type="checkbox"
+                            checked={activeColumns.includes(col.key)}
+                            onChange={e => setActiveColumns(prev =>
+                              e.target.checked ? [...prev, col.key] : prev.filter(k => k !== col.key)
+                            )}
+                            className="rounded accent-primary"
+                          />
+                          {col.label}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 {canLogRequest && (
                   <button onClick={() => setShowAddRequest(true)}
                     className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 flex-shrink-0">
@@ -3086,7 +3140,7 @@ export default function WarRoomPage() {
                             {!isCollapsed && (
                               <div className="divide-y">
                                 {trackOpenRows.map(row => (
-                                  <RequestTableRow key={row.id} req={row.raw} onClick={() => setSelectedRequest(row.raw)} />
+                                  <RequestTableRow key={row.id} row={row} onClick={() => setSelectedRequest(row.raw)} />
                                 ))}
                               </div>
                             )}
@@ -3100,7 +3154,7 @@ export default function WarRoomPage() {
                       {openRows.length > 0 && (
                         <div className="divide-y">
                           {openRows.map(row => (
-                            <RequestTableRow key={row.id} req={row.raw} onClick={() => setSelectedRequest(row.raw)} />
+                            <RequestTableRow key={row.id} row={row} onClick={() => setSelectedRequest(row.raw)} />
                           ))}
                         </div>
                       )}
@@ -3115,7 +3169,7 @@ export default function WarRoomPage() {
                           </div>
                           <div className="divide-y">
                             {resolvedRows.map(row => (
-                              <RequestTableRow key={row.id} req={row.raw} onClick={() => setSelectedRequest(row.raw)} />
+                              <RequestTableRow key={row.id} row={row} onClick={() => setSelectedRequest(row.raw)} />
                             ))}
                           </div>
                         </>
@@ -3125,18 +3179,13 @@ export default function WarRoomPage() {
                 </div>
               )}
 
-              {/* Secondary action links */}
-              <div className="flex items-center gap-4 pt-1 text-xs text-muted-foreground">
-                <button onClick={() => setTab("eod" as any)} className="hover:text-foreground hover:underline flex items-center gap-1">
-                  <Calendar className="w-3 h-3" /> End of Day →
-                </button>
-                <button onClick={() => setTab("prep" as any)} className="hover:text-foreground hover:underline flex items-center gap-1">
-                  <FileText className="w-3 h-3" /> Pre-Inspection Setup ↗
-                </button>
-                <button onClick={() => setTab("post" as any)} className="hover:text-foreground hover:underline flex items-center gap-1">
-                  <ClipboardList className="w-3 h-3" /> Post-Inspection ↗
-                </button>
-              </div>
+            {/* Quick Scribe Note + Recent Activity */}
+            <QuickNoteStrip log={log} onSubmit={async (text) => {
+              await inspectionsApi.addScribeEntry(id, { entry_type: "scribe_note", content: text, tags: [] });
+              const logRes = await inspectionsApi.getLog(id);
+              setLog(logRes.data.entries ?? []);
+            }} />
+
             </>
           )}
         </div>
