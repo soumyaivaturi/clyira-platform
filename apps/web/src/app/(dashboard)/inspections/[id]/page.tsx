@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -289,6 +289,175 @@ interface ChatMessage {
   linked_commitment_id: string | null;
   converted_to_request_id: string | null;
   created_at: string;
+}
+
+// ── View-model types ──────────────────────────────────────────────────────────
+type InspectorActivityStatus =
+  | "inspector_arrived" | "inspector_on_break" | "lunch_break"
+  | "quiet_time" | "end_of_day_debrief" | "inspectors_left";
+
+interface InvestigatorTrack {
+  investigator_name: string;
+  color_index: number;
+  location: string | null;
+  topics: string[];
+  open_count: number;
+  overdue_count: number;
+  qa_pending_count: number;
+  activity_status: InspectorActivityStatus | null;
+}
+
+type SMERoomSlot = "in_room" | "next_up" | "standby" | "do_not_call" | "off_site";
+
+interface SMERoomStatus {
+  id: string;
+  name: string;
+  title: string | null;
+  topics: string[];
+  room_slot: SMERoomSlot;
+  not_prepared: boolean;
+  availability: string;
+}
+
+type EvidenceStatus = "none" | "incomplete" | "pending_qa" | "approved" | "delivered";
+type QAStatus = "none" | "pending" | "approved" | "rejected";
+type DeliveryStatus = "none" | "delivered";
+
+interface RequestRow {
+  id: string;
+  req_number: string;
+  investigator_name: string | null;
+  investigator_initial: string;
+  color_index: number;
+  topic: string;
+  request_text: string;
+  owner: string | null;
+  age_minutes: number;
+  sla_remaining_minutes: number | null;
+  is_overdue: boolean;
+  criticality: string;
+  stage: string;
+  evidence_status: EvidenceStatus;
+  qa_status: QAStatus;
+  delivery_status: DeliveryStatus;
+  raw: InspRequest;
+}
+
+interface ColumnDef {
+  key: string;
+  label: string;
+  width: number;
+  defaultVisible: boolean;
+  sortable: boolean;
+}
+
+interface TableViewPreset {
+  id: string;
+  name: string;
+  is_system: boolean;
+  filters: {
+    criticality?: string[];
+    investigator?: string[];
+    overdue_only?: boolean;
+    qa_pending_only?: boolean;
+  };
+  visible_columns: string[];
+  group_by: "investigator" | "none";
+  sort_by: string;
+  sort_dir: "asc" | "desc";
+}
+
+// ── War room constants ────────────────────────────────────────────────────────
+const INVESTIGATOR_COLORS = [
+  "bg-violet-100 text-violet-800",
+  "bg-blue-100 text-blue-800",
+  "bg-emerald-100 text-emerald-800",
+  "bg-orange-100 text-orange-800",
+];
+
+const ALL_COLUMNS: ColumnDef[] = [
+  { key: "req_number", label: "REQ #", width: 64, defaultVisible: true, sortable: true },
+  { key: "investigator", label: "Inv.", width: 36, defaultVisible: true, sortable: true },
+  { key: "topic", label: "Topic", width: 96, defaultVisible: true, sortable: true },
+  { key: "request_text", label: "Request", width: 0, defaultVisible: true, sortable: false },
+  { key: "owner", label: "Owner", width: 80, defaultVisible: true, sortable: true },
+  { key: "age", label: "Age", width: 56, defaultVisible: true, sortable: true },
+  { key: "stage", label: "Stage", width: 80, defaultVisible: true, sortable: true },
+  { key: "criticality", label: "Crit.", width: 52, defaultVisible: false, sortable: true },
+];
+
+const SYSTEM_VIEW_PRESETS: TableViewPreset[] = [
+  {
+    id: "all",
+    name: "All Requests",
+    is_system: true,
+    filters: {},
+    visible_columns: ["req_number", "investigator", "request_text", "owner", "age", "stage"],
+    group_by: "none",
+    sort_by: "age",
+    sort_dir: "desc",
+  },
+  {
+    id: "overdue",
+    name: "Overdue",
+    is_system: true,
+    filters: { overdue_only: true },
+    visible_columns: ["req_number", "investigator", "request_text", "owner", "age", "stage"],
+    group_by: "none",
+    sort_by: "age",
+    sort_dir: "desc",
+  },
+  {
+    id: "qa_review",
+    name: "QA Pending",
+    is_system: true,
+    filters: { qa_pending_only: true },
+    visible_columns: ["req_number", "investigator", "request_text", "owner", "stage"],
+    group_by: "none",
+    sort_by: "age",
+    sort_dir: "desc",
+  },
+  {
+    id: "by_investigator",
+    name: "By Investigator",
+    is_system: true,
+    filters: {},
+    visible_columns: ["req_number", "request_text", "owner", "age", "stage"],
+    group_by: "investigator",
+    sort_by: "age",
+    sort_dir: "desc",
+  },
+];
+
+function getDefaultPresetForRole(role: string | null): string {
+  if (!role) return "all";
+  const map: Record<string, string> = {
+    host: "all",
+    prep_lead: "all",
+    qa_reviewer: "qa_review",
+    scribe: "all",
+    front_runner: "all",
+    runner: "all",
+    sme: "all",
+    observer: "all",
+  };
+  return map[role] ?? "all";
+}
+
+function availabilityToSlot(availability: string): SMERoomSlot {
+  if (availability === "in_room") return "in_room";
+  if (availability === "next_up" || availability === "available") return "next_up";
+  if (availability === "standby") return "standby";
+  if (availability === "do_not_call") return "do_not_call";
+  if (availability === "off_site" || availability === "unavailable") return "off_site";
+  return "standby";
+}
+
+function formatAge(minutes: number): string {
+  if (minutes < 60) return `${minutes}m`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -791,8 +960,9 @@ function RequestDetailModal({
   const reqNum = req.request_number ? `REQ-${String(req.request_number).padStart(3, "0")}` : "REQ";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="bg-card border rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-2xl mx-0 sm:mx-4 max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex">
+      <div className="flex-1 bg-black/25 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="bg-card border-l shadow-2xl w-full max-w-[500px] h-full flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-start justify-between px-5 py-4 border-b flex-shrink-0">
           <div className="flex-1 min-w-0 pr-3">
@@ -1224,6 +1394,371 @@ function RequestCard({
   );
 }
 
+// ── Request Table Row ─────────────────────────────────────────────────────────
+function RequestTableRow({ req, onClick }: { req: InspRequest; onClick: () => void }) {
+  const statusCfg = REQUEST_STATUS_STYLES[req.status] ?? REQUEST_STATUS_STYLES.open;
+  const StatusIcon = statusCfg.icon;
+  const reqNum = req.request_number ? `REQ-${String(req.request_number).padStart(3, "0")}` : "REQ";
+  const DONE_STATUSES_ROW = ["fulfilled", "declined", "withdrawn", "closed", "released"];
+  const isDone = DONE_STATUSES_ROW.includes(req.status);
+  const critBadge: Record<string, string> = {
+    critical: "bg-red-100 text-red-800 border-red-200",
+    high: "bg-orange-100 text-orange-800 border-orange-200",
+    medium: "bg-amber-100 text-amber-800 border-amber-200",
+    low: "bg-blue-100 text-blue-800 border-blue-200",
+  };
+  const leftBorder: Record<string, string> = {
+    critical: "border-l-red-500",
+    high: "border-l-orange-400",
+    medium: "border-l-amber-400",
+    low: "border-l-blue-400",
+  };
+  return (
+    <div
+      onClick={onClick}
+      className={`group flex items-center gap-2.5 px-3 py-2.5 border-l-[3px] rounded-r-lg cursor-pointer hover:bg-muted/40 transition-colors ${leftBorder[req.criticality] ?? "border-l-border"} ${isDone ? "opacity-55" : ""}`}
+    >
+      <span className="text-[10px] font-mono font-bold text-muted-foreground w-[3.5rem] flex-shrink-0 truncate">{reqNum}</span>
+      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase flex-shrink-0 w-[4rem] text-center ${critBadge[req.criticality] ?? critBadge.medium}`}>
+        {req.criticality === "critical" ? "CRIT" : req.criticality.slice(0, 3).toUpperCase()}
+      </span>
+      <span className="flex-1 text-sm font-medium truncate min-w-0 group-hover:text-primary transition-colors">{req.request_text}</span>
+      {req.inspector_name && (
+        <span className="text-xs text-muted-foreground truncate hidden sm:block w-[6.5rem] flex-shrink-0">{req.inspector_name}</span>
+      )}
+      <span className={`flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded border flex-shrink-0 ${statusCfg.className}`}>
+        <StatusIcon className="w-2.5 h-2.5" />{statusCfg.label}
+      </span>
+      <span className="flex-shrink-0 w-[5rem] flex justify-end">
+        <SlaCountdown dueAt={req.due_at} slaMinutes={req.sla_minutes} />
+      </span>
+      {req.ai_talking_points?.length ? (
+        <Zap className="w-3 h-3 text-primary flex-shrink-0" aria-label="AI talking points ready" />
+      ) : (
+        <span className="w-3 h-3 flex-shrink-0" />
+      )}
+    </div>
+  );
+}
+
+// ── Investigator Tracks Row (Step 5) ─────────────────────────────────────────
+function TracksRow({
+  tracks,
+  activeInvestigator,
+  onFilter,
+}: {
+  tracks: InvestigatorTrack[];
+  activeInvestigator: string;
+  onFilter: (name: string) => void;
+}) {
+  if (tracks.length === 0) return null;
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+      <button
+        onClick={() => onFilter("all")}
+        className={`flex-shrink-0 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all ${
+          activeInvestigator === "all" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+        }`}
+      >
+        All
+      </button>
+      {tracks.map(track => {
+        const colorClass = INVESTIGATOR_COLORS[track.color_index % INVESTIGATOR_COLORS.length];
+        const isActive = activeInvestigator === track.investigator_name;
+        return (
+          <button
+            key={track.investigator_name}
+            onClick={() => onFilter(isActive ? "all" : track.investigator_name)}
+            className={`flex-shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+              isActive ? "border-primary ring-1 ring-primary bg-primary/5" : "border-border hover:border-primary/40 hover:bg-accent"
+            }`}
+          >
+            <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${colorClass}`}>
+              {track.investigator_name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
+            </span>
+            <span className="truncate max-w-[80px]">{track.investigator_name}</span>
+            {track.open_count > 0 && (
+              <span className="flex items-center gap-0.5 ml-0.5">
+                <span className="text-[10px] font-bold text-muted-foreground">{track.open_count}</span>
+                {track.overdue_count > 0 && (
+                  <span className="text-[10px] font-bold text-red-600">·{track.overdue_count}!</span>
+                )}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── SME Room Board (Step 6) ───────────────────────────────────────────────────
+function SMERoomBoard({ statuses }: { statuses: SMERoomStatus[] }) {
+  const inRoom = statuses.filter(s => s.room_slot === "in_room");
+  const nextUp = statuses.filter(s => s.room_slot === "next_up");
+  const standby = statuses.filter(s => s.room_slot === "standby");
+  const dncOrOff = statuses.filter(s => s.room_slot === "do_not_call" || s.room_slot === "off_site");
+
+  if (statuses.length === 0) return null;
+
+  const SlotChip = ({ s, variant }: { s: SMERoomStatus; variant: "in_room" | "next_up" | "standby" | "dnc" }) => (
+    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs border ${
+      variant === "in_room" ? "bg-emerald-50 border-emerald-200" :
+      variant === "next_up" ? "bg-blue-50 border-blue-200" :
+      variant === "standby" ? "bg-gray-50 border-gray-200" :
+      "bg-red-50 border-red-200 opacity-60"
+    }`}>
+      {variant === "in_room" && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />}
+      <span className={`font-semibold truncate max-w-[90px] ${
+        variant === "in_room" ? "text-emerald-800" :
+        variant === "next_up" ? "text-blue-800" :
+        variant === "dnc" ? "text-red-700" :
+        "text-gray-700"
+      }`}>{s.name}</span>
+      {s.not_prepared && <span className="text-[9px] font-bold text-red-600 uppercase bg-red-100 px-1 rounded">!</span>}
+      {s.title && <span className="text-[10px] text-muted-foreground truncate hidden sm:block">{s.title}</span>}
+    </div>
+  );
+
+  return (
+    <div className="bg-card border rounded-xl px-4 py-3">
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
+        <Users className="w-3 h-3 text-primary" />
+        SME Room Board
+      </p>
+      <div className="flex flex-wrap gap-3 items-start">
+        {/* In Room */}
+        <div className="flex flex-col gap-1 min-w-[80px]">
+          <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-wide">In Room</span>
+          {inRoom.length === 0 ? (
+            <span className="text-[10px] text-muted-foreground italic">—</span>
+          ) : (
+            inRoom.map(s => <SlotChip key={s.id} s={s} variant="in_room" />)
+          )}
+        </div>
+        <div className="w-px bg-border self-stretch" />
+        {/* Next Up */}
+        <div className="flex flex-col gap-1 min-w-[80px]">
+          <span className="text-[9px] font-bold text-blue-700 uppercase tracking-wide">Next Up</span>
+          {nextUp.length === 0 ? (
+            <span className="text-[10px] text-muted-foreground italic">—</span>
+          ) : (
+            nextUp.map(s => <SlotChip key={s.id} s={s} variant="next_up" />)
+          )}
+        </div>
+        <div className="w-px bg-border self-stretch" />
+        {/* Standby */}
+        <div className="flex flex-col gap-1 flex-1">
+          <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wide">Standby</span>
+          <div className="flex flex-wrap gap-1">
+            {standby.length === 0 ? (
+              <span className="text-[10px] text-muted-foreground italic">—</span>
+            ) : (
+              standby.map(s => <SlotChip key={s.id} s={s} variant="standby" />)
+            )}
+          </div>
+        </div>
+        {dncOrOff.length > 0 && (
+          <>
+            <div className="w-px bg-border self-stretch" />
+            <div className="flex flex-col gap-1">
+              <span className="text-[9px] font-bold text-red-700 uppercase tracking-wide">DNC / Off-site</span>
+              <div className="flex flex-wrap gap-1">
+                {dncOrOff.map(s => <SlotChip key={s.id} s={s} variant="dnc" />)}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Scribe Capture Panel (Step 13) ────────────────────────────────────────────
+function ScribeCapturePanel({
+  open,
+  onToggle,
+  inspectors,
+  onSubmit,
+  lastEntries,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  inspectors: string[];
+  onSubmit: (type: string, text: string, inspector: string) => Promise<void>;
+  lastEntries: LogEntry[];
+}) {
+  const [entryType, setEntryType] = useState("scribe_note");
+  const [text, setText] = useState("");
+  const [inspector, setInspector] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!text.trim()) return;
+    setSaving(true);
+    try { await onSubmit(entryType, text, inspector); setText(""); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2">
+      {open && (
+        <div className="bg-card border rounded-2xl shadow-2xl w-80 overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b bg-primary text-primary-foreground">
+            <span className="text-xs font-bold flex items-center gap-1.5"><Mic className="w-3 h-3" /> Scribe Capture</span>
+            <button onClick={onToggle}><X className="w-3.5 h-3.5" /></button>
+          </div>
+          <div className="p-3 space-y-2">
+            <div className="flex gap-2">
+              <select
+                value={entryType}
+                onChange={e => setEntryType(e.target.value)}
+                className="flex-1 text-xs border rounded-lg px-2 py-1.5 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+              >
+                {ENTRY_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+              <select
+                value={inspector}
+                onChange={e => setInspector(e.target.value)}
+                className="flex-1 text-xs border rounded-lg px-2 py-1.5 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+              >
+                <option value="">Inspector?</option>
+                {inspectors.map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+            <textarea
+              rows={3}
+              value={text}
+              onChange={e => setText(e.target.value)}
+              placeholder="Capture what's happening now…"
+              className="w-full text-xs border rounded-lg px-2.5 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+              onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit(); }}
+            />
+            <button
+              onClick={submit}
+              disabled={saving || !text.trim()}
+              className="w-full flex items-center justify-center gap-1.5 py-2 bg-primary text-primary-foreground text-xs font-semibold rounded-lg hover:bg-primary/90 disabled:opacity-50"
+            >
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+              {saving ? "Saving…" : "Log Entry (⌘↵)"}
+            </button>
+            {lastEntries.length > 0 && (
+              <div className="border-t pt-2 space-y-1.5">
+                <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-wide">Recent</p>
+                {lastEntries.slice(0, 3).map(e => (
+                  <div key={e.id} className="flex items-start gap-1.5">
+                    <span className={`text-[9px] font-bold px-1 py-0.5 rounded flex-shrink-0 ${LOG_TYPE_CONFIG[e.entry_type]?.color ?? "text-muted-foreground bg-muted"}`}>
+                      {LOG_TYPE_CONFIG[e.entry_type]?.label ?? e.entry_type}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground line-clamp-2">{e.content}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      <button
+        onClick={onToggle}
+        title="Scribe Capture Panel"
+        className="w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-xl flex items-center justify-center hover:bg-primary/90 transition-all"
+      >
+        <Mic className="w-5 h-5" />
+      </button>
+    </div>
+  );
+}
+
+// ── Executive Summary Overlay (Step 14) ───────────────────────────────────────
+function ExecutiveSummaryOverlay({
+  openCount,
+  overdueCount,
+  qaPendingCount,
+  resolvedCount,
+  totalCount,
+  topFindings,
+  onExitExecView,
+}: {
+  openCount: number;
+  overdueCount: number;
+  qaPendingCount: number;
+  resolvedCount: number;
+  totalCount: number;
+  topFindings: PotentialFinding[];
+  onExitExecView: () => void;
+}) {
+  const completionPct = totalCount ? Math.round((resolvedCount / totalCount) * 100) : 0;
+  const riskLevel = overdueCount > 5 ? "Critical" : overdueCount > 2 ? "High" : openCount > 10 ? "Medium" : "Low";
+  const riskColor = riskLevel === "Critical" ? "text-red-600" : riskLevel === "High" ? "text-orange-600" : riskLevel === "Medium" ? "text-amber-600" : "text-emerald-600";
+
+  return (
+    <div className="space-y-4">
+      {/* Executive KPIs */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {[
+          { label: "Open Requests", value: openCount, color: openCount > 10 ? "text-amber-600" : "" },
+          { label: "Overdue", value: overdueCount, color: overdueCount > 0 ? "text-red-600" : "text-emerald-600" },
+          { label: "QA Pending", value: qaPendingCount, color: qaPendingCount > 0 ? "text-purple-600" : "" },
+          { label: "Completion", value: `${completionPct}%`, color: completionPct === 100 ? "text-emerald-600" : "text-primary" },
+        ].map(kpi => (
+          <div key={kpi.label} className="bg-card border rounded-xl px-4 py-4 text-center">
+            <p className={`text-3xl font-bold tabular-nums ${kpi.color}`}>{kpi.value}</p>
+            <p className="text-xs text-muted-foreground font-medium mt-1">{kpi.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Risk Signal */}
+      <div className="bg-card border rounded-xl px-5 py-4 flex items-center gap-4">
+        <div>
+          <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">Overall Risk Signal</p>
+          <p className={`text-2xl font-bold mt-0.5 ${riskColor}`}>{riskLevel}</p>
+        </div>
+        <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${
+              riskLevel === "Critical" ? "bg-red-500" :
+              riskLevel === "High" ? "bg-orange-500" :
+              riskLevel === "Medium" ? "bg-amber-500" : "bg-emerald-500"
+            }`}
+            style={{ width: `${completionPct}%` }}
+          />
+        </div>
+        <span className="text-sm font-semibold text-muted-foreground">{completionPct}% done</span>
+      </div>
+
+      {/* Top risks from findings */}
+      {topFindings.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
+          <p className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
+            <TriangleAlert className="w-3.5 h-3.5" />
+            Top Potential Findings ({topFindings.length})
+          </p>
+          {topFindings.slice(0, 3).map(f => (
+            <div key={f.id} className="flex items-start gap-2 text-xs text-amber-900">
+              <Flag className="w-3 h-3 text-amber-600 flex-shrink-0 mt-0.5" />
+              <span>{f.title}</span>
+              {f.confidence === "high" && (
+                <span className="text-[9px] font-bold uppercase px-1 py-0.5 bg-amber-200 text-amber-900 rounded flex-shrink-0">High</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="text-center">
+        <button
+          onClick={onExitExecView}
+          className="text-xs text-primary hover:underline flex items-center gap-1.5 mx-auto"
+        >
+          <ArrowRight className="w-3.5 h-3.5" />
+          View full war room
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function WarRoomPage() {
   const { id } = useParams<{ id: string }>();
@@ -1300,7 +1835,7 @@ export default function WarRoomPage() {
   // CAPA state
   const [capas, setCAPAs] = useState<CAPA[]>([]);
   const [showAddCAPA, setShowAddCAPA] = useState(false);
-  const [newCAPA, setNewCAPA] = useState({ title: "", description: "", action_type: "capa", owner_name: "", department: "", due_date: "", criticality: "medium" });
+  const [newCAPA, setNewCAPA] = useState({ title: "", description: "", action_type: "capa", owner_name: "", department: "", due_date: "", criticality: "medium", linked_observation_id: "" });
   const [savingCAPA, setSavingCAPA] = useState(false);
 
   // Metrics
@@ -1343,6 +1878,8 @@ export default function WarRoomPage() {
   // Alerts
   const [alerts, setAlerts] = useState<InspectionAlert[]>([]);
   const [showAlerts, setShowAlerts] = useState(false);
+  const [showCloseModal, setShowCloseModal] = useState(false);
+  const [deletingFinding, setDeletingFinding] = useState<string | null>(null);
   const [reqFilterCrit, setReqFilterCrit] = useState("all");
   const [reqFilterInspector, setReqFilterInspector] = useState("all");
   const [reqSort, setReqSort] = useState("newest");
@@ -1363,6 +1900,21 @@ export default function WarRoomPage() {
   const logEndRef = useRef<HTMLDivElement>(null);
   // Stable ref so the WS callback can call the latest loadAll without a circular dep
   const loadAllRef = useRef<() => void>(() => {});
+
+  // ── View state (Step 2) ─────────────────────────────────────────────────────
+  const [activePresetId, setActivePresetId] = useState<string>(() => getDefaultPresetForRole(null));
+  const [groupBy, setGroupBy] = useState<"investigator" | "none">("none");
+  const [activeColumns, setActiveColumns] = useState<string[]>(
+    ALL_COLUMNS.filter(c => c.defaultVisible).map(c => c.key)
+  );
+  const [filterInvestigator, setFilterInvestigator] = useState<string>("all");
+  const [filterOverdueOnly, setFilterOverdueOnly] = useState(false);
+  const [filterQAPendingOnly, setFilterQAPendingOnly] = useState(false);
+  const [sortColumn, setSortColumn] = useState("age");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [showColumnCustomizer, setShowColumnCustomizer] = useState(false);
+  const [scribePanelOpen, setScribePanelOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -1466,6 +2018,18 @@ export default function WarRoomPage() {
   useEffect(() => { loadAll(); }, [loadAll]);
   useEffect(() => { loadTabData(tab); }, [tab, loadTabData]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
+
+  // Load alerts on mount and poll every 60s during active inspections
+  useEffect(() => {
+    const fetchAlerts = () => {
+      inspectionsApi.getAlerts(id).then(r => setAlerts(r.data.alerts ?? [])).catch(() => {});
+    };
+    fetchAlerts();
+    if (inspection?.status === "active") {
+      const t = setInterval(fetchAlerts, 60000);
+      return () => clearInterval(t);
+    }
+  }, [id, inspection?.status]);
 
   // Show role picker for active inspections when no role is set
   useEffect(() => {
@@ -1640,7 +2204,7 @@ export default function WarRoomPage() {
     try {
       const res = await inspectionsApi.createCAPA(id, newCAPA);
       setCAPAs(prev => [res.data, ...prev]);
-      setNewCAPA({ title: "", description: "", action_type: "capa", owner_name: "", department: "", due_date: "", criticality: "medium" });
+      setNewCAPA({ title: "", description: "", action_type: "capa", owner_name: "", department: "", due_date: "", criticality: "medium", linked_observation_id: "" });
       setShowAddCAPA(false);
     } finally { setSavingCAPA(false); }
   };
@@ -1696,7 +2260,8 @@ export default function WarRoomPage() {
   };
 
   const handleDeleteFinding = async (fid: string) => {
-    if (!confirm("Remove this potential finding?")) return;
+    if (deletingFinding !== fid) { setDeletingFinding(fid); return; }
+    setDeletingFinding(null);
     await inspectionsApi.deletePotentialFinding(id, fid);
     setPotentialFindings(prev => prev.filter(f => f.id !== fid));
   };
@@ -1716,8 +2281,10 @@ export default function WarRoomPage() {
     finally { setActivating(false); }
   };
 
-  const handleClose = async () => {
-    if (!confirm("Close this inspection? This action cannot be undone.")) return;
+  const handleClose = () => { setShowCloseModal(true); };
+
+  const executeClose = async () => {
+    setShowCloseModal(false);
     setClosing(true);
     try { await inspectionsApi.close(id); await loadAll(); }
     finally { setClosing(false); }
@@ -1820,36 +2387,144 @@ export default function WarRoomPage() {
 
   const DONE_STATUSES = ["fulfilled", "declined", "withdrawn", "closed", "released"];
 
-  const applyReqFiltersSort = (reqs: InspRequest[]) => {
-    let r = [...reqs];
-    if (reqFilterCrit !== "all") r = r.filter(x => x.criticality === reqFilterCrit);
-    if (reqFilterInspector !== "all") r = r.filter(x => x.inspector_name === reqFilterInspector);
-    const CRIT_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
-    if (reqSort === "oldest") r.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-    else if (reqSort === "criticality") r.sort((a, b) => (CRIT_ORDER[a.criticality] ?? 4) - (CRIT_ORDER[b.criticality] ?? 4));
-    else if (reqSort === "sla") r.sort((a, b) => {
-      if (!a.due_at) return 1; if (!b.due_at) return -1;
-      return new Date(a.due_at).getTime() - new Date(b.due_at).getTime();
-    });
-    else r.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    return r;
-  };
-
   const allRequests = inspection?.requests ?? [];
-  const openRequests = applyReqFiltersSort(allRequests.filter(r => !DONE_STATUSES.includes(r.status)));
-  const resolvedRequests = applyReqFiltersSort(allRequests.filter(r => DONE_STATUSES.includes(r.status)));
+
+  // ── useMemo derived data (Step 3) ───────────────────────────────────────────
+  const investigatorTracks = useMemo<InvestigatorTrack[]>(() => {
+    const reqs = inspection?.requests ?? [];
+    const map = new Map<string, InvestigatorTrack>();
+    const activityKeys = new Set(["inspector_arrived","inspector_on_break","lunch_break","quiet_time","end_of_day_debrief","inspectors_left"]);
+    const currentActivity = activityKeys.has(inspection?.current_phase ?? "") ? inspection?.current_phase as InspectorActivityStatus : null;
+
+    reqs.forEach(r => {
+      const name = r.inspector_name ?? "Unknown";
+      if (!map.has(name)) {
+        const idx = map.size % INVESTIGATOR_COLORS.length;
+        map.set(name, {
+          investigator_name: name,
+          color_index: idx,
+          location: r.location,
+          topics: [],
+          open_count: 0,
+          overdue_count: 0,
+          qa_pending_count: 0,
+          activity_status: currentActivity,
+        });
+      }
+      const track = map.get(name)!;
+      if (!DONE_STATUSES.includes(r.status)) {
+        track.open_count++;
+        if (r.due_at && new Date(r.due_at) < new Date()) track.overdue_count++;
+        if (r.status === "qa_review") track.qa_pending_count++;
+      }
+      if (r.category && !track.topics.includes(r.category)) track.topics.push(r.category);
+    });
+    return Array.from(map.values()).sort((a, b) => b.open_count - a.open_count);
+  }, [inspection?.requests, inspection?.current_phase]);
+
+  const smeRoomStatuses = useMemo<SMERoomStatus[]>(() => {
+    const result: SMERoomStatus[] = [
+      ...smes.map(s => ({
+        id: s.id,
+        name: s.name,
+        title: s.title,
+        topics: s.topics,
+        room_slot: availabilityToSlot(s.availability),
+        not_prepared: s.prep_status !== "ready" && s.prep_status !== "cleared",
+        availability: s.availability,
+      })),
+      ...teamMembers
+        .filter(m => m.role === "sme" || m.secondary_roles?.includes("sme"))
+        .map(m => ({
+          id: m.id,
+          name: m.name,
+          title: m.title,
+          topics: m.topics,
+          room_slot: availabilityToSlot(m.availability),
+          not_prepared: false,
+          availability: m.availability,
+        })),
+    ];
+    const order: SMERoomSlot[] = ["in_room", "next_up", "standby", "do_not_call", "off_site"];
+    return result.sort((a, b) => order.indexOf(a.room_slot) - order.indexOf(b.room_slot));
+  }, [smes, teamMembers]);
+
+  const requestRows = useMemo<RequestRow[]>(() => {
+    return (inspection?.requests ?? []).map((r, i) => {
+      const track = investigatorTracks.find(t => t.investigator_name === r.inspector_name);
+      const ageMinutes = Math.floor((Date.now() - new Date(r.created_at).getTime()) / 60000);
+      const slaRemaining = r.due_at ? Math.floor((new Date(r.due_at).getTime() - Date.now()) / 60000) : null;
+      const isQA = r.status === "qa_review";
+      const isDelivered = r.status === "released" || r.status === "fulfilled";
+      const evStatus: EvidenceStatus = isDelivered ? "delivered" : isQA ? "pending_qa" : r.status === "approved" ? "approved" : "none";
+      const qaStatus: QAStatus = isQA ? "pending" : r.status === "approved" || isDelivered ? "approved" : "none";
+      const deliveryStatus: DeliveryStatus = isDelivered ? "delivered" : "none";
+      const inspName = r.inspector_name;
+      const initial = inspName ? inspName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase() : "?";
+      return {
+        id: r.id,
+        req_number: r.request_number ? `REQ-${String(r.request_number).padStart(3, "0")}` : "REQ",
+        investigator_name: inspName,
+        investigator_initial: initial,
+        color_index: track?.color_index ?? (i % INVESTIGATOR_COLORS.length),
+        topic: r.category ?? "",
+        request_text: r.request_text,
+        owner: r.assigned_to_name,
+        age_minutes: ageMinutes,
+        sla_remaining_minutes: slaRemaining,
+        is_overdue: slaRemaining !== null && slaRemaining < 0,
+        criticality: r.criticality,
+        stage: r.status,
+        evidence_status: evStatus,
+        qa_status: qaStatus,
+        delivery_status: deliveryStatus,
+        raw: r,
+      };
+    });
+  }, [inspection?.requests, investigatorTracks]);
+
+  const overdueCount = useMemo(() => requestRows.filter(r => r.is_overdue && !DONE_STATUSES.includes(r.stage)).length, [requestRows]);
+  const qaPendingCount = useMemo(() => requestRows.filter(r => r.stage === "qa_review").length, [requestRows]);
+
+  const filteredRows = useMemo(() => {
+    let rows = requestRows;
+    if (filterInvestigator !== "all") rows = rows.filter(r => r.investigator_name === filterInvestigator);
+    if (filterOverdueOnly) rows = rows.filter(r => r.is_overdue);
+    if (filterQAPendingOnly) rows = rows.filter(r => r.stage === "qa_review");
+    // Apply active preset filter
+    const preset = SYSTEM_VIEW_PRESETS.find(p => p.id === activePresetId);
+    if (preset?.filters?.overdue_only) rows = rows.filter(r => r.is_overdue);
+    if (preset?.filters?.qa_pending_only) rows = rows.filter(r => r.stage === "qa_review");
+    if (preset?.filters?.investigator?.length) rows = rows.filter(r => preset.filters.investigator!.includes(r.investigator_name ?? ""));
+    // Sort
+    const CRIT_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+    rows = [...rows].sort((a, b) => {
+      let cmp = 0;
+      if (sortColumn === "age") cmp = a.age_minutes - b.age_minutes;
+      else if (sortColumn === "criticality") cmp = (CRIT_ORDER[a.criticality] ?? 4) - (CRIT_ORDER[b.criticality] ?? 4);
+      else if (sortColumn === "sla") cmp = (a.sla_remaining_minutes ?? 9999) - (b.sla_remaining_minutes ?? 9999);
+      else if (sortColumn === "stage") cmp = a.stage.localeCompare(b.stage);
+      else if (sortColumn === "investigator") cmp = (a.investigator_name ?? "").localeCompare(b.investigator_name ?? "");
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return rows;
+  }, [requestRows, filterInvestigator, filterOverdueOnly, filterQAPendingOnly, activePresetId, sortColumn, sortDir]);
+
+  const openRows = filteredRows.filter(r => !DONE_STATUSES.includes(r.stage));
+  const resolvedRows = filteredRows.filter(r => DONE_STATUSES.includes(r.stage));
+
+  // Legacy compat for code that still uses openRequests/resolvedRequests
+  const openRequests = allRequests.filter(r => !DONE_STATUSES.includes(r.status));
+  const resolvedRequests = allRequests.filter(r => DONE_STATUSES.includes(r.status));
   const uniqueInspectors = Array.from(new Set(allRequests.map(r => r.inspector_name).filter(Boolean))) as string[];
   const teamCount = teamMembers.length + smes.length + inspectors.length;
 
   const TABS = [
-    { key: "requests", label: `Requests${openRequests.length ? ` (${openRequests.length})` : ""}`, icon: MessageSquare },
+    { key: "requests", label: `Requests${openRows.length ? ` (${openRows.length})` : ""}`, icon: MessageSquare },
     { key: "findings", label: `Findings${potentialFindings.filter(f => f.status === "tracking").length ? ` (${potentialFindings.filter(f => f.status === "tracking").length})` : ""}`, icon: TriangleAlert },
     { key: "team", label: `Team${teamCount ? ` (${teamCount})` : ""}`, icon: Users },
     { key: "scribe", label: "Scribe", icon: Mic },
     { key: "chat", label: "Chat", icon: Hash },
-    { key: "eod", label: "End of Day", icon: Calendar },
-    { key: "prep", label: "Pre-Inspection Prep", icon: FileText },
-    { key: "post", label: "Post-Inspection", icon: ClipboardList },
   ];
 
   if (loading) {
@@ -1907,6 +2582,13 @@ export default function WarRoomPage() {
                   onClick={() => {
                     setMyRole(r.key);
                     if (typeof window !== "undefined") sessionStorage.setItem(`clyira_role_${id}`, r.key);
+                    // Apply role-based default view preset
+                    const defaultPreset = getDefaultPresetForRole(r.key);
+                    setActivePresetId(defaultPreset);
+                    const preset = SYSTEM_VIEW_PRESETS.find(p => p.id === defaultPreset);
+                    if (preset) setGroupBy(preset.group_by);
+                    // Open scribe panel automatically for scribe role
+                    if (r.key === "scribe") setScribePanelOpen(true);
                     setShowRolePicker(false);
                   }}
                   className={`flex items-start gap-2.5 px-3 py-3 rounded-xl border text-left transition-all hover:border-primary hover:bg-primary/5 ${myRole === r.key ? "border-primary bg-primary/5" : ""}`}
@@ -1947,6 +2629,28 @@ export default function WarRoomPage() {
         </button>
       )}
 
+      {/* Scribe Capture Panel — floating, only for scribe role */}
+      {myRole === "scribe" && inspection.status === "active" && (
+        <ScribeCapturePanel
+          open={scribePanelOpen}
+          onToggle={() => setScribePanelOpen(f => !f)}
+          inspectors={[
+            ...teamMembers.filter(m => m.room === "inspector").map(m => m.name),
+            ...inspectors.map(m => m.name),
+          ]}
+          onSubmit={async (type, text, _inspector) => {
+            await inspectionsApi.addScribeEntry(id, {
+              entry_type: type,
+              content: text,
+              tags: [],
+            });
+            const logRes = await inspectionsApi.getLog(id);
+            setLog(logRes.data.entries ?? []);
+          }}
+          lastEntries={log.slice(-3).reverse()}
+        />
+      )}
+
       {showAddRequest && (
         <AddRequestModal
           onClose={() => setShowAddRequest(false)}
@@ -1970,6 +2674,51 @@ export default function WarRoomPage() {
             .filter(m => m.room === "prep" || m.room === "front")
             .map(m => ({ name: m.name, role: m.role }))}
         />
+      )}
+
+      {/* Close Inspection Confirmation Modal */}
+      {showCloseModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-card border rounded-2xl shadow-2xl w-full max-w-md mx-4">
+            <div className="px-6 pt-6 pb-2 border-b">
+              <div className="flex items-center gap-3 mb-1">
+                <div className="w-9 h-9 rounded-xl bg-red-100 flex items-center justify-center flex-shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-red-600" />
+                </div>
+                <h2 className="text-base font-semibold">Close Inspection</h2>
+              </div>
+              <p className="text-sm text-muted-foreground mt-2 pb-4">
+                This will move the inspection to <strong>Post-Inspection</strong> status and start the 15-business-day FDA 483 response clock.
+                This action <strong>cannot be undone</strong>.
+              </p>
+            </div>
+            <div className="px-6 py-4 space-y-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pre-close checklist</p>
+              {[
+                "All open requests have been resolved or formally declined",
+                "483 observations are documented with root cause hypotheses",
+                "All team commitments are logged",
+                "Closing meeting notes have been captured in the scribe log",
+              ].map((item, i) => (
+                <div key={i} className="flex items-start gap-2.5 text-sm text-muted-foreground">
+                  <div className="w-4 h-4 rounded border border-border mt-0.5 flex-shrink-0" />
+                  {item}
+                </div>
+              ))}
+            </div>
+            <div className="px-6 pb-6 flex justify-end gap-2">
+              <button onClick={() => setShowCloseModal(false)}
+                className="px-4 py-2 text-sm border rounded-lg hover:bg-accent font-medium">
+                Cancel
+              </button>
+              <button onClick={executeClose}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700">
+                <Square className="w-3.5 h-3.5" />
+                Close Inspection
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Breadcrumb + Header */}
@@ -2100,121 +2849,110 @@ export default function WarRoomPage() {
         </div>
       </div>
 
-      {/* Phase Navigator */}
-      <PhaseNavigator current={inspection.current_phase} status={inspection.status} onPhaseChange={handlePhaseChange} />
-
-      {/* Inspector Activity Controls */}
-      {inspection.status === "active" && (
-        <div className="bg-card border rounded-xl p-3">
-          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2.5 flex items-center gap-1.5">
-            <Activity className="w-3 h-3 text-primary" /> Inspector Activity
-          </p>
-          <div className="flex gap-1.5 flex-wrap">
-            {[
-              { key: "inspector_arrived", label: "Arrived", className: "bg-emerald-50 border-emerald-200 text-emerald-800", activeClass: "ring-2 ring-emerald-500" },
-              { key: "inspector_on_break", label: "On Break", className: "bg-amber-50 border-amber-200 text-amber-800", activeClass: "ring-2 ring-amber-500" },
-              { key: "lunch_break", label: "Lunch", className: "bg-orange-50 border-orange-200 text-orange-800", activeClass: "ring-2 ring-orange-500" },
-              { key: "quiet_time", label: "Quiet / Off Floor", className: "bg-blue-50 border-blue-200 text-blue-800", activeClass: "ring-2 ring-blue-500" },
-              { key: "end_of_day_debrief", label: "End-of-Day Debrief", className: "bg-purple-50 border-purple-200 text-purple-800", activeClass: "ring-2 ring-purple-500" },
-              { key: "inspectors_left", label: "Inspectors Left", className: "bg-gray-100 border-gray-200 text-gray-700", activeClass: "ring-2 ring-gray-400" },
-            ].map(a => (
-              <button
-                key={a.key}
-                onClick={() => handlePhaseChange(inspection.current_phase === a.key ? "document_review" : a.key)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${a.className} ${inspection.current_phase === a.key ? a.activeClass : "opacity-60 hover:opacity-100"}`}
-              >
-                {inspection.current_phase === a.key && <div className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
-                {a.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Stats + Compliance Charts Row */}
+      {/* ── Compact War Room Status Bar ──────────────────────────────────────── */}
       {(() => {
-        const total = allRequests.length || 1;
-        const critCount = allRequests.filter(r => r.criticality === "critical").length;
-        const highCount = allRequests.filter(r => r.criticality === "high").length;
-        const medCount = allRequests.filter(r => r.criticality === "medium").length;
-        const lowCount = allRequests.filter(r => r.criticality === "low").length;
-        const doneCount = allRequests.filter(r => DONE_STATUSES.includes(r.status)).length;
-        const completionPct = allRequests.length ? Math.round((doneCount / allRequests.length) * 100) : 0;
+        const completionPct = allRequests.length
+          ? Math.round((resolvedRequests.length / allRequests.length) * 100)
+          : 0;
+
+        const topAlerts = [
+          ...alerts.filter(a => a.severity === "critical"),
+          ...alerts.filter(a => a.severity === "warning"),
+        ].slice(0, 2);
+
         return (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {/* KPI strip */}
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { label: "Total Requests", value: allRequests.length },
-                { label: "Open / Active", value: openRequests.length, highlight: openRequests.length > 0 },
-                { label: "Fulfilled", value: doneCount, active: doneCount > 0 },
-                { label: "Log Entries", value: log.length },
-              ].map(s => (
-                <div key={s.label} className="bg-card border rounded-xl px-4 py-3">
-                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{s.label}</p>
-                  <p className={`text-2xl font-bold tabular-nums mt-1 ${
-                    (s as any).highlight ? "text-amber-600" : (s as any).active ? "text-emerald-600" : ""
-                  }`}>{s.value}</p>
-                </div>
-              ))}
-            </div>
-            {/* Compliance charts */}
-            <div className="bg-card border rounded-xl p-4 space-y-3">
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
-                <BarChart3 className="w-3 h-3 text-primary" /> Request Breakdown
-              </p>
-              {/* Completion ring */}
-              <div className="flex items-center gap-3">
-                <div className="relative w-12 h-12 flex-shrink-0">
-                  <svg viewBox="0 0 36 36" className="w-12 h-12 -rotate-90">
-                    <circle cx="18" cy="18" r="15.9" fill="none" stroke="currentColor" strokeWidth="3.2" className="text-muted/30" />
-                    <circle cx="18" cy="18" r="15.9" fill="none" stroke="currentColor" strokeWidth="3.2"
-                      strokeDasharray={`${completionPct} ${100 - completionPct}`} strokeDashoffset="0"
-                      strokeLinecap="round" className="text-emerald-500 transition-all duration-700" />
-                  </svg>
-                  <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold">{completionPct}%</span>
-                </div>
-                <div className="flex-1 space-y-1">
-                  {[
-                    { label: "Critical", count: critCount, color: "bg-red-500" },
-                    { label: "High", count: highCount, color: "bg-orange-500" },
-                    { label: "Medium", count: medCount, color: "bg-amber-400" },
-                    { label: "Low", count: lowCount, color: "bg-blue-400" },
-                  ].map(b => (
-                    <div key={b.label} className="flex items-center gap-2">
-                      <span className="text-[10px] text-muted-foreground w-12 flex-shrink-0">{b.label}</span>
-                      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full ${b.color} transition-all`}
-                          style={{ width: `${(b.count / total) * 100}%` }} />
-                      </div>
-                      <span className="text-[10px] font-semibold w-4 text-right">{b.count}</span>
-                    </div>
-                  ))}
-                </div>
+          <>
+            {/* KPI + Phase row */}
+            <div className="bg-card border rounded-xl overflow-hidden">
+              {/* KPI strip */}
+              <div className="grid grid-cols-5 divide-x border-b">
+                {[
+                  { label: "Open", value: openRows.length, color: openRows.length > 0 ? "text-amber-600" : "" },
+                  { label: "Overdue", value: overdueCount, color: overdueCount > 0 ? "text-red-600" : "" },
+                  { label: "QA Pending", value: qaPendingCount, color: qaPendingCount > 0 ? "text-purple-600" : "" },
+                  { label: "Resolved", value: resolvedRows.length, color: resolvedRows.length > 0 ? "text-emerald-600" : "" },
+                  { label: "Done %", value: `${completionPct}%`, color: completionPct === 100 ? "text-emerald-600" : completionPct > 0 ? "text-primary" : "" },
+                ].map(kpi => (
+                  <div key={kpi.label} className="px-3 py-2.5 text-center">
+                    <p className={`text-xl font-bold tabular-nums ${kpi.color || "text-foreground"}`}>{kpi.value}</p>
+                    <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mt-0.5">{kpi.label}</p>
+                  </div>
+                ))}
               </div>
+
+              {/* Phase + activity pills */}
+              {inspection.status === "active" && (
+                <div className="flex items-center gap-1.5 px-4 py-2.5 flex-wrap">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex items-center gap-1 mr-1">
+                    <Activity className="w-3 h-3 text-primary" /> Phase
+                  </span>
+                  {PHASES.map((p, phaseIdx) => {
+                    const currentIdx = PHASES.findIndex(x => x.key === inspection.current_phase);
+                    const isActive = inspection.current_phase === p.key;
+                    const isDone = currentIdx > phaseIdx;
+                    return (
+                      <button key={p.key} onClick={() => handlePhaseChange(p.key)}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+                          isActive ? "bg-primary text-primary-foreground border-primary" :
+                          isDone ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
+                          "border-border text-muted-foreground hover:text-foreground hover:bg-accent"
+                        }`}>
+                        {isActive && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
+                        {p.short}
+                      </button>
+                    );
+                  })}
+                  <span className="w-px h-4 bg-border mx-1 flex-shrink-0" />
+                  {[
+                    { key: "inspector_arrived", label: "Arrived", cls: "bg-emerald-50 border-emerald-200 text-emerald-800" },
+                    { key: "inspector_on_break", label: "On Break", cls: "bg-amber-50 border-amber-200 text-amber-800" },
+                    { key: "lunch_break", label: "Lunch", cls: "bg-orange-50 border-orange-200 text-orange-800" },
+                    { key: "quiet_time", label: "Quiet", cls: "bg-blue-50 border-blue-200 text-blue-800" },
+                    { key: "end_of_day_debrief", label: "EOD Debrief", cls: "bg-purple-50 border-purple-200 text-purple-800" },
+                    { key: "inspectors_left", label: "Left", cls: "bg-gray-100 border-gray-200 text-gray-700" },
+                  ].map(a => {
+                    const isActive = inspection.current_phase === a.key;
+                    return (
+                      <button key={a.key}
+                        onClick={() => handlePhaseChange(isActive ? "document_review" : a.key)}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+                          isActive
+                            ? `${a.cls} ring-1 ring-offset-0 ring-current`
+                            : "border-border text-muted-foreground hover:bg-accent opacity-70 hover:opacity-100"
+                        }`}>
+                        {isActive && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
+                        {a.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          </div>
+
+            {/* Alert strip — max 2 alerts, highest priority first */}
+            {topAlerts.length > 0 && (
+              <div className="space-y-1.5">
+                {topAlerts.map((a, i) => (
+                  <div key={i} className={`flex items-start gap-3 px-4 py-2.5 rounded-xl border ${
+                    a.severity === "critical" ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200"
+                  }`}>
+                    {a.severity === "critical"
+                      ? <AlertTriangle className="w-3.5 h-3.5 text-red-600 flex-shrink-0 mt-0.5" />
+                      : <AlertCircle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />}
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-xs font-semibold ${a.severity === "critical" ? "text-red-800" : "text-amber-800"}`}>{a.title}</span>
+                      <span className={`text-xs ml-2 ${a.severity === "critical" ? "text-red-700" : "text-amber-700"}`}>{a.body}</span>
+                    </div>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase flex-shrink-0 ${
+                      a.severity === "critical" ? "bg-red-200 text-red-800" : "bg-amber-200 text-amber-800"
+                    }`}>{a.severity}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         );
       })()}
-
-      {/* AI Agents Status */}
-      <div className="bg-card border rounded-xl p-3">
-        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2.5 flex items-center gap-1.5">
-          <Zap className="w-3.5 h-3.5 text-primary" /> AI Agents
-        </p>
-        <div className="flex gap-2 flex-wrap">
-          {AI_AGENTS.map(agent => (
-            <div key={agent.key} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium ${
-              inspection.status === "active"
-                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                : "bg-muted/50 border-border text-muted-foreground"
-            }`}>
-              <div className={`w-1.5 h-1.5 rounded-full ${inspection.status === "active" ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground/40"}`} />
-              {agent.label}
-            </div>
-          ))}
-        </div>
-      </div>
 
       {/* Main Tabs */}
       <div className="flex border-b gap-0 overflow-x-auto scrollbar-hide">
@@ -2234,96 +2972,232 @@ export default function WarRoomPage() {
 
       {/* ── Requests Tab ──────────────────────────────────────────────────────── */}
       {tab === "requests" && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <p className="text-sm text-muted-foreground">Track, respond to, and fulfill inspector requests in real time.</p>
-            {canLogRequest && (
-              <button onClick={() => setShowAddRequest(true)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
-                <Plus className="w-3.5 h-3.5" />
-                Log Request
-              </button>
-            )}
-          </div>
-          {isObserver && (
-            <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-800">
-              <Eye className="w-3.5 h-3.5 flex-shrink-0" />
-              <span><strong>Observer mode</strong> — you have read-only access to this war room.</span>
-            </div>
-          )}
-          {allRequests.length > 0 && (
-            <div className="flex items-center gap-2 flex-wrap bg-muted/30 border rounded-xl px-3 py-2">
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mr-1">Filter</span>
-              <select value={reqFilterCrit} onChange={e => setReqFilterCrit(e.target.value)}
-                className="text-xs border rounded-lg px-2 py-1 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
-                <option value="all">All priorities</option>
-                <option value="critical">Critical</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-              </select>
-              {uniqueInspectors.length > 0 && (
-                <select value={reqFilterInspector} onChange={e => setReqFilterInspector(e.target.value)}
-                  className="text-xs border rounded-lg px-2 py-1 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
-                  <option value="all">All inspectors</option>
-                  {uniqueInspectors.map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-              )}
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide ml-2 mr-1">Sort</span>
-              <select value={reqSort} onChange={e => setReqSort(e.target.value)}
-                className="text-xs border rounded-lg px-2 py-1 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
-                <option value="newest">Newest first</option>
-                <option value="oldest">Oldest first</option>
-                <option value="criticality">Criticality (highest)</option>
-                <option value="sla">SLA (urgent first)</option>
-              </select>
-              {(reqFilterCrit !== "all" || reqFilterInspector !== "all" || reqSort !== "newest") && (
-                <button onClick={() => { setReqFilterCrit("all"); setReqFilterInspector("all"); setReqSort("newest"); }}
-                  className="text-xs text-primary hover:underline ml-1">
-                  Clear
-                </button>
-              )}
-            </div>
-          )}
-          {(inspection.requests ?? []).length === 0 ? (
-            <div className="bg-muted/30 border border-dashed rounded-xl px-8 py-12 text-center">
-              <MessageSquare className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
-              <h3 className="font-semibold mb-1">No requests logged yet</h3>
-              <p className="text-sm text-muted-foreground mb-4 max-w-sm mx-auto">
-                When an inspector asks a question or requests a document, log it here to track SLA and get AI-powered talking points.
-              </p>
-              <button onClick={() => setShowAddRequest(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 mx-auto">
-                <Plus className="w-4 h-4" /> Log First Request
-              </button>
-            </div>
+        <div className="space-y-3">
+          {/* Executive overlay */}
+          {(myRole === "site_head" || myRole === "executive") ? (
+            <ExecutiveSummaryOverlay
+              openCount={openRows.length}
+              overdueCount={overdueCount}
+              qaPendingCount={qaPendingCount}
+              resolvedCount={resolvedRows.length}
+              totalCount={allRequests.length}
+              topFindings={potentialFindings.filter(f => f.status === "tracking")}
+              onExitExecView={() => { setMyRole(null); setShowRolePicker(false); }}
+            />
           ) : (
-            <div className="space-y-5">
-              {openRequests.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
-                    <AlertTriangle className="w-3 h-3 text-amber-500" /> Active ({openRequests.length})
-                  </p>
-                  <div className="space-y-2">
-                    {openRequests.map(req => (
-                      <RequestCard key={req.id} req={req} inspectionId={id} onOpen={setSelectedRequest} />
-                    ))}
-                  </div>
+            <>
+              {/* Observer banner */}
+              {isObserver && (
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-800">
+                  <Eye className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span><strong>Observer mode</strong> — read-only access.</span>
                 </div>
               )}
-              {resolvedRequests.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Resolved ({resolvedRequests.length})
+
+              {/* Investigator tracks row */}
+              {investigatorTracks.length > 0 && (
+                <TracksRow
+                  tracks={investigatorTracks}
+                  activeInvestigator={filterInvestigator}
+                  onFilter={name => setFilterInvestigator(name)}
+                />
+              )}
+
+              {/* SME Room Board */}
+              {smeRoomStatuses.length > 0 && (
+                <SMERoomBoard statuses={smeRoomStatuses} />
+              )}
+
+              {/* Table Toolbar: preset pills + sort + log button */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Preset pills */}
+                <div className="flex items-center gap-1.5 flex-wrap flex-1">
+                  {SYSTEM_VIEW_PRESETS.map(preset => (
+                    <button
+                      key={preset.id}
+                      onClick={() => {
+                        setActivePresetId(preset.id);
+                        setGroupBy(preset.group_by);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                        activePresetId === preset.id
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                      }`}
+                    >
+                      {preset.name}
+                      {preset.id === "overdue" && overdueCount > 0 && (
+                        <span className="ml-1 text-[10px] font-bold text-red-500">{overdueCount}</span>
+                      )}
+                      {preset.id === "qa_review" && qaPendingCount > 0 && (
+                        <span className="ml-1 text-[10px] font-bold text-purple-500">{qaPendingCount}</span>
+                      )}
+                    </button>
+                  ))}
+                  {/* Group by toggle */}
+                  <button
+                    onClick={() => setGroupBy(g => g === "none" ? "investigator" : "none")}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                      groupBy === "investigator"
+                        ? "bg-violet-100 text-violet-800 border-violet-300"
+                        : "border-border text-muted-foreground hover:border-primary/40"
+                    }`}
+                  >
+                    Group by Inv.
+                  </button>
+                  {/* Sort */}
+                  <select
+                    value={`${sortColumn}:${sortDir}`}
+                    onChange={e => {
+                      const [col, dir] = e.target.value.split(":");
+                      setSortColumn(col);
+                      setSortDir(dir as "asc" | "desc");
+                    }}
+                    className="text-xs border rounded-lg px-2 py-1 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option value="age:desc">Newest first</option>
+                    <option value="age:asc">Oldest first</option>
+                    <option value="criticality:asc">Criticality</option>
+                    <option value="sla:asc">SLA urgent</option>
+                    <option value="stage:asc">Stage</option>
+                    <option value="investigator:asc">Inspector</option>
+                  </select>
+                  {/* Clear filters */}
+                  {(filterInvestigator !== "all" || filterOverdueOnly || filterQAPendingOnly || activePresetId !== "all") && (
+                    <button
+                      onClick={() => { setFilterInvestigator("all"); setFilterOverdueOnly(false); setFilterQAPendingOnly(false); setActivePresetId("all"); setGroupBy("none"); }}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      Clear filters
+                    </button>
+                  )}
+                </div>
+                {canLogRequest && (
+                  <button onClick={() => setShowAddRequest(true)}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 flex-shrink-0">
+                    <Plus className="w-3.5 h-3.5" />
+                    Log Request
+                  </button>
+                )}
+              </div>
+
+              {/* Table */}
+              {allRequests.length === 0 ? (
+                <div className="bg-muted/30 border border-dashed rounded-xl px-8 py-12 text-center">
+                  <MessageSquare className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
+                  <h3 className="font-semibold mb-1">No requests logged yet</h3>
+                  <p className="text-sm text-muted-foreground mb-4 max-w-sm mx-auto">
+                    When an inspector asks a question or requests a document, log it here to track SLA and get AI-powered talking points.
                   </p>
-                  <div className="space-y-2">
-                    {resolvedRequests.map(req => (
-                      <RequestCard key={req.id} req={req} inspectionId={id} onOpen={setSelectedRequest} />
-                    ))}
+                  {canLogRequest && (
+                    <button onClick={() => setShowAddRequest(true)}
+                      className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 mx-auto">
+                      <Plus className="w-4 h-4" /> Log First Request
+                    </button>
+                  )}
+                </div>
+              ) : openRows.length === 0 && resolvedRows.length === 0 ? (
+                <div className="bg-muted/30 border rounded-xl px-8 py-8 text-center">
+                  <p className="text-sm text-muted-foreground">No requests match the current filters.</p>
+                  <button onClick={() => { setFilterInvestigator("all"); setActivePresetId("all"); }}
+                    className="text-xs text-primary hover:underline mt-1">Clear filters</button>
+                </div>
+              ) : (
+                <div className="bg-card border rounded-xl overflow-hidden">
+                  {/* Table column headers */}
+                  <div className="flex items-center gap-2.5 px-3 py-2 border-b bg-muted/30">
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide w-[3.5rem] flex-shrink-0">#</span>
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide w-[4rem] flex-shrink-0">Priority</span>
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex-1">Request</span>
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide w-[6.5rem] flex-shrink-0 hidden sm:block">Inspector</span>
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex-shrink-0">Stage</span>
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide w-[5rem] flex-shrink-0 text-right">SLA</span>
+                    <span className="w-3 h-3 flex-shrink-0" />
                   </div>
+                  {/* Grouped or flat rows */}
+                  {groupBy === "investigator" ? (
+                    <>
+                      {investigatorTracks.map(track => {
+                        const trackOpenRows = openRows.filter(r => r.investigator_name === track.investigator_name);
+                        if (trackOpenRows.length === 0) return null;
+                        const colorClass = INVESTIGATOR_COLORS[track.color_index % INVESTIGATOR_COLORS.length];
+                        // Default open: collapsed set means not in it = expanded
+                        const isCollapsed = expandedGroups.has(`collapsed:${track.investigator_name}`);
+                        return (
+                          <div key={track.investigator_name}>
+                            <button
+                              className="w-full flex items-center gap-2 px-3 py-1.5 bg-muted/20 border-b hover:bg-muted/40 transition-colors"
+                              onClick={() => setExpandedGroups(s => {
+                                const n = new Set(s);
+                                const key = `collapsed:${track.investigator_name}`;
+                                if (n.has(key)) n.delete(key);
+                                else n.add(key);
+                                return n;
+                              })}
+                            >
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${colorClass}`}>
+                                {track.investigator_name.split(" ").map((w: string) => w[0]).join("").slice(0,2).toUpperCase()}
+                              </span>
+                              <span className="text-xs font-semibold">{track.investigator_name}</span>
+                              <span className="text-[10px] text-muted-foreground ml-1">({trackOpenRows.length} open{track.overdue_count > 0 ? `, ${track.overdue_count} overdue` : ""})</span>
+                              {track.overdue_count > 0 && <AlertTriangle className="w-3 h-3 text-red-500 ml-0.5" />}
+                              <ChevronDown className={`w-3 h-3 text-muted-foreground ml-auto transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
+                            </button>
+                            {!isCollapsed && (
+                              <div className="divide-y">
+                                {trackOpenRows.map(row => (
+                                  <RequestTableRow key={row.id} req={row.raw} onClick={() => setSelectedRequest(row.raw)} />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </>
+                  ) : (
+                    <>
+                      {/* Active requests */}
+                      {openRows.length > 0 && (
+                        <div className="divide-y">
+                          {openRows.map(row => (
+                            <RequestTableRow key={row.id} req={row.raw} onClick={() => setSelectedRequest(row.raw)} />
+                          ))}
+                        </div>
+                      )}
+                      {/* Resolved requests */}
+                      {resolvedRows.length > 0 && (
+                        <>
+                          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/20 border-t border-b">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                              Resolved ({resolvedRows.length})
+                            </span>
+                          </div>
+                          <div className="divide-y">
+                            {resolvedRows.map(row => (
+                              <RequestTableRow key={row.id} req={row.raw} onClick={() => setSelectedRequest(row.raw)} />
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
-            </div>
+
+              {/* Secondary action links */}
+              <div className="flex items-center gap-4 pt-1 text-xs text-muted-foreground">
+                <button onClick={() => setTab("eod" as any)} className="hover:text-foreground hover:underline flex items-center gap-1">
+                  <Calendar className="w-3 h-3" /> End of Day →
+                </button>
+                <button onClick={() => setTab("prep" as any)} className="hover:text-foreground hover:underline flex items-center gap-1">
+                  <FileText className="w-3 h-3" /> Pre-Inspection Setup ↗
+                </button>
+                <button onClick={() => setTab("post" as any)} className="hover:text-foreground hover:underline flex items-center gap-1">
+                  <ClipboardList className="w-3 h-3" /> Post-Inspection ↗
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -2342,7 +3216,14 @@ export default function WarRoomPage() {
                 Track patterns the inspector may be building toward. Internal only — never shown to the inspector.
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={handleRiskAnalysis}
+                disabled={runningAnalysis}
+                className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent disabled:opacity-50">
+                {runningAnalysis ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TrendingUp className="w-3.5 h-3.5 text-amber-500" />}
+                {runningAnalysis ? "Analyzing…" : "Risk Analysis"}
+              </button>
               <button
                 onClick={handleAiScan}
                 disabled={scanning}
@@ -2358,6 +3239,57 @@ export default function WarRoomPage() {
               </button>
             </div>
           </div>
+
+          {/* Risk Analysis Results */}
+          {riskAnalysis && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
+                  <TrendingUp className="w-3.5 h-3.5" /> AI Risk Analysis
+                </p>
+                <button onClick={() => setRiskAnalysis(null)} className="text-amber-600 hover:text-amber-900">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              {riskAnalysis.overall_risk_level && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-muted-foreground">Overall Risk:</span>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${
+                    riskAnalysis.overall_risk_level === "critical" ? "bg-red-100 text-red-800 border-red-200" :
+                    riskAnalysis.overall_risk_level === "high" ? "bg-orange-100 text-orange-800 border-orange-200" :
+                    "bg-amber-100 text-amber-800 border-amber-200"
+                  }`}>{riskAnalysis.overall_risk_level.toUpperCase()}</span>
+                </div>
+              )}
+              {riskAnalysis.summary && <p className="text-sm text-amber-900">{riskAnalysis.summary}</p>}
+              {riskAnalysis.top_risks?.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold text-amber-800 uppercase tracking-wide mb-1.5">Top Risk Areas</p>
+                  <ul className="space-y-1">
+                    {riskAnalysis.top_risks.map((r: string, i: number) => (
+                      <li key={i} className="flex items-start gap-2 text-xs text-amber-900">
+                        <Flag className="w-3 h-3 text-amber-600 flex-shrink-0 mt-0.5" />
+                        {r}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {riskAnalysis.recommended_actions?.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold text-amber-800 uppercase tracking-wide mb-1.5">Recommended Actions</p>
+                  <ul className="space-y-1">
+                    {riskAnalysis.recommended_actions.map((a: string, i: number) => (
+                      <li key={i} className="flex items-start gap-2 text-xs text-amber-900">
+                        <ArrowRight className="w-3 h-3 text-amber-600 flex-shrink-0 mt-0.5" />
+                        {a}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Add finding form */}
           {showAddFinding && (
@@ -2501,10 +3433,24 @@ export default function WarRoomPage() {
                               className="p-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
                               <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
                             </button>
-                            <button onClick={() => handleDeleteFinding(pf.id)}
-                              className="p-1.5 rounded-lg border border-border text-muted-foreground hover:text-red-500 transition-colors">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {deletingFinding === pf.id ? (
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => handleDeleteFinding(pf.id)}
+                                  className="px-2 py-1 text-[10px] font-semibold bg-red-600 text-white rounded border border-red-600 hover:bg-red-700">
+                                  Confirm
+                                </button>
+                                <button onClick={() => setDeletingFinding(null)}
+                                  className="px-2 py-1 text-[10px] border rounded hover:bg-accent">
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button onClick={() => handleDeleteFinding(pf.id)}
+                                className="p-1.5 rounded-lg border border-border text-muted-foreground hover:text-red-500 transition-colors"
+                                title="Remove finding">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -3709,11 +4655,38 @@ export default function WarRoomPage() {
               </div>
             )}
 
+            {/* AI Daily Brief */}
+            <div className="bg-card border rounded-xl p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-primary" />
+                  AI Daily Brief
+                </h3>
+                <button
+                  onClick={handleGenerateBrief}
+                  disabled={generatingBrief}
+                  className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent disabled:opacity-50">
+                  {generatingBrief ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-primary" />}
+                  {generatingBrief ? "Generating…" : "Generate Brief"}
+                </button>
+              </div>
+              {dailyBrief ? (
+                <div className="bg-primary/5 border border-primary/20 rounded-xl px-4 py-3">
+                  <p className="text-[10px] font-semibold text-primary uppercase tracking-wide mb-2">AI-Generated Summary</p>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{dailyBrief}</p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Generate an AI summary of today's inspection activity — requests, responses, inspector focus areas, and overnight priorities.
+                </p>
+              )}
+            </div>
+
             {/* Save / Print stub */}
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => {
-                  const text = `${label}\n\nNOTES:\n${eodNotes}\n\nACTION ITEMS:\n${eodActionItems.map((a, i) => `${i + 1}. ${a}`).join("\n")}`;
+                  const text = `${label}\n\nNOTES:\n${eodNotes}\n\nACTION ITEMS:\n${eodActionItems.map((a, i) => `${i + 1}. ${a}`).join("\n")}${dailyBrief ? `\n\nAI BRIEF:\n${dailyBrief}` : ""}`;
                   const blob = new Blob([text], { type: "text/plain" });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement("a");
@@ -3737,7 +4710,12 @@ export default function WarRoomPage() {
               <h2 className="font-semibold flex items-center gap-2"><ClipboardList className="w-4 h-4 text-primary" /> Post-Inspection Workspace</h2>
               <p className="text-xs text-muted-foreground mt-0.5">483s, CAPAs, closing readiness, outcome, and lessons learned.</p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button onClick={handleGenerateClosing} disabled={generatingClosing}
+                className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent disabled:opacity-50">
+                {generatingClosing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-primary" />}
+                {generatingClosing ? "Generating…" : "AI Closing Summary"}
+              </button>
               {inspection.status === "active" && (
                 <button onClick={handleClose} disabled={closing}
                   className="flex items-center gap-2 px-4 py-2 bg-muted border rounded-lg text-sm font-medium hover:bg-accent disabled:opacity-60">
@@ -3750,6 +4728,21 @@ export default function WarRoomPage() {
               </button>
             </div>
           </div>
+
+          {/* AI Closing Summary */}
+          {closingSummary && (
+            <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-semibold text-primary uppercase tracking-wide flex items-center gap-1.5">
+                  <Zap className="w-3 h-3" /> AI Closing Summary
+                </p>
+                <button onClick={() => setClosingSummary("")} className="text-muted-foreground hover:text-foreground">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">{closingSummary}</p>
+            </div>
+          )}
 
           {/* Closing Meeting Readiness Checklist */}
           <div className="bg-card border rounded-xl p-5">
@@ -3859,6 +4852,42 @@ export default function WarRoomPage() {
                           )}
                         </div>
                         {obs.draft_response && <p className="text-xs text-muted-foreground border-l-2 border-primary/30 pl-3 italic">{obs.draft_response}</p>}
+                        {/* CAPA linkage */}
+                        {(() => {
+                          const linked = capas.filter(c => c.linked_observation_id === obs.id);
+                          return (
+                            <div className="flex items-center gap-2 pt-1 border-t mt-2">
+                              <span className="text-[10px] text-muted-foreground">
+                                {linked.length > 0
+                                  ? `${linked.length} CAPA${linked.length !== 1 ? "s" : ""} linked`
+                                  : "No CAPAs linked"}
+                              </span>
+                              {linked.length > 0 && (
+                                <div className="flex gap-1 flex-wrap">
+                                  {linked.map(c => (
+                                    <span key={c.id} className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${
+                                      c.status === "completed" || c.status === "verified" ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
+                                      c.status === "in_progress" ? "bg-blue-50 border-blue-200 text-blue-700" :
+                                      "bg-amber-50 border-amber-200 text-amber-700"
+                                    }`}>{c.title.slice(0, 28)}{c.title.length > 28 ? "…" : ""}</span>
+                                  ))}
+                                </div>
+                              )}
+                              <button
+                                onClick={() => {
+                                  setNewCAPA(f => ({
+                                    ...f,
+                                    title: `Response to OBS-${String(obs.observation_number).padStart(3, "0")}`,
+                                    linked_observation_id: obs.id,
+                                  }));
+                                  setShowAddCAPA(true);
+                                }}
+                                className="ml-auto flex items-center gap-1 text-[10px] px-2 py-1 border border-primary/30 text-primary rounded hover:bg-primary/5 font-medium">
+                                <Plus className="w-2.5 h-2.5" /> CAPA
+                              </button>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   );

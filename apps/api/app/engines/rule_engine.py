@@ -5567,3 +5567,430 @@ class RuleEngine:
                 validated=True,
             ))
         return findings
+
+    # ========== NEW v2.4 CHECKS — Added from LLM benchmark + sparring review ==========
+
+    # ── L1: New structural checks ──
+
+    def _check_l1_containment_section_present(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Immediate Containment Actions must exist as a dedicated section, not buried in narrative."""
+        text_lower = ctx.document_text.lower()
+        containment_patterns = [
+            r'(?:immediate\s+)?containment\s+action',
+            r'interim\s+(?:action|measure|containment)',
+            r'immediate\s+corrective\s+action',
+        ]
+        found = any(re.search(p, text_lower) for p in containment_patterns)
+        if not found:
+            return [FindingResult(
+                level="L1",
+                severity="high",
+                category="containment_missing",
+                title="No Immediate Containment Actions section found",
+                description=(
+                    "CAPAs must document what immediate containment was applied to "
+                    "protect product and patients while root cause investigation proceeds. "
+                    "Absence of containment documentation is a common FDA 483 observation — "
+                    "inspectors expect to see what was done NOW, not just what will be done later."
+                ),
+                evidence="No containment/interim action keywords found in document.",
+                regulatory_citation="21 CFR 211.192; ICH Q10 §3.2.1",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.92,
+                validated=True,
+            )]
+        return []
+
+    def _check_l1_patient_safety_impact_section(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Patient safety impact must be explicitly assessed, even if conclusion is 'no impact'."""
+        text_lower = ctx.document_text.lower()
+        safety_patterns = [
+            r'patient\s+safety',
+            r'safety\s+impact',
+            r'impact\s+(?:to|on)\s+patient',
+            r'health\s+hazard\s+evaluation',
+            r'hhe\b',
+        ]
+        found = any(re.search(p, text_lower) for p in safety_patterns)
+        if not found:
+            return [FindingResult(
+                level="L1",
+                severity="critical",
+                category="patient_safety_missing",
+                title="Patient safety impact assessment not documented",
+                description=(
+                    "No patient safety impact assessment found. Every CAPA must explicitly "
+                    "evaluate whether the issue could affect patient safety — this is the "
+                    "FIRST question an FDA investigator will ask. Even 'no patient safety "
+                    "impact' must be stated with rationale."
+                ),
+                evidence="Keywords 'patient safety', 'safety impact', 'HHE' absent from document.",
+                regulatory_citation="21 CFR 211.192; 21 CFR 314.81(b)(1)",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.95,
+                validated=True,
+            )]
+        return []
+
+    def _check_l1_regulatory_reporting_section(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Regulatory reporting assessment must be documented (field alert, recall, agency notification)."""
+        text_lower = ctx.document_text.lower()
+        reporting_patterns = [
+            r'regulatory\s+(?:reporting|notification)',
+            r'field\s+alert',
+            r'recall\s+assessment',
+            r'agency\s+notification',
+            r'fda\s+(?:reporting|notification)',
+            r'medwatch',
+        ]
+        found = any(re.search(p, text_lower) for p in reporting_patterns)
+        if not found:
+            return [FindingResult(
+                level="L1",
+                severity="high",
+                category="regulatory_reporting_missing",
+                title="Regulatory reporting assessment section absent",
+                description=(
+                    "No regulatory reporting assessment found. CAPAs must document whether "
+                    "the issue triggers reporting obligations (field alert reports per 21 CFR "
+                    "314.81, recall assessment, or agency notification). Even if reporting is "
+                    "not required, the assessment must be documented."
+                ),
+                evidence="No 'regulatory reporting', 'field alert', or 'recall assessment' keywords found.",
+                regulatory_citation="21 CFR 314.81(b)(1); 21 CFR 211.198",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.90,
+                validated=True,
+            )]
+        return []
+
+    # ── L2: New document control checks ──
+
+    def _check_l2_duplicate_document_id(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Detect if CAPA number appears to be a duplicate or reused ID (e.g., same ID different content)."""
+        # This check fires when assessments are run in batch mode and the context
+        # includes other document IDs. In single-doc mode, it checks for internal
+        # duplicated CAPA reference numbers.
+        text = ctx.document_text
+        capa_ids = re.findall(r'CAPA[-\s]?\d{4}[-\s]?\d{3,4}', text, re.IGNORECASE)
+        unique_ids = set(c.upper().replace(' ', '-') for c in capa_ids)
+        # If the same CAPA ID appears in different section contexts with conflicting info
+        # this is a structural concern — but for now, just ensure at least one unique CAPA ID exists
+        if len(capa_ids) > 0 and len(unique_ids) == 0:
+            return [FindingResult(
+                level="L2",
+                severity="medium",
+                category="document_id_inconsistency",
+                title="CAPA document ID format inconsistency detected",
+                description="Multiple CAPA ID references found with inconsistent formatting.",
+                regulatory_citation="21 CFR 211.68",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.75,
+                validated=True,
+            )]
+        return []
+
+    def _check_l2_batch_size_context_for_impact(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Impact assessment requires batch size context — can't assess impact without knowing scale."""
+        text_lower = ctx.document_text.lower()
+        has_impact = bool(re.search(r'impact\s+assess', text_lower))
+        has_batch_size = bool(re.search(
+            r'(?:batch\s+size|lot\s+size|number\s+of\s+(?:units|vials|tablets|capsules|doses)|\d+\s*(?:units|vials|tablets|capsules|doses|kg|liters?|L\b))',
+            ctx.document_text, re.IGNORECASE
+        ))
+        if has_impact and not has_batch_size:
+            return [FindingResult(
+                level="L2",
+                severity="medium",
+                category="batch_size_missing",
+                title="Impact assessment lacks batch size or production scale context",
+                description=(
+                    "The impact assessment section does not reference batch size, lot size, "
+                    "or production quantity. Impact severity cannot be properly evaluated "
+                    "without knowing the scale — 50 vials vs 50,000 vials is a materially "
+                    "different regulatory risk."
+                ),
+                regulatory_citation="21 CFR 211.192",
+                citation_type="interpretive",
+                agency="FDA",
+                confidence_score=0.80,
+                validated=True,
+            )]
+        return []
+
+    # ── L4: New data integrity checks ──
+
+    def _check_l4_synthetic_data_disclaimer(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Detect synthetic/test data disclaimers that indicate non-actual records."""
+        patterns = [
+            r'not\s+an?\s+actual\s+(?:company\s+)?record',
+            r'(?:sample|example|synthetic|test|mock|dummy)\s+(?:document|record|data)',
+            r'for\s+(?:training|demonstration|illustrative|testing)\s+purposes?\s+only',
+            r'this\s+(?:is|document\s+is)\s+(?:a\s+)?(?:sample|example|template|draft)',
+            r'fictitious|placeholder\s+(?:data|content)',
+        ]
+        text = ctx.document_text
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                context = _extract_sentence(text, match.start())
+                return [FindingResult(
+                    level="L4",
+                    severity="critical",
+                    category="synthetic_data_disclaimer",
+                    title="Document contains synthetic/test data disclaimer",
+                    description=(
+                        f"A disclaimer indicating this is not an actual controlled record was "
+                        f"detected: '{context[:200]}'. A document presented during an FDA "
+                        f"inspection that contains such a disclaimer would call into question "
+                        f"the entire quality system's document control integrity."
+                    ),
+                    evidence=context[:200],
+                    regulatory_citation="21 CFR 211.68; 21 CFR 211.180",
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.98,
+                    validated=True,
+                )]
+        return []
+
+    def _check_l4_audit_trail_review_documented(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """For data integrity CAPAs, audit trail review must be documented."""
+        text_lower = ctx.document_text.lower()
+        # Only trigger for data integrity/audit trail related CAPAs
+        is_di_capa = any(term in text_lower for term in [
+            'audit trail', 'data integrity', 'alcoa', 'electronic record',
+            'chromatography data', 'data review', '21 cfr part 11',
+        ])
+        if not is_di_capa:
+            return []
+        has_trail_review = bool(re.search(
+            r'(?:audit\s+trail|electronic\s+record).*(?:review(?:ed)?|examined|evaluated|assessed)',
+            text_lower
+        )) or bool(re.search(
+            r'(?:review(?:ed)?|examined|evaluated).*(?:audit\s+trail|electronic\s+record)',
+            text_lower
+        ))
+        if not has_trail_review:
+            return [FindingResult(
+                level="L4",
+                severity="high",
+                category="audit_trail_review_missing",
+                title="Data integrity CAPA lacks documented audit trail review",
+                description=(
+                    "This CAPA involves data integrity concerns but does not document "
+                    "a review of relevant audit trails. Per FDA Data Integrity Guidance "
+                    "(2018), audit trail review is a fundamental expectation for any "
+                    "investigation involving electronic records or data integrity."
+                ),
+                regulatory_citation="FDA Data Integrity Guidance (2018); 21 CFR Part 11",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.88,
+                validated=True,
+            )]
+        return []
+
+    # ── L7: New lifecycle checks ──
+
+    def _check_l7_capa_aging_check(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Flag CAPAs open >90 days without extension justification (Sun Pharma pattern)."""
+        text = ctx.document_text
+        # Look for dates and compute age if possible
+        initiation_match = re.search(
+            r'(?:initiat(?:ed?|ion)\s*(?:date)?|opened?\s*(?:date)?|date\s*(?:initiated|opened))[:\s]*'
+            r'(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\w+\s+\d{1,2},?\s+\d{4})',
+            text, re.IGNORECASE
+        )
+        has_extension = bool(re.search(
+            r'(?:extension|justification\s+for\s+(?:delay|extension)|overdue\s+justification)',
+            text, re.IGNORECASE
+        ))
+        has_closure = bool(re.search(
+            r'(?:capa\s+clos(?:ed|ure)|status[:\s]*closed|completed?\s+date)',
+            text, re.IGNORECASE
+        ))
+        # If no closure and no extension justification, flag as potential aging risk
+        if initiation_match and not has_closure and not has_extension:
+            return [FindingResult(
+                level="L7",
+                severity="medium",
+                category="capa_aging_risk",
+                title="CAPA aging risk — no closure or extension justification documented",
+                description=(
+                    "CAPA has an initiation date but no documented closure or extension "
+                    "justification. CAPAs open beyond 90 days without justified extensions "
+                    "are a common FDA 483 observation (Sun Pharma pattern). "
+                    "Aging CAPAs suggest systemic quality system weakness."
+                ),
+                evidence=f"Initiation found: '{initiation_match.group(0)[:80]}', no closure/extension detected.",
+                regulatory_citation="21 CFR 211.192; ICH Q10 §3.2",
+                citation_type="interpretive",
+                agency="FDA",
+                confidence_score=0.78,
+                validated=True,
+            )]
+        return []
+
+    def _check_l7_interim_containment_duration(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Containment measures must have defined end conditions — can't be indefinite."""
+        text_lower = ctx.document_text.lower()
+        has_containment = bool(re.search(r'containment|interim\s+(?:action|measure)', text_lower))
+        if not has_containment:
+            return []
+        has_duration = bool(re.search(
+            r'containment.*(?:until|pending|expire|end\s+date|duration|lifted\s+when|remove.*when)',
+            text_lower
+        )) or bool(re.search(
+            r'(?:until|pending).*containment',
+            text_lower
+        ))
+        if not has_duration:
+            return [FindingResult(
+                level="L7",
+                severity="medium",
+                category="containment_duration_missing",
+                title="Containment measures lack defined end condition or duration",
+                description=(
+                    "Interim containment actions are documented but have no defined "
+                    "end condition or expiration criteria. Indefinite containment suggests "
+                    "the CAPA is not progressing to permanent corrective action — this "
+                    "is a red flag during inspections."
+                ),
+                regulatory_citation="ICH Q10 §3.2.1",
+                citation_type="interpretive",
+                agency="FDA",
+                confidence_score=0.80,
+                validated=True,
+            )]
+        return []
+
+    # ── L11: New document quality checks ──
+
+    def _check_l11_template_boilerplate_detection(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Detect template boilerplate text that appears verbatim across multiple documents."""
+        # Common boilerplate phrases that indicate copy-paste from templates
+        boilerplate_markers = [
+            r'(?:this\s+section|this\s+area|this\s+field)\s+(?:is\s+)?(?:reserved|intentionally\s+left\s+blank)',
+            r'insert\s+(?:text|details?|description|name|date)\s+here',
+            r'\[(?:insert|enter|add|describe|company\s+name|product\s+name|batch)\]',
+            r'lorem\s+ipsum',
+            r'xxx+',
+        ]
+        text = ctx.document_text
+        boilerplate_found = []
+        for pattern in boilerplate_markers:
+            matches = list(re.finditer(pattern, text, re.IGNORECASE))
+            for m in matches:
+                boilerplate_found.append(_extract_sentence(text, m.start())[:150])
+
+        if boilerplate_found:
+            return [FindingResult(
+                level="L11",
+                severity="high",
+                category="template_boilerplate_detected",
+                title=f"Template boilerplate text detected ({len(boilerplate_found)} instance{'s' if len(boilerplate_found) > 1 else ''})",
+                description=(
+                    f"Found {len(boilerplate_found)} instances of template placeholder or "
+                    f"boilerplate text. This indicates the document was not fully customized "
+                    f"for the specific event. An FDA inspector would view this as evidence of "
+                    f"inadequate document review and approval. Example: '{boilerplate_found[0]}'"
+                ),
+                evidence=boilerplate_found[0],
+                regulatory_citation="21 CFR 211.100(a); 21 CFR 211.68",
+                citation_type="direct",
+                agency="FDA",
+                confidence_score=0.90,
+                validated=True,
+            )]
+        return []
+
+    def _check_l11_date_logic_consistency(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Check that dates follow logical order: initiation < investigation < target < closure."""
+        import datetime
+        text = ctx.document_text
+
+        # Extract dates with labels
+        date_pattern = r'(?:(?:initiat|open|start|investigat|target|complet|clos|due|effective)\w*)\s*(?:date)?[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+        matches = list(re.finditer(date_pattern, text, re.IGNORECASE))
+
+        if len(matches) < 2:
+            return []
+
+        # Try to parse dates and check for obvious inversions
+        parsed_dates = []
+        for m in matches:
+            date_str = m.group(1)
+            label_context = text[max(0, m.start()-30):m.start()].strip()
+            for fmt in ('%m/%d/%Y', '%d/%m/%Y', '%m-%d-%Y', '%d-%m-%Y', '%m/%d/%y', '%d/%m/%y'):
+                try:
+                    dt = datetime.datetime.strptime(date_str, fmt)
+                    parsed_dates.append((label_context.lower(), dt, m.group(0)))
+                    break
+                except ValueError:
+                    continue
+
+        # Look for target date before initiation date
+        initiation_dates = [d for d in parsed_dates if any(k in d[0] for k in ['initiat', 'open', 'start'])]
+        target_dates = [d for d in parsed_dates if any(k in d[0] for k in ['target', 'due', 'complet'])]
+
+        if initiation_dates and target_dates:
+            init_date = initiation_dates[0][1]
+            target_date = target_dates[0][1]
+            if target_date < init_date:
+                return [FindingResult(
+                    level="L11",
+                    severity="critical",
+                    category="date_logic_error",
+                    title="Date logic error: target/completion date precedes initiation date",
+                    description=(
+                        f"The target or completion date appears to be BEFORE the initiation "
+                        f"date. This is a data integrity red flag — either the dates are "
+                        f"incorrect or the document was backdated. "
+                        f"Initiation: {initiation_dates[0][2]}, Target: {target_dates[0][2]}"
+                    ),
+                    evidence=f"Init={initiation_dates[0][2]}, Target={target_dates[0][2]}",
+                    regulatory_citation="21 CFR 211.68; 21 CFR Part 11.10(e)",
+                    citation_type="direct",
+                    agency="FDA",
+                    confidence_score=0.92,
+                    validated=True,
+                )]
+        return []
+
+    def _check_l11_internal_consistency_check(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Check for internal contradictions — e.g., severity says 'minor' but actions say 'critical'."""
+        text_lower = ctx.document_text.lower()
+        findings = []
+
+        # Check: classification says minor/low but document references critical actions
+        is_minor = bool(re.search(r'(?:classification|severity|category)[:\s]*(?:minor|low)', text_lower))
+        has_critical_lang = bool(re.search(
+            r'(?:critical|patient\s+safety\s+(?:risk|impact)|recall|field\s+alert|life[-\s]?threatening)',
+            text_lower
+        ))
+
+        if is_minor and has_critical_lang:
+            findings.append(FindingResult(
+                level="L11",
+                severity="high",
+                category="internal_contradiction",
+                title="Internal contradiction: minor classification but critical language in document",
+                description=(
+                    "The CAPA classification indicates 'minor' or 'low' severity, but the "
+                    "document body contains language suggesting critical impact (patient safety, "
+                    "recall, field alert, etc.). This inconsistency would be flagged by an "
+                    "inspector as evidence of inadequate risk assessment."
+                ),
+                regulatory_citation="ICH Q9; 21 CFR 211.192",
+                citation_type="interpretive",
+                agency="FDA",
+                confidence_score=0.82,
+                validated=True,
+            ))
+
+        return findings

@@ -6,8 +6,8 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ChevronLeft, Loader2, Shield, BadgeCheck, FileText,
   CheckCircle2, Clock, AlertTriangle, Zap, X, Calendar,
-  ArrowRight, TriangleAlert, Circle, ClipboardList, Send,
-  Copy, CheckSquare, Lock, RefreshCw, Package,
+  Circle, ClipboardList, Copy, CheckSquare, Lock, RefreshCw,
+  Package, AlertCircle, BookOpen, Download, ExternalLink,
 } from "lucide-react";
 import { inspectionsApi } from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
@@ -21,7 +21,9 @@ interface Inspection {
   status: string;
   start_date: string | null;
   end_date: string | null;
+  closed_at: string | null;
   created_at: string;
+  sign_offs: Record<string, boolean>;
 }
 
 interface Observation {
@@ -53,10 +55,31 @@ interface Delivery {
   acknowledgment_received: boolean;
 }
 
+interface BinderDoc {
+  id: string;
+  category: string;
+  title: string;
+  filename: string | null;
+  version: string | null;
+  status: string;
+  required: boolean;
+  staged_at: string | null;
+  delivered_at: string | null;
+  delivered_to: string | null;
+}
+
+// ── Sign-off definitions ──────────────────────────────────────────────────────
+const SIGNOFF_ITEMS = [
+  { key: "qa_lead", label: "QA Lead review" },
+  { key: "site_director", label: "Site Director approval" },
+  { key: "reg_affairs", label: "Regulatory Affairs review" },
+  { key: "legal", label: "Legal review (if required)" },
+] as const;
+
 // ── Deadline Countdown ────────────────────────────────────────────────────────
-function DeadlineCountdown({ closedAt }: { closedAt: string }) {
-  const businessDeadline = useCallback(() => {
-    const start = new Date(closedAt);
+function DeadlineCountdown({ baseDate }: { baseDate: string }) {
+  const deadline = useCallback(() => {
+    const start = new Date(baseDate);
     let count = 0;
     const d = new Date(start);
     while (count < 15) {
@@ -65,39 +88,39 @@ function DeadlineCountdown({ closedAt }: { closedAt: string }) {
       if (day !== 0 && day !== 6) count++;
     }
     return d;
-  }, [closedAt]);
+  }, [baseDate]);
 
-  const deadline = businessDeadline();
+  const dl = deadline();
   const now = new Date();
-  const daysLeft = Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  const daysLeft = Math.ceil((dl.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
   const overdue = daysLeft < 0;
-  const urgent = daysLeft >= 0 && daysLeft <= 5;
+  const urgent = !overdue && daysLeft <= 5;
 
   return (
-    <div className={`rounded-xl px-5 py-4 border ${
+    <div className={`rounded-xl px-5 py-4 border flex items-start justify-between gap-4 ${
       overdue ? "bg-red-50 border-red-200" :
-      urgent ? "bg-orange-50 border-orange-200" :
-      "bg-amber-50 border-amber-200"
+      urgent  ? "bg-orange-50 border-orange-200" :
+                "bg-amber-50 border-amber-200"
     }`}>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">FDA 483 Response Deadline</p>
-          <p className={`text-3xl font-bold tabular-nums mt-1 ${overdue ? "text-red-700" : urgent ? "text-orange-700" : "text-amber-800"}`}>
-            {overdue ? "OVERDUE" : `${daysLeft} days remaining`}
-          </p>
-          <p className="text-xs text-amber-700 mt-0.5">
-            Due by {deadline.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
-          </p>
-        </div>
-        <div className="flex-shrink-0">
-          <Clock className={`w-10 h-10 ${overdue ? "text-red-400" : urgent ? "text-orange-400" : "text-amber-400"}`} />
-        </div>
-      </div>
-      {urgent && !overdue && (
-        <p className="text-xs font-semibold text-orange-800 mt-2 bg-orange-100 rounded px-2 py-1">
-          ⚠ Less than 5 business days remaining — prioritize sign-off and submission immediately.
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+          FDA 483 Response Deadline · 15 Business Days
         </p>
-      )}
+        <p className={`text-3xl font-bold tabular-nums mt-1 ${
+          overdue ? "text-red-700" : urgent ? "text-orange-700" : "text-amber-800"
+        }`}>
+          {overdue ? "OVERDUE" : `${daysLeft} day${daysLeft !== 1 ? "s" : ""} remaining`}
+        </p>
+        <p className="text-xs text-amber-700 mt-0.5">
+          Due by {dl.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+        </p>
+        {urgent && !overdue && (
+          <p className="text-xs font-semibold text-orange-800 mt-2 bg-orange-100 rounded px-2 py-1 inline-block">
+            Less than 5 business days — prioritize sign-off and submission immediately.
+          </p>
+        )}
+      </div>
+      <Clock className={`w-10 h-10 flex-shrink-0 ${overdue ? "text-red-400" : urgent ? "text-orange-400" : "text-amber-400"}`} />
     </div>
   );
 }
@@ -145,16 +168,16 @@ function ObservationCard({
     } finally { setSubmitting(false); }
   };
 
-  const statusColor = {
-    draft: "bg-muted text-muted-foreground border-border",
+  const statusColor = ({
+    draft:        "bg-muted text-muted-foreground border-border",
     under_review: "bg-blue-50 text-blue-700 border-blue-200",
-    submitted: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    closed: "bg-gray-50 text-gray-500 border-gray-200",
-  }[obs.status] ?? "bg-muted text-muted-foreground border-border";
+    submitted:    "bg-emerald-50 text-emerald-700 border-emerald-200",
+    closed:       "bg-gray-50 text-gray-500 border-gray-200",
+  } as Record<string, string>)[obs.status] ?? "bg-muted text-muted-foreground border-border";
 
   return (
     <div className="bg-card border rounded-xl overflow-hidden">
-      {/* Observation header */}
+      {/* Header */}
       <div className="px-5 py-4 border-b bg-amber-50/40">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
@@ -207,13 +230,20 @@ function ObservationCard({
                 Edit
               </button>
             )}
+            {obs.draft_response && obs.status !== "submitted" && (
+              <button onClick={handleAiDraft} disabled={drafting}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary font-medium disabled:opacity-50">
+                {drafting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                Re-draft
+              </button>
+            )}
           </div>
         </div>
 
         {editing ? (
           <div className="space-y-2">
             <textarea
-              rows={6}
+              rows={7}
               value={draftText}
               onChange={e => setDraftText(e.target.value)}
               className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
@@ -237,6 +267,7 @@ function ObservationCard({
         ) : (
           <div className="bg-muted/20 border border-dashed rounded-lg px-4 py-6 text-center">
             <p className="text-sm text-muted-foreground">No response drafted yet</p>
+            <p className="text-xs text-muted-foreground mt-1">Use AI Draft to generate a starting point based on your CAPA and inspection data</p>
           </div>
         )}
 
@@ -252,6 +283,84 @@ function ObservationCard({
   );
 }
 
+// ── Close Inspection Modal ────────────────────────────────────────────────────
+function CloseInspectionModal({
+  inspectionTitle,
+  onConfirm,
+  onCancel,
+  loading,
+}: {
+  inspectionTitle: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  loading: boolean;
+}) {
+  const [typed, setTyped] = useState("");
+  const confirmed = typed.trim().toLowerCase() === "close";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="bg-card border rounded-2xl shadow-2xl w-full max-w-md mx-4">
+        <div className="flex items-start gap-3 px-6 pt-6 pb-3">
+          <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+            <Lock className="w-5 h-5 text-red-600" />
+          </div>
+          <div>
+            <h2 className="font-semibold text-base">Close Inspection</h2>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              This will permanently close <strong className="text-foreground">{inspectionTitle}</strong> and lock the war room. All post-inspection work (483 responses, CAPA tracking) continues in the Response workspace.
+            </p>
+          </div>
+        </div>
+
+        <div className="px-6 pb-2 space-y-3">
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-xs text-amber-900 space-y-1">
+            <p className="font-semibold flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" /> Before closing, confirm:</p>
+            <ul className="ml-4 space-y-0.5 list-disc">
+              <li>All inspector requests are fulfilled or formally declined</li>
+              <li>All verbal commitments are logged</li>
+              <li>All 483 observations have been recorded</li>
+            </ul>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+              Type <span className="text-foreground font-mono">close</span> to confirm
+            </label>
+            <input
+              value={typed}
+              onChange={e => setTyped(e.target.value)}
+              placeholder="close"
+              className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-400"
+            />
+          </div>
+        </div>
+
+        <div className="px-6 pb-6 flex gap-2 justify-end">
+          <button onClick={onCancel} className="px-4 py-2 text-sm border rounded-lg hover:bg-accent">
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!confirmed || loading}
+            className="flex items-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed">
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+            Close Inspection
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Binder Status Badge ───────────────────────────────────────────────────────
+const BINDER_STATUS: Record<string, string> = {
+  missing:   "bg-red-50 text-red-700 border-red-200",
+  staged:    "bg-amber-50 text-amber-700 border-amber-200",
+  ready:     "bg-blue-50 text-blue-700 border-blue-200",
+  delivered: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  withdrawn: "bg-gray-50 text-gray-500 border-gray-200",
+};
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function PostInspectionPage() {
   const { id } = useParams<{ id: string }>();
@@ -260,6 +369,7 @@ export default function PostInspectionPage() {
   const [observations, setObservations] = useState<Observation[]>([]);
   const [commitments, setCommitments] = useState<Commitment[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [binderDocs, setBinderDocs] = useState<BinderDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [tab, setTab] = useState<"483s" | "commitments" | "binder" | "letter">("483s");
@@ -267,28 +377,32 @@ export default function PostInspectionPage() {
   const [generatingLetter, setGeneratingLetter] = useState(false);
   const [copied, setCopied] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
+  const [showCloseModal, setShowCloseModal] = useState(false);
 
-  const [signoffs, setSignoffs] = useState([
-    { label: "QA Lead review", done: false },
-    { label: "Site Director approval", done: false },
-    { label: "Regulatory Affairs review", done: false },
-    { label: "Legal review (if required)", done: false },
-  ]);
+  // Persisted sign-offs (loaded from + saved to backend)
+  const [signoffs, setSignoffs] = useState<Record<string, boolean>>({});
+  const [savingSignoff, setSavingSignoff] = useState(false);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
     setLoadError("");
     try {
-      const [inspRes, obsRes, commitRes, delivRes] = await Promise.all([
+      const [inspRes, obsRes, commitRes, delivRes, binderRes, summaryRes] = await Promise.all([
         inspectionsApi.get(id),
         inspectionsApi.listObservations(id),
         inspectionsApi.listCommitments(id),
         inspectionsApi.listDeliveries(id),
+        inspectionsApi.listBinder(id),
+        inspectionsApi.getPostInspectionSummary(id),
       ]);
       setInspection(inspRes.data);
       setObservations(obsRes.data.observations ?? []);
       setCommitments(commitRes.data.commitments ?? []);
       setDeliveries(delivRes.data.deliveries ?? []);
+      setBinderDocs(binderRes.data.binder_docs ?? []);
+      // Restore persisted sign-offs from backend
+      const saved: Record<string, boolean> = summaryRes.data.sign_offs ?? {};
+      setSignoffs(saved);
     } catch {
       setLoadError("Could not load inspection data. Please refresh.");
     } finally {
@@ -297,6 +411,19 @@ export default function PostInspectionPage() {
   }, [id]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  const handleToggleSignoff = async (key: string, currentValue: boolean) => {
+    const updated = { ...signoffs, [key]: !currentValue };
+    setSignoffs(updated);
+    setSavingSignoff(true);
+    try {
+      await inspectionsApi.updatePostInspection(id, { sign_offs: updated });
+    } catch {
+      setSignoffs(prev => ({ ...prev, [key]: currentValue }));
+    } finally {
+      setSavingSignoff(false);
+    }
+  };
 
   const handleGenerateLetter = async () => {
     setGeneratingLetter(true);
@@ -307,23 +434,29 @@ export default function PostInspectionPage() {
   };
 
   const handleFinalize = async () => {
-    if (!confirm("Mark this inspection as fully closed? All response work should be complete.")) return;
     setFinalizing(true);
     try {
       await inspectionsApi.finalizeInspection(id);
       router.push("/inspections");
-    } finally { setFinalizing(false); }
+    } finally {
+      setFinalizing(false);
+      setShowCloseModal(false);
+    }
   };
 
   const submittedObs = observations.filter(o => o.status === "submitted");
-  const pendingObs = observations.filter(o => o.status !== "submitted" && o.status !== "closed");
+  const pendingObs   = observations.filter(o => o.status !== "submitted" && o.status !== "closed");
   const deliveredCommitments = commitments.filter(c => c.status === "delivered");
-  const allSignoffsDone = signoffs.every(s => s.done);
+  const allSignoffsDone = SIGNOFF_ITEMS.every(s => signoffs[s.key]);
+  const deliveredBinder = binderDocs.filter(d => d.status === "delivered");
 
   const readyToFinalize =
     pendingObs.length === 0 &&
     commitments.filter(c => c.status === "pending").length === 0 &&
     allSignoffsDone;
+
+  // Determine deadline base: closed_at → end_date → created_at
+  const deadlineBase = inspection?.closed_at ?? inspection?.end_date ?? inspection?.created_at ?? "";
 
   if (loading) {
     return (
@@ -344,6 +477,15 @@ export default function PostInspectionPage() {
 
   return (
     <div className="space-y-6 max-w-5xl">
+      {showCloseModal && (
+        <CloseInspectionModal
+          inspectionTitle={inspection.title}
+          onConfirm={handleFinalize}
+          onCancel={() => setShowCloseModal(false)}
+          loading={finalizing}
+        />
+      )}
+
       {/* Breadcrumb */}
       <div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
@@ -361,32 +503,55 @@ export default function PostInspectionPage() {
             </p>
           </div>
           <div className="flex gap-2">
+            <button onClick={loadAll} disabled={loading}
+              className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent disabled:opacity-50">
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            </button>
             <Link href={`/inspections/${id}`}
               className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent">
               <ChevronLeft className="w-3.5 h-3.5" /> War Room
             </Link>
             <button
-              onClick={handleFinalize}
+              onClick={() => setShowCloseModal(true)}
               disabled={!readyToFinalize || finalizing}
               title={!readyToFinalize ? "Complete all observations, commitments, and sign-offs first" : undefined}
               className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed">
-              {finalizing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+              <Lock className="w-3.5 h-3.5" />
               Close Inspection
             </button>
           </div>
         </div>
       </div>
 
-      {/* Deadline countdown */}
-      <DeadlineCountdown closedAt={inspection.created_at} />
+      {/* Deadline countdown — based on closed_at / end_date, not created_at */}
+      {deadlineBase && <DeadlineCountdown baseDate={deadlineBase} />}
 
       {/* Progress overview */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: "483 Observations", value: observations.length, sub: `${submittedObs.length} submitted`, ok: submittedObs.length === observations.length && observations.length > 0 },
-          { label: "Commitments", value: commitments.length, sub: `${deliveredCommitments.length} delivered`, ok: deliveredCommitments.length === commitments.length && commitments.length > 0 },
-          { label: "Deliveries Logged", value: deliveries.length, ok: deliveries.length > 0 },
-          { label: "Sign-offs", value: `${signoffs.filter(s => s.done).length}/${signoffs.length}`, ok: allSignoffsDone },
+          {
+            label: "483 Observations",
+            value: observations.length,
+            sub: `${submittedObs.length} submitted`,
+            ok: submittedObs.length === observations.length && observations.length > 0,
+          },
+          {
+            label: "Commitments",
+            value: commitments.length,
+            sub: `${deliveredCommitments.length} delivered`,
+            ok: deliveredCommitments.length === commitments.length && commitments.length > 0,
+          },
+          {
+            label: "Binder Docs",
+            value: binderDocs.length,
+            sub: `${deliveredBinder.length} delivered`,
+            ok: deliveredBinder.length === binderDocs.length && binderDocs.length > 0,
+          },
+          {
+            label: "Sign-offs",
+            value: `${SIGNOFF_ITEMS.filter(s => signoffs[s.key]).length}/${SIGNOFF_ITEMS.length}`,
+            ok: allSignoffsDone,
+          },
         ].map(s => (
           <div key={s.label} className={`bg-card border rounded-xl px-4 py-3 ${s.ok ? "border-emerald-200" : ""}`}>
             <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{s.label}</p>
@@ -396,16 +561,16 @@ export default function PostInspectionPage() {
         ))}
       </div>
 
-      {/* Main content — two-column */}
+      {/* Main content */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Left: main tabs */}
         <div className="lg:col-span-2 space-y-4">
-          <div className="flex border-b gap-0">
+          <div className="flex border-b gap-0 overflow-x-auto">
             {[
-              { key: "483s", label: `483 Responses (${observations.length})`, icon: Shield },
-              { key: "commitments", label: `Commitments (${commitments.length})`, icon: BadgeCheck },
-              { key: "binder", label: `Binder (${deliveries.length})`, icon: Package },
-              { key: "letter", label: "Cover Letter", icon: FileText },
+              { key: "483s",        label: `483 Responses (${observations.length})`,     icon: Shield },
+              { key: "commitments", label: `Commitments (${commitments.length})`,         icon: BadgeCheck },
+              { key: "binder",      label: `Binder (${binderDocs.length})`,               icon: BookOpen },
+              { key: "letter",      label: "Cover Letter",                                icon: FileText },
             ].map(t => {
               const Icon = t.icon;
               return (
@@ -447,13 +612,16 @@ export default function PostInspectionPage() {
                 </div>
               ) : (
                 commitments.map(c => (
-                  <div key={c.id} className={`bg-card border rounded-xl px-4 py-3 ${c.status === "overdue" ? "border-red-200" : c.status === "delivered" ? "border-emerald-200" : ""}`}>
+                  <div key={c.id} className={`bg-card border rounded-xl px-4 py-3 ${
+                    c.status === "overdue" ? "border-red-200" :
+                    c.status === "delivered" ? "border-emerald-200" : ""
+                  }`}>
                     <div className="flex items-start justify-between gap-3">
                       <p className="text-sm font-medium flex-1">{c.commitment_text}</p>
                       <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border flex-shrink-0 ${
                         c.status === "delivered" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                        c.status === "overdue" ? "bg-red-50 text-red-700 border-red-200" :
-                        "bg-amber-50 text-amber-700 border-amber-200"
+                        c.status === "overdue"   ? "bg-red-50 text-red-700 border-red-200" :
+                                                    "bg-amber-50 text-amber-700 border-amber-200"
                       }`}>{c.status}</span>
                     </div>
                     <div className="flex gap-3 mt-1.5 text-[10px] text-muted-foreground">
@@ -476,33 +644,66 @@ export default function PostInspectionPage() {
             </div>
           )}
 
-          {/* Binder */}
+          {/* Binder — shows InspectionBinderDoc items, not delivery receipts */}
           {tab === "binder" && (
             <div className="space-y-3">
-              {deliveries.length === 0 ? (
+              {binderDocs.length === 0 ? (
                 <div className="bg-muted/30 border border-dashed rounded-xl px-6 py-10 text-center">
-                  <Package className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">No document deliveries logged.</p>
+                  <BookOpen className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                  <p className="text-sm font-semibold mb-1">Inspection binder is empty</p>
+                  <p className="text-sm text-muted-foreground">Documents staged and delivered during the inspection appear here.</p>
+                  <Link href={`/inspections/${id}`}
+                    className="inline-flex items-center gap-1.5 mt-3 text-xs text-primary hover:underline font-medium">
+                    <ExternalLink className="w-3 h-3" /> Go to war room to seed binder
+                  </Link>
                 </div>
               ) : (
-                deliveries.map(d => (
-                  <div key={d.id} className="bg-card border rounded-xl px-4 py-3">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-semibold">{new Date(d.delivered_at).toLocaleString()}</span>
-                      {d.acknowledgment_received && (
-                        <span className="flex items-center gap-1 text-[10px] text-emerald-700 font-semibold">
-                          <CheckCircle2 className="w-3 h-3" /> Acknowledged
-                        </span>
-                      )}
+                <>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+                    <span>{deliveredBinder.length} of {binderDocs.length} documents delivered</span>
+                    <span>{binderDocs.filter(d => d.required && d.status !== "delivered").length} required items outstanding</span>
+                  </div>
+                  {binderDocs.map(doc => (
+                    <div key={doc.id} className={`bg-card border rounded-xl px-4 py-3 flex items-start gap-3 ${
+                      doc.required && doc.status === "missing" ? "border-red-200 bg-red-50/30" : ""
+                    }`}>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                          <span className="text-sm font-medium truncate">{doc.title}</span>
+                          {doc.required && (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 bg-primary/10 text-primary rounded">Required</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground flex-wrap">
+                          <span className="capitalize">{doc.category.replace(/_/g, " ")}</span>
+                          {doc.version && <span>v{doc.version}</span>}
+                          {doc.filename && <span>{doc.filename}</span>}
+                          {doc.delivered_at && <span>Delivered {timeAgo(doc.delivered_at)}{doc.delivered_to ? ` to ${doc.delivered_to}` : ""}</span>}
+                        </div>
+                      </div>
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border flex-shrink-0 ${BINDER_STATUS[doc.status] ?? BINDER_STATUS.missing}`}>
+                        {doc.status}
+                      </span>
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {d.document_titles.map(t => (
-                        <span key={t} className="text-xs px-2 py-1 bg-muted border rounded-md">{t}</span>
+                  ))}
+                  {/* Delivery receipts summary */}
+                  {deliveries.length > 0 && (
+                    <div className="border-t pt-3 mt-3">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Delivery Receipts ({deliveries.length})</p>
+                      {deliveries.map(d => (
+                        <div key={d.id} className="flex items-center justify-between text-xs text-muted-foreground py-1.5 border-b last:border-0">
+                          <span>{new Date(d.delivered_at).toLocaleString()}</span>
+                          <span>{d.document_titles.length} doc{d.document_titles.length !== 1 ? "s" : ""} → {d.delivered_to}</span>
+                          {d.acknowledgment_received && (
+                            <span className="flex items-center gap-1 text-emerald-600 font-medium">
+                              <CheckCircle2 className="w-3 h-3" /> Ack
+                            </span>
+                          )}
+                        </div>
                       ))}
                     </div>
-                    <p className="text-[10px] text-muted-foreground mt-1.5">Delivered to: {d.delivered_to}</p>
-                  </div>
-                ))
+                  )}
+                </>
               )}
             </div>
           )}
@@ -511,7 +712,9 @@ export default function PostInspectionPage() {
           {tab === "letter" && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <p className="text-sm text-muted-foreground">AI-drafted formal response letter to the FDA District Director.</p>
+                <p className="text-sm text-muted-foreground">
+                  AI-drafted formal response letter to the FDA District Director.
+                </p>
                 <button onClick={handleGenerateLetter} disabled={generatingLetter}
                   className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-60">
                   {generatingLetter ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
@@ -522,12 +725,31 @@ export default function PostInspectionPage() {
                 <div className="bg-card border rounded-xl p-5">
                   <div className="flex items-center justify-between mb-3">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Draft Cover Letter</p>
-                    <button
-                      onClick={() => { navigator.clipboard.writeText(coverLetter); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-                      className="flex items-center gap-1 text-xs text-primary hover:underline font-medium">
-                      {copied ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                      {copied ? "Copied!" : "Copy"}
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(coverLetter);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        }}
+                        className="flex items-center gap-1 text-xs text-primary hover:underline font-medium">
+                        {copied ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                        {copied ? "Copied!" : "Copy"}
+                      </button>
+                      <button
+                        onClick={() => {
+                          const blob = new Blob([coverLetter], { type: "text/plain" });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `483_response_cover_letter.txt`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground font-medium">
+                        <Download className="w-3 h-3" /> Download
+                      </button>
+                    </div>
                   </div>
                   <pre className="text-sm leading-relaxed whitespace-pre-wrap font-sans">{coverLetter}</pre>
                 </div>
@@ -544,41 +766,46 @@ export default function PostInspectionPage() {
           )}
         </div>
 
-        {/* Right: sign-off panel */}
+        {/* Right: sign-off + readiness */}
         <div className="space-y-4">
-          {/* Sign-off checklist */}
+          {/* Sign-off checklist — persisted to backend */}
           <div className="bg-card border rounded-xl p-5">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
               <ClipboardList className="w-3.5 h-3.5 text-primary" /> Management Sign-off
+              {savingSignoff && <Loader2 className="w-3 h-3 animate-spin text-primary ml-auto" />}
             </p>
             <div className="space-y-2.5">
-              {signoffs.map((item, i) => (
-                <button
-                  key={item.label}
-                  onClick={() => setSignoffs(s => s.map((x, j) => j === i ? { ...x, done: !x.done } : x))}
-                  className="flex items-center gap-2.5 w-full text-left group">
-                  {item.done
-                    ? <CheckSquare className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                    : <Circle className="w-4 h-4 text-muted-foreground/40 flex-shrink-0 group-hover:text-muted-foreground" />
-                  }
-                  <span className={`text-sm ${item.done ? "line-through text-muted-foreground" : ""}`}>{item.label}</span>
-                </button>
-              ))}
+              {SIGNOFF_ITEMS.map(item => {
+                const done = !!signoffs[item.key];
+                return (
+                  <button
+                    key={item.key}
+                    onClick={() => handleToggleSignoff(item.key, done)}
+                    disabled={savingSignoff}
+                    className="flex items-center gap-2.5 w-full text-left group disabled:opacity-60">
+                    {done
+                      ? <CheckSquare className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                      : <Circle className="w-4 h-4 text-muted-foreground/40 flex-shrink-0 group-hover:text-muted-foreground" />
+                    }
+                    <span className={`text-sm ${done ? "line-through text-muted-foreground" : ""}`}>{item.label}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Readiness checklist */}
+          {/* Submission readiness */}
           <div className="bg-card border rounded-xl p-5">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5 text-primary" /> Submission Readiness
             </p>
             <div className="space-y-2">
               {[
-                { text: "All 483 responses drafted", done: observations.length > 0 && pendingObs.length === 0 },
-                { text: "All responses marked submitted", done: submittedObs.length === observations.length && observations.length > 0 },
-                { text: "All commitments delivered", done: deliveredCommitments.length === commitments.length && commitments.length > 0 },
-                { text: "Cover letter generated", done: !!coverLetter },
-                { text: "Management sign-offs complete", done: allSignoffsDone },
+                { text: "All 483 responses drafted",           done: observations.length > 0 && pendingObs.length === 0 },
+                { text: "All responses marked submitted",      done: submittedObs.length === observations.length && observations.length > 0 },
+                { text: "All commitments delivered",           done: deliveredCommitments.length === commitments.length && commitments.length > 0 },
+                { text: "Cover letter generated",              done: !!coverLetter },
+                { text: "Management sign-offs complete",       done: allSignoffsDone },
               ].map(item => (
                 <div key={item.text} className="flex items-center gap-2">
                   {item.done
@@ -599,12 +826,16 @@ export default function PostInspectionPage() {
             )}
           </div>
 
-          {/* Stats */}
+          {/* Quick stats */}
           <div className="bg-muted/40 border rounded-xl p-4 text-xs text-muted-foreground space-y-1.5">
             <p className="font-semibold text-foreground mb-2">Quick Stats</p>
             <p>{observations.length} observation{observations.length !== 1 ? "s" : ""} · {submittedObs.length} submitted</p>
             <p>{commitments.length} commitment{commitments.length !== 1 ? "s" : ""} · {deliveredCommitments.length} delivered</p>
-            <p>{deliveries.length} document delivery{deliveries.length !== 1 ? "ies" : ""} logged</p>
+            <p>{binderDocs.length} binder doc{binderDocs.length !== 1 ? "s" : ""} · {deliveredBinder.length} delivered</p>
+            <p>{deliveries.length} delivery receipt{deliveries.length !== 1 ? "s" : ""} logged</p>
+            {inspection.end_date && (
+              <p className="text-foreground font-medium mt-2 pt-2 border-t">Closed: {new Date(inspection.end_date).toLocaleDateString()}</p>
+            )}
           </div>
         </div>
       </div>

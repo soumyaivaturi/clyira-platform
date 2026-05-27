@@ -339,7 +339,7 @@ export const inspectionsApi = {
     api.post(`/inspections/${id}/daily-brief`, {}, { timeout: 90000 }),
 
   // Post-inspection
-  updatePostInspection: (id: string, data: { outcome?: string; final_483_count?: number; post_inspection_notes?: string; lessons_learned?: string[] }) =>
+  updatePostInspection: (id: string, data: { outcome?: string; final_483_count?: number; post_inspection_notes?: string; lessons_learned?: string[]; sign_offs?: Record<string, boolean> }) =>
     api.patch(`/inspections/${id}/post-inspection`, data),
   getPostInspectionSummary: (id: string) =>
     api.get(`/inspections/${id}/post-inspection-summary`),

@@ -50,10 +50,16 @@ def _inspection_out(insp: Inspection) -> dict:
         "current_phase": insp.current_phase,
         "start_date": insp.start_date,
         "end_date": insp.end_date,
+        "closed_at": insp.closed_at,
         "inspection_scope": insp.inspection_scope or [],
         "agenda": insp.agenda or [],
         "total_requests": insp.total_requests or 0,
         "ai_agents_count": len(insp.ai_agents_active) if insp.ai_agents_active else 0,
+        "inspector_safe_mode": insp.inspector_safe_mode or False,
+        "outcome": insp.outcome,
+        "final_483_count": insp.final_483_count or 0,
+        "post_inspection_notes": insp.post_inspection_notes,
+        "sign_offs": insp.sign_offs or {},
         "created_at": str(insp.created_at),
     }
 
@@ -288,6 +294,10 @@ async def close_inspection(
 ):
     inspection = await _verify_inspection(db, inspection_id, current_user.company_id)
     inspection.status = "post_inspection"
+    now = datetime.utcnow()
+    inspection.closed_at = now.isoformat()
+    if not inspection.end_date:
+        inspection.end_date = now.date().isoformat()
     await db.commit()
     return _inspection_out(inspection)
 
@@ -2764,6 +2774,7 @@ class PostInspectionUpdate(BaseModel):
     final_483_count: Optional[int] = None
     post_inspection_notes: Optional[str] = None
     lessons_learned: Optional[list[str]] = None
+    sign_offs: Optional[dict] = None
 
 
 @router.patch("/{inspection_id}/post-inspection", response_model=dict)
@@ -2809,9 +2820,12 @@ async def get_post_inspection_summary(
         "inspection_id": inspection_id,
         "title": insp.title,
         "agency": insp.agency,
+        "end_date": insp.end_date,
+        "closed_at": insp.closed_at,
         "outcome": insp.outcome,
         "final_483_count": insp.final_483_count,
         "post_inspection_notes": insp.post_inspection_notes,
+        "sign_offs": insp.sign_offs or {},
         "lessons_learned": insp.lessons_learned or [],
         "requests": {
             "total": len(requests),

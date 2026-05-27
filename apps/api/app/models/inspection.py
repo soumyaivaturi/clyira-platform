@@ -68,6 +68,8 @@ class Inspection(Base, TimestampMixin):
     final_483_count = Column(Integer, default=0)
     post_inspection_notes = Column(Text)
     lessons_learned = Column(JSONB, default=list)
+    sign_offs = Column(JSONB, default=dict)  # {qa_lead: bool, site_director: bool, reg_affairs: bool, legal: bool}
+    closed_at = Column(String(50))          # ISO timestamp when inspection moved to post_inspection
 
     # Relationships
     company = relationship("Company", back_populates="inspections")
