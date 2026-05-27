@@ -843,7 +843,7 @@ function RequestDetailModal({
   onUpdate: () => void;
   teamOptions: { name: string; role: string | null }[];
 }) {
-  const [subTab, setSubTab] = useState<"overview" | "documents" | "comments" | "ai" | "trail">("overview");
+  // subTab removed — drawer is now single-scroll
   const [docs, setDocs] = useState<RequestDocument[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
@@ -881,9 +881,9 @@ function RequestDetailModal({
   }, [inspectionId, req.id]);
 
   useEffect(() => {
-    if (subTab === "documents") loadDocs();
-    if (subTab === "comments") loadComments();
-  }, [subTab, loadDocs, loadComments]);
+    loadDocs();
+    loadComments();
+  }, [loadDocs, loadComments]);
 
   const handleStatusUpdate = async (status: string) => {
     setUpdatingStatus(true);
@@ -929,7 +929,7 @@ function RequestDetailModal({
     try {
       const res = await inspectionsApi.analyzeRequest(inspectionId, req.id);
       setAiData({ talking_points: res.data.ai_talking_points ?? [], suggested_documents: res.data.ai_suggested_documents ?? [], risk_assessment: res.data.ai_risk_assessment ?? "" });
-      setSubTab("ai");
+      // analysis done — content visible inline
     } finally { setAnalyzing(false); }
   };
 
@@ -959,12 +959,25 @@ function RequestDetailModal({
   const StatusIcon = statusCfg.icon;
   const reqNum = req.request_number ? `REQ-${String(req.request_number).padStart(3, "0")}` : "REQ";
 
+  const SectionHeader = ({ label, icon: Icon }: { label: string; icon: any }) => (
+    <div className="flex items-center gap-1.5 mb-3">
+      <Icon className="w-3 h-3 text-muted-foreground" />
+      <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{label}</span>
+    </div>
+  );
+
+  useEffect(() => {
+    loadDocs();
+    loadComments();
+  }, [loadDocs, loadComments]);
+
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="flex-1 bg-black/25 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="bg-card border-l shadow-2xl w-full max-w-[500px] h-full flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="flex items-start justify-between px-5 py-4 border-b flex-shrink-0">
+      <div className="bg-card border-l shadow-2xl w-full max-w-[440px] h-full flex flex-col overflow-hidden">
+
+        {/* ── Drawer Header ── */}
+        <div className="flex items-start justify-between px-5 py-4 border-b flex-shrink-0 bg-card">
           <div className="flex-1 min-w-0 pr-3">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-bold text-primary font-mono">{reqNum}</span>
@@ -972,342 +985,279 @@ function RequestDetailModal({
                 {req.criticality}
               </span>
               <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${statusCfg.className}`}>
-                <StatusIcon className="w-2.5 h-2.5" />
-                {statusCfg.label}
+                <StatusIcon className="w-2.5 h-2.5" />{statusCfg.label}
               </span>
               <SlaCountdown dueAt={req.due_at} slaMinutes={req.sla_minutes} />
             </div>
             <p className="text-sm font-medium mt-1.5 leading-snug">{req.request_text}</p>
-            <div className="flex flex-wrap gap-3 mt-2 text-[11px] text-muted-foreground">
-              {req.inspector_name && (
-                <span className="flex items-center gap-1">
-                  <User className="w-3 h-3" />{req.inspector_name}
-                  {req.inspector_department && ` · ${req.inspector_department}`}
-                </span>
-              )}
-              {req.location && (
-                <span className="flex items-center gap-1">
-                  <MapPin className="w-3 h-3" />{req.location}
-                </span>
-              )}
-              <span className="flex items-center gap-1">
-                <Clock className="w-3 h-3" />{timeAgo(req.created_at)}
-              </span>
+            <div className="flex flex-wrap gap-3 mt-1.5 text-[11px] text-muted-foreground">
+              {req.inspector_name && <span className="flex items-center gap-1"><User className="w-3 h-3" />{req.inspector_name}{req.inspector_department && ` · ${req.inspector_department}`}</span>}
+              {req.location && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{req.location}</span>}
+              <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{timeAgo(req.created_at)}</span>
             </div>
           </div>
-          <button onClick={onClose} className="flex-shrink-0">
-            <X className="w-4 h-4 text-muted-foreground" />
-          </button>
+          <button onClick={onClose} className="flex-shrink-0 p-1 hover:bg-accent rounded"><X className="w-4 h-4 text-muted-foreground" /></button>
         </div>
 
-        {/* Progress */}
-        <div className="px-5 py-3 border-b flex-shrink-0">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fulfillment Progress</span>
-            <span className="text-xs font-bold text-muted-foreground">{progress}%</span>
-          </div>
-          <ProgressBar value={progress} />
-          <input
-            type="range" min={0} max={100} step={5} value={progress}
-            onChange={async e => {
-              const v = Number(e.target.value);
-              setProgress(v);
-              await inspectionsApi.updateRequest(inspectionId, req.id, { fulfillment_progress: v });
-            }}
-            className="w-full mt-1.5 h-1 accent-primary"
-          />
-        </div>
+        {/* ── Scrollable single-page content ── */}
+        <div className="flex-1 overflow-y-auto">
 
-        {/* Sub-tabs */}
-        <div className="flex border-b flex-shrink-0 px-2">
-          {[
-            { key: "overview", label: "Overview", icon: Eye },
-            { key: "documents", label: "Documents", icon: Paperclip },
-            { key: "comments", label: "Discussion", icon: MessageCircle },
-            { key: "ai", label: "AI Coach", icon: Zap },
-            { key: "trail", label: "History", icon: Activity },
-          ].map(t => {
-            const Icon = t.icon;
-            return (
-              <button key={t.key} onClick={() => setSubTab(t.key as any)}
-                className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors -mb-px ${
-                  subTab === t.key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
-                }`}>
-                <Icon className="w-3 h-3" />
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Sub-tab content */}
-        <div className="flex-1 overflow-y-auto p-5">
-          {subTab === "overview" && (
-            <div className="space-y-4">
-              {req.response_text && (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3">
-                  <p className="text-[10px] font-semibold text-emerald-800 uppercase tracking-wide mb-1">Response Logged</p>
-                  <p className="text-sm text-emerald-900">{req.response_text}</p>
-                </div>
+          {/* § 1 — WORKFLOW */}
+          <div className="px-5 py-4 border-b">
+            <SectionHeader label="Workflow" icon={Activity} />
+            {/* Stage timeline */}
+            <div className="flex items-center gap-0 mb-3 overflow-x-auto pb-1">
+              {STAGE_ORDER.map((s, i) => {
+                const idx = STAGE_ORDER.indexOf(req.status);
+                const done = i < idx;
+                const active = i === idx;
+                return (
+                  <div key={s} className="flex items-center">
+                    <button
+                      title={STAGE_SHORT[s]}
+                      onClick={() => handleStatusUpdate(s)}
+                      className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg text-center transition-all ${
+                        active ? "bg-primary/10 text-primary" :
+                        done ? "text-emerald-600 hover:bg-emerald-50" :
+                        "text-muted-foreground hover:bg-accent"
+                      }`}
+                    >
+                      <div className={`w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold ${
+                        active ? "bg-primary text-white" :
+                        done ? "bg-emerald-500 text-white" :
+                        "bg-muted text-muted-foreground"
+                      }`}>
+                        {done ? "✓" : i + 1}
+                      </div>
+                      <span className="text-[9px] font-medium whitespace-nowrap">{STAGE_SHORT[s]}</span>
+                    </button>
+                    {i < STAGE_ORDER.length - 1 && (
+                      <div className={`w-3 h-px flex-shrink-0 ${i < idx ? "bg-emerald-400" : "bg-border"}`} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {/* Progress bar */}
+            <div className="flex items-center gap-2">
+              <input
+                type="range" min={0} max={100} step={5} value={progress}
+                onChange={async e => {
+                  const v = Number(e.target.value);
+                  setProgress(v);
+                  await inspectionsApi.updateRequest(inspectionId, req.id, { fulfillment_progress: v });
+                }}
+                className="flex-1 h-1 accent-primary"
+              />
+              <span className="text-[10px] font-bold text-muted-foreground w-8 text-right">{progress}%</span>
+            </div>
+            {/* Assigned to */}
+            <div className="mt-2.5">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Assigned to</span>
+              {teamOptions.length > 0 ? (
+                <select value={assignedTo}
+                  onChange={async e => { const v = e.target.value; setAssignedTo(v); await inspectionsApi.updateRequest(inspectionId, req.id, { assigned_to: v || undefined }); onUpdate(); }}
+                  className="block w-full text-sm bg-transparent border-0 outline-none font-medium cursor-pointer mt-0.5">
+                  <option value="">Unassigned</option>
+                  {teamOptions.map(m => <option key={m.name} value={m.name}>{m.name}{m.role ? ` · ${m.role.replace(/_/g, " ")}` : ""}</option>)}
+                </select>
+              ) : (
+                <p className="text-sm font-medium mt-0.5">{assignedTo || "Unassigned"}</p>
               )}
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  { label: "Category", value: req.category },
-                  { label: "Criticality", value: req.criticality },
-                  { label: "SLA Budget", value: req.sla_minutes ? `${req.sla_minutes} min` : "—" },
-                ].map(f => (
-                  <div key={f.label} className="bg-muted/40 rounded-lg px-3 py-2.5">
-                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{f.label}</p>
-                    <p className="text-sm font-medium mt-0.5 capitalize">{f.value}</p>
+            </div>
+          </div>
+
+          {/* § 2 — EVIDENCE PACKAGE */}
+          <div className="px-5 py-4 border-b">
+            <SectionHeader label="Evidence Package" icon={Paperclip} />
+            <form onSubmit={handleAddDoc} className="flex gap-2 mb-3">
+              <input value={docFilename} onChange={e => setDocFilename(e.target.value)}
+                placeholder="Document name or path…"
+                className="flex-1 border rounded-lg px-3 py-1.5 text-xs bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              <button type="submit" disabled={addingDoc || !docFilename.trim()}
+                className="px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium disabled:opacity-60 flex items-center gap-1">
+                {addingDoc ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}Add
+              </button>
+            </form>
+            {loadingDocs ? (
+              <div className="flex items-center justify-center py-4"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div>
+            ) : docs.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">No documents attached yet</p>
+            ) : (
+              <div className="space-y-1.5">
+                {docs.map(doc => (
+                  <div key={doc.id} className="flex items-center justify-between bg-muted/30 border rounded-lg px-3 py-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                      <span className="text-xs truncate">{doc.filename}</span>
+                    </div>
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border flex-shrink-0 ml-2 ${
+                      doc.status === "ready" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                      doc.status === "delivered" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                      "bg-amber-50 text-amber-700 border-amber-200"
+                    }`}>{doc.status}</span>
                   </div>
                 ))}
-                <div className="bg-muted/40 rounded-lg px-3 py-2.5">
-                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Assigned To</p>
-                  {teamOptions.length > 0 ? (
-                    <select
-                      value={assignedTo}
-                      onChange={async e => {
-                        const v = e.target.value;
-                        setAssignedTo(v);
-                        await inspectionsApi.updateRequest(inspectionId, req.id, { assigned_to: v || undefined });
-                        onUpdate();
-                      }}
-                      className="w-full text-sm bg-transparent border-0 outline-none font-medium -ml-0.5 cursor-pointer">
-                      <option value="">Unassigned</option>
-                      {teamOptions.map(m => (
-                        <option key={m.name} value={m.name}>
-                          {m.name}{m.role ? ` · ${m.role.replace(/_/g, " ")}` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <p className="text-sm font-medium">{assignedTo || "Unassigned"}</p>
-                  )}
-                </div>
               </div>
-              <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-xs text-blue-800">
-                <p className="font-semibold mb-1 flex items-center gap-1.5"><Info className="w-3.5 h-3.5" /> What inspectors look for</p>
-                <p>Document requests require the exact document within the SLA window. Questions need a clear, concise answer — avoid volunteering extra information beyond what was asked.</p>
+            )}
+          </div>
+
+          {/* § 3 — QA REVIEW */}
+          {req.status !== "fulfilled" && req.status !== "declined" && req.status !== "withdrawn" && (
+            <div className="px-5 py-4 border-b">
+              <SectionHeader label="QA Review" icon={Shield} />
+              <div className="flex gap-2 flex-wrap">
+                {req.status === "open" && (
+                  <button onClick={() => handleStatusUpdate("in_progress")} disabled={updatingStatus}
+                    className="px-3 py-1.5 text-xs font-medium border rounded-lg hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors disabled:opacity-50">
+                    Mark In Progress
+                  </button>
+                )}
+                {(req.status === "open" || req.status === "in_progress" || req.status === "evidence_gathering") && (
+                  <button onClick={() => handleQaAction("send_to_qa")} disabled={qaing}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-purple-200 text-purple-700 rounded-lg hover:bg-purple-50 disabled:opacity-50">
+                    {qaing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}Send to QA
+                  </button>
+                )}
+                {req.status === "qa_review" && (
+                  <>
+                    <button onClick={() => handleQaAction("approve")} disabled={qaing}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-emerald-200 text-emerald-700 rounded-lg hover:bg-emerald-50 disabled:opacity-50">
+                      {qaing ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}QA Approve
+                    </button>
+                    <button onClick={() => handleQaAction("reject")} disabled={qaing}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-red-200 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-50">
+                      Return for Rework
+                    </button>
+                  </>
+                )}
+                {req.status === "approved" && (
+                  <button onClick={() => handleQaAction("release")} disabled={qaing}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+                    {qaing ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowUpRight className="w-3 h-3" />}Release to Inspector
+                  </button>
+                )}
+                <button onClick={() => handleStatusUpdate("fulfilled")} disabled={updatingStatus}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 ml-auto">
+                  {updatingStatus ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}Fulfilled
+                </button>
               </div>
             </div>
           )}
 
-          {subTab === "documents" && (
-            <div className="space-y-4">
-              <form onSubmit={handleAddDoc} className="flex gap-2">
-                <input
-                  value={docFilename}
-                  onChange={e => setDocFilename(e.target.value)}
-                  placeholder="Add document name or path…"
-                  className="flex-1 border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
-                />
-                <button type="submit" disabled={addingDoc || !docFilename.trim()}
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-60 flex items-center gap-1.5">
-                  {addingDoc ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                  Add
-                </button>
-              </form>
-              {loadingDocs ? (
-                <div className="flex items-center justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
-              ) : docs.length === 0 ? (
-                <div className="bg-muted/30 border border-dashed rounded-xl px-6 py-8 text-center">
-                  <Paperclip className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">No documents attached yet</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {docs.map(doc => (
-                    <div key={doc.id} className="flex items-center justify-between bg-muted/30 border rounded-lg px-3 py-2.5">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                        <span className="text-sm truncate">{doc.filename}</span>
-                      </div>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border flex-shrink-0 ml-2 ${
-                        doc.status === "ready" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                        doc.status === "delivered" ? "bg-blue-50 text-blue-700 border-blue-200" :
-                        "bg-amber-50 text-amber-700 border-amber-200"
-                      }`}>{doc.status}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {subTab === "comments" && (
-            <div className="space-y-4">
-              {loadingComments ? (
-                <div className="flex items-center justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
-              ) : comments.length === 0 ? (
-                <div className="bg-muted/30 border border-dashed rounded-xl px-6 py-6 text-center mb-4">
-                  <MessageCircle className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">No comments yet — start a war-room discussion</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {comments.map(c => (
-                    <div key={c.id} className="bg-card border rounded-xl px-4 py-3">
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <span className="text-xs font-semibold">{c.author_name ?? "Team"}</span>
-                        <span className="text-[10px] text-muted-foreground">{timeAgo(c.created_at)}</span>
-                      </div>
-                      <p className="text-sm leading-relaxed">{c.content}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <form onSubmit={handleSendComment} className="flex gap-2 sticky bottom-0 bg-card pt-2">
-                <input
-                  value={commentText}
-                  onChange={e => setCommentText(e.target.value)}
-                  placeholder="Add war-room note…"
-                  className="flex-1 border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
-                />
-                <button type="submit" disabled={sendingComment || !commentText.trim()}
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-60 flex items-center gap-1.5">
-                  {sendingComment ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-                </button>
-              </form>
-            </div>
-          )}
-
-          {subTab === "ai" && (
-            <div className="space-y-4">
-              {!aiData ? (
-                <div className="text-center py-8">
-                  <Zap className="w-10 h-10 text-primary/30 mx-auto mb-3" />
-                  <p className="text-sm text-muted-foreground mb-4">AI hasn't analyzed this request yet</p>
-                  <button onClick={handleAnalyze} disabled={analyzing}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium mx-auto disabled:opacity-60">
-                    {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                    {analyzing ? "Analyzing…" : "Run AI Analysis"}
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {aiData.risk_assessment && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-                      <p className="text-[10px] font-semibold text-amber-800 uppercase tracking-wide mb-1.5 flex items-center gap-1">
-                        <TriangleAlert className="w-3 h-3" /> Risk Assessment
-                      </p>
-                      <p className="text-sm text-amber-900">{aiData.risk_assessment}</p>
-                    </div>
-                  )}
-                  {aiData.talking_points.length > 0 && (
-                    <div className="bg-card border rounded-xl px-4 py-3">
-                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Talking Points</p>
-                      <ul className="space-y-2">
-                        {aiData.talking_points.map((pt, i) => (
-                          <li key={i} className="flex items-start gap-2 text-sm">
-                            <span className="text-primary font-bold mt-0.5 flex-shrink-0">{i + 1}.</span>
-                            <span>{pt}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {aiData.suggested_documents.length > 0 && (
-                    <div className="bg-card border rounded-xl px-4 py-3">
-                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Suggested Documents</p>
-                      <div className="flex flex-wrap gap-2">
-                        {aiData.suggested_documents.map((doc, i) => (
-                          <span key={i} className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-primary/5 border border-primary/20 rounded-lg font-medium text-primary">
-                            <FileText className="w-3 h-3" />{doc}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <button onClick={handleAnalyze} disabled={analyzing}
-                    className="flex items-center gap-1.5 text-xs text-primary hover:underline font-medium disabled:opacity-50">
-                    {analyzing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                    Re-analyze
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {subTab === "trail" && (
-            <div className="space-y-2">
-              <div className="bg-card border rounded-xl px-4 py-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[10px] font-bold uppercase text-muted-foreground px-2 py-0.5 rounded bg-muted">Created</span>
-                  <span className="text-[10px] text-muted-foreground">{timeAgo(req.created_at)}</span>
-                </div>
-                <p className="text-sm">Request logged</p>
-              </div>
-              {aiData && (
-                <div className="bg-card border rounded-xl px-4 py-3">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[10px] font-bold uppercase text-primary px-2 py-0.5 rounded bg-primary/10">AI</span>
-                  </div>
-                  <p className="text-sm">AI analysis completed</p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Action bar */}
-        {req.status !== "fulfilled" && req.status !== "declined" && req.status !== "withdrawn" && (
-          <div className="border-t px-4 py-3 flex-shrink-0 space-y-2">
-            {/* QA Gate workflow row */}
-            <div className="flex gap-2 flex-wrap">
-              {req.status === "open" && (
-                <button onClick={() => handleStatusUpdate("in_progress")} disabled={updatingStatus}
-                  className="px-3 py-1.5 text-xs font-medium border rounded-lg hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors disabled:opacity-50">
-                  Mark In Progress
-                </button>
-              )}
-              {(req.status === "open" || req.status === "in_progress" || req.status === "evidence_gathering") && (
-                <button onClick={() => handleQaAction("send_to_qa")} disabled={qaing}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-purple-200 text-purple-700 rounded-lg hover:bg-purple-50 disabled:opacity-50">
-                  {qaing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
-                  Send to QA
-                </button>
-              )}
-              {req.status === "qa_review" && (
-                <>
-                  <button onClick={() => handleQaAction("approve")} disabled={qaing}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-emerald-200 text-emerald-700 rounded-lg hover:bg-emerald-50 disabled:opacity-50">
-                    {qaing ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
-                    QA Approve
-                  </button>
-                  <button onClick={() => handleQaAction("reject")} disabled={qaing}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-red-200 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-50">
-                    Return
-                  </button>
-                </>
-              )}
-              {req.status === "approved" && (
-                <button onClick={() => handleQaAction("release")} disabled={qaing}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
-                  {qaing ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowUpRight className="w-3 h-3" />}
-                  Release to Inspector
-                </button>
-              )}
-              <button onClick={() => handleStatusUpdate("fulfilled")} disabled={updatingStatus}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 ml-auto">
-                {updatingStatus ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
-                Fulfilled
+          {/* § 4 — AI RISK NOTE */}
+          <div className="px-5 py-4 border-b">
+            <div className="flex items-center justify-between mb-3">
+              <SectionHeader label="AI Coach" icon={Zap} />
+              <button onClick={handleAnalyze} disabled={analyzing}
+                className="flex items-center gap-1 text-[10px] text-primary hover:underline disabled:opacity-50">
+                {analyzing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                {aiData ? "Re-run" : "Analyze"}
               </button>
             </div>
-            {/* Convert to row */}
+            {!aiData ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Zap className="w-3.5 h-3.5 text-muted-foreground/40" />
+                <span>{analyzing ? "Analyzing…" : "No AI analysis yet — click Analyze."}</span>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {aiData.risk_assessment && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+                    <p className="text-[10px] font-semibold text-amber-800 uppercase tracking-wide mb-1 flex items-center gap-1"><TriangleAlert className="w-3 h-3" />Risk</p>
+                    <p className="text-xs text-amber-900">{aiData.risk_assessment}</p>
+                  </div>
+                )}
+                {aiData.talking_points.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Talking Points</p>
+                    <ul className="space-y-1.5">
+                      {aiData.talking_points.map((pt, i) => (
+                        <li key={i} className="flex items-start gap-2 text-xs">
+                          <span className="text-primary font-bold flex-shrink-0">{i + 1}.</span><span>{pt}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {aiData.suggested_documents.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Suggested Documents</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {aiData.suggested_documents.map((doc, i) => (
+                        <span key={i} className="flex items-center gap-1 text-[11px] px-2 py-1 bg-primary/5 border border-primary/20 rounded-lg font-medium text-primary">
+                          <FileText className="w-2.5 h-2.5" />{doc}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* § 5 — COMMENTS */}
+          <div className="px-5 py-4 border-b">
+            <SectionHeader label="War Room Discussion" icon={MessageCircle} />
+            {loadingComments ? (
+              <div className="flex items-center justify-center py-4"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div>
+            ) : comments.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic mb-3">No comments yet</p>
+            ) : (
+              <div className="space-y-2 mb-3">
+                {comments.map(c => (
+                  <div key={c.id} className="bg-muted/30 border rounded-lg px-3 py-2.5">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[11px] font-semibold">{c.author_name ?? "Team"}</span>
+                      <span className="text-[10px] text-muted-foreground">{timeAgo(c.created_at)}</span>
+                    </div>
+                    <p className="text-xs leading-relaxed">{c.content}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <form onSubmit={handleSendComment} className="flex gap-2">
+              <input value={commentText} onChange={e => setCommentText(e.target.value)}
+                placeholder="Add war-room note…"
+                className="flex-1 border rounded-lg px-3 py-1.5 text-xs bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              <button type="submit" disabled={sendingComment || !commentText.trim()}
+                className="px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium disabled:opacity-60 flex items-center gap-1">
+                {sendingComment ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+              </button>
+            </form>
+          </div>
+
+          {/* § 6 — CONVERT */}
+          <div className="px-5 py-4">
+            <SectionHeader label="Convert To" icon={GitMerge} />
             <div className="flex gap-2 flex-wrap">
-              <span className="text-[10px] text-muted-foreground self-center">Convert to:</span>
               {(["commitment", "finding", "capa"] as const).map(target => (
                 <button key={target} onClick={() => handleConvert(target)} disabled={converting === target}
-                  className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium border rounded-md hover:bg-muted disabled:opacity-50">
-                  {converting === target ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}
-                  {target === "commitment" ? "Commitment" : target === "finding" ? "Finding" : "CAPA"}
+                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border rounded-lg hover:bg-muted disabled:opacity-50">
+                  {converting === target ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                  {target === "commitment" ? "Commitment" : target === "finding" ? "Potential Finding" : "CAPA"}
                 </button>
               ))}
             </div>
           </div>
-        )}
+
+        </div>
       </div>
     </div>
+  );
+}
+
+// ── Live Clock ────────────────────────────────────────────────────────────────
+function LiveClock() {
+  const [time, setTime] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <span className="font-mono text-xs font-semibold tabular-nums text-muted-foreground">
+      {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+    </span>
   );
 }
 
@@ -2721,95 +2671,64 @@ export default function WarRoomPage() {
         </div>
       )}
 
-      {/* Breadcrumb + Header */}
-      <div>
-        <Link href="/inspections" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mb-3">
-          <ChevronLeft className="w-3.5 h-3.5" />
-          All Inspections
-        </Link>
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="flex items-start gap-3">
-            <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${
-              inspection.status === "active" ? "bg-emerald-100" : "bg-primary/10"
-            }`}>
-              <Radio className={`w-5 h-5 ${inspection.status === "active" ? "text-emerald-600 animate-pulse" : "text-primary"}`} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-xl font-semibold tracking-tight">{inspection.title}</h1>
-                <InspStatusBadge status={inspection.status} />
-                {inspection.start_date && (() => {
-                  const day = Math.max(1, Math.ceil((Date.now() - new Date(inspection.start_date).getTime()) / 86400000));
-                  return (
-                    <span className="flex items-center gap-1 px-2.5 py-0.5 bg-primary/10 text-primary text-xs font-bold rounded-full">
-                      <Calendar className="w-3 h-3" />
-                      Day {day}
-                    </span>
-                  );
-                })()}
-              </div>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                {inspection.agency && `${inspection.agency} · `}
-                {typeLabel(inspection.inspection_type)}
-                {inspection.start_date && ` · Started ${inspection.start_date}`}
-              </p>
-            </div>
+      {/* ── Sticky War Room Header ──────────────────────────────────────────── */}
+      <div className="sticky top-0 z-40 bg-background/95 backdrop-blur-sm border-b -mx-4 px-4 py-3">
+        {/* Row 1: title + actions */}
+        <div className="flex items-center gap-3 min-w-0">
+          {/* Left: back + identity */}
+          <Link href="/inspections" className="flex-shrink-0 text-muted-foreground hover:text-foreground">
+            <ChevronLeft className="w-4 h-4" />
+          </Link>
+          <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
+            inspection.status === "active" ? "bg-emerald-100" : "bg-primary/10"
+          }`}>
+            <Radio className={`w-3.5 h-3.5 ${inspection.status === "active" ? "text-emerald-600 animate-pulse" : "text-primary"}`} />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+            <h1 className="text-sm font-semibold tracking-tight truncate">{inspection.title}</h1>
+            <InspStatusBadge status={inspection.status} />
+            {inspection.start_date && (() => {
+              const day = Math.max(1, Math.ceil((Date.now() - new Date(inspection.start_date).getTime()) / 86400000));
+              return (
+                <span className="flex-shrink-0 flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded-full">
+                  <Calendar className="w-2.5 h-2.5" />Day {day}
+                </span>
+              );
+            })()}
+            {inspection.agency && (
+              <span className="text-[11px] text-muted-foreground hidden sm:inline">{inspection.agency} · {typeLabel(inspection.inspection_type)}</span>
+            )}
+          </div>
+
+          {/* Center: live clock */}
+          <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 bg-muted/50 rounded-lg">
+            <Clock className="w-3 h-3 text-muted-foreground" />
+            <LiveClock />
+          </div>
+
+          {/* Right: status chips + controls */}
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {/* Overdue chip */}
+            {overdueCount > 0 && (
+              <button onClick={() => { setTab("requests"); setActivePresetId("overdue"); }}
+                className="flex items-center gap-1 px-2 py-1 bg-red-100 text-red-700 border border-red-200 rounded-lg text-[11px] font-bold hover:bg-red-200 transition-colors">
+                <AlertTriangle className="w-3 h-3" />{overdueCount} overdue
+              </button>
+            )}
+            {/* QA Pending chip */}
+            {qaPendingCount > 0 && (
+              <button onClick={() => { setTab("requests"); setActivePresetId("qa_review"); }}
+                className="flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 border border-purple-200 rounded-lg text-[11px] font-bold hover:bg-purple-200 transition-colors">
+                <Shield className="w-3 h-3" />{qaPendingCount} QA
+              </button>
+            )}
+            {/* Live users */}
             {inspection.status === "active" && (
-              <div className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-xs font-medium text-muted-foreground">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                {connectedUsers} live
+              <div className="flex items-center gap-1 px-2 py-1 border rounded-lg text-[11px] text-muted-foreground">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />{connectedUsers} live
               </div>
             )}
-            {/* Alert Bell */}
-            <div className="relative">
-              <button
-                onClick={async () => {
-                  setShowAlerts(f => !f);
-                  if (!showAlerts) {
-                    try {
-                      const r = await inspectionsApi.getAlerts(id);
-                      setAlerts(r.data.alerts ?? []);
-                    } catch {}
-                  }
-                }}
-                className="relative flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent"
-                title="Alerts"
-              >
-                <Bell className="w-3.5 h-3.5" />
-                {alerts.filter(a => a.severity === "critical").length > 0 && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
-                    {alerts.filter(a => a.severity === "critical").length}
-                  </span>
-                )}
-              </button>
-              {showAlerts && (
-                <div className="absolute right-0 top-10 z-50 w-80 bg-card border rounded-xl shadow-xl overflow-hidden">
-                  <div className="flex items-center justify-between px-4 py-2.5 border-b">
-                    <span className="text-xs font-semibold">Live Alerts ({alerts.length})</span>
-                    <button onClick={() => setShowAlerts(false)}><X className="w-3.5 h-3.5" /></button>
-                  </div>
-                  <div className="max-h-80 overflow-y-auto">
-                    {alerts.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-6">No active alerts</p>
-                    ) : (
-                      <div className="divide-y">
-                        {alerts.map((a, i) => (
-                          <div key={i} className={`px-4 py-3 ${
-                            a.severity === "critical" ? "bg-red-50" : a.severity === "warning" ? "bg-amber-50" : "bg-blue-50"
-                          }`}>
-                            <p className="text-xs font-semibold">{a.title}</p>
-                            <p className="text-[11px] text-muted-foreground mt-0.5">{a.body}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-            {/* Safe Mode Toggle */}
+            {/* Safe mode */}
             <button
               onClick={async () => {
                 setTogglingMode(true);
@@ -2819,138 +2738,159 @@ export default function WarRoomPage() {
                 } finally { setTogglingMode(false); }
               }}
               disabled={togglingMode}
-              title={safeMode ? "Inspector-safe mode ON — click to show internal data" : "Show internal-only data — click to enable safe mode"}
-              className={`flex items-center gap-1.5 px-3 py-2 border rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${
+              title={safeMode ? "Safe mode ON" : "Internal view"}
+              className={`flex items-center gap-1 px-2 py-1 border rounded-lg text-[11px] font-medium transition-colors disabled:opacity-50 ${
                 safeMode ? "bg-amber-50 border-amber-300 text-amber-800" : "hover:bg-accent text-muted-foreground"
               }`}
             >
-              {safeMode ? <ShieldOff className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
-              {safeMode ? "Safe" : "Internal"}
+              {safeMode ? <ShieldOff className="w-3 h-3" /> : <ShieldCheck className="w-3 h-3" />}
+              <span className="hidden sm:inline">{safeMode ? "Safe" : "Internal"}</span>
             </button>
+            {/* Refresh */}
             <button onClick={loadAll} disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm hover:bg-accent disabled:opacity-50">
+              className="p-1.5 border rounded-lg hover:bg-accent disabled:opacity-50">
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
             </button>
+            {/* Activate / Close */}
             {inspection.status === "planned" && (
               <button onClick={handleActivate} disabled={activating}
-                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-60">
-                {activating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 disabled:opacity-60">
+                {activating ? <Loader2 className="w-3 h-3 animate-spin" /> : <PlayCircle className="w-3 h-3" />}
                 Activate
               </button>
             )}
             {inspection.status === "active" && canCloseInspection && (
               <button onClick={handleClose} disabled={closing}
-                className="flex items-center gap-2 px-4 py-2 bg-muted border rounded-lg text-sm font-medium hover:bg-accent disabled:opacity-60">
-                {closing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-muted border rounded-lg text-xs font-medium hover:bg-accent disabled:opacity-60">
+                {closing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}
                 Close
               </button>
             )}
           </div>
         </div>
+
+        {/* Row 2: phase + activity pills (active only) */}
+        {inspection.status === "active" && (
+          <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+              <Activity className="w-3 h-3 text-primary" /> Phase
+            </span>
+            {PHASES.map((p, phaseIdx) => {
+              const currentIdx = PHASES.findIndex(x => x.key === inspection.current_phase);
+              const isActive = inspection.current_phase === p.key;
+              const isDone = currentIdx > phaseIdx;
+              return (
+                <button key={p.key} onClick={() => handlePhaseChange(p.key)}
+                  className={`flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-medium border transition-all ${
+                    isActive ? "bg-primary text-primary-foreground border-primary" :
+                    isDone ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
+                    "border-border text-muted-foreground hover:text-foreground hover:bg-accent"
+                  }`}>
+                  {isActive && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
+                  {p.short}
+                </button>
+              );
+            })}
+            <span className="w-px h-3.5 bg-border mx-0.5 flex-shrink-0" />
+            {[
+              { key: "inspector_arrived", label: "Arrived", cls: "bg-emerald-50 border-emerald-200 text-emerald-800" },
+              { key: "inspector_on_break", label: "Break", cls: "bg-amber-50 border-amber-200 text-amber-800" },
+              { key: "lunch_break", label: "Lunch", cls: "bg-orange-50 border-orange-200 text-orange-800" },
+              { key: "quiet_time", label: "Quiet", cls: "bg-blue-50 border-blue-200 text-blue-800" },
+              { key: "end_of_day_debrief", label: "EOD", cls: "bg-purple-50 border-purple-200 text-purple-800" },
+              { key: "inspectors_left", label: "Left", cls: "bg-gray-100 border-gray-200 text-gray-700" },
+            ].map(a => {
+              const isActive = inspection.current_phase === a.key;
+              return (
+                <button key={a.key}
+                  onClick={() => handlePhaseChange(isActive ? "document_review" : a.key)}
+                  className={`flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-medium border transition-all ${
+                    isActive ? `${a.cls} ring-1 ring-offset-0 ring-current` : "border-border text-muted-foreground hover:bg-accent opacity-70 hover:opacity-100"
+                  }`}>
+                  {isActive && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
+                  {a.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {/* ── Compact War Room Status Bar ──────────────────────────────────────── */}
+      {/* ── KPI Strip ────────────────────────────────────────────────────────── */}
       {(() => {
         const completionPct = allRequests.length
-          ? Math.round((resolvedRequests.length / allRequests.length) * 100)
-          : 0;
-
-        const topAlerts = [
-          ...alerts.filter(a => a.severity === "critical"),
-          ...alerts.filter(a => a.severity === "warning"),
-        ].slice(0, 2);
-
+          ? Math.round((resolvedRequests.length / allRequests.length) * 100) : 0;
         return (
-          <>
-            {/* KPI + Phase row */}
-            <div className="bg-card border rounded-xl overflow-hidden">
-              {/* KPI strip */}
-              <div className="grid grid-cols-5 divide-x border-b">
-                {[
-                  { label: "Open", value: openRows.length, color: openRows.length > 0 ? "text-amber-600" : "" },
-                  { label: "Overdue", value: overdueCount, color: overdueCount > 0 ? "text-red-600" : "" },
-                  { label: "QA Pending", value: qaPendingCount, color: qaPendingCount > 0 ? "text-purple-600" : "" },
-                  { label: "Resolved", value: resolvedRows.length, color: resolvedRows.length > 0 ? "text-emerald-600" : "" },
-                  { label: "Done %", value: `${completionPct}%`, color: completionPct === 100 ? "text-emerald-600" : completionPct > 0 ? "text-primary" : "" },
-                ].map(kpi => (
-                  <div key={kpi.label} className="px-3 py-2.5 text-center">
-                    <p className={`text-xl font-bold tabular-nums ${kpi.color || "text-foreground"}`}>{kpi.value}</p>
-                    <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mt-0.5">{kpi.label}</p>
-                  </div>
-                ))}
+          <div className="bg-card border rounded-xl grid grid-cols-5 divide-x">
+            {[
+              { label: "Open", value: openRows.length, color: openRows.length > 0 ? "text-amber-600" : "" },
+              { label: "Overdue", value: overdueCount, color: overdueCount > 0 ? "text-red-600" : "" },
+              { label: "QA Pending", value: qaPendingCount, color: qaPendingCount > 0 ? "text-purple-600" : "" },
+              { label: "Resolved", value: resolvedRows.length, color: resolvedRows.length > 0 ? "text-emerald-600" : "" },
+              { label: "Done %", value: `${completionPct}%`, color: completionPct === 100 ? "text-emerald-600" : completionPct > 0 ? "text-primary" : "" },
+            ].map(kpi => (
+              <div key={kpi.label} className="px-3 py-2.5 text-center">
+                <p className={`text-xl font-bold tabular-nums ${kpi.color || "text-foreground"}`}>{kpi.value}</p>
+                <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mt-0.5">{kpi.label}</p>
               </div>
+            ))}
+          </div>
+        );
+      })()}
 
-              {/* Phase + activity pills */}
-              {inspection.status === "active" && (
-                <div className="flex items-center gap-1.5 px-4 py-2.5 flex-wrap">
-                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex items-center gap-1 mr-1">
-                    <Activity className="w-3 h-3 text-primary" /> Phase
-                  </span>
-                  {PHASES.map((p, phaseIdx) => {
-                    const currentIdx = PHASES.findIndex(x => x.key === inspection.current_phase);
-                    const isActive = inspection.current_phase === p.key;
-                    const isDone = currentIdx > phaseIdx;
-                    return (
-                      <button key={p.key} onClick={() => handlePhaseChange(p.key)}
-                        className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
-                          isActive ? "bg-primary text-primary-foreground border-primary" :
-                          isDone ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
-                          "border-border text-muted-foreground hover:text-foreground hover:bg-accent"
-                        }`}>
-                        {isActive && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
-                        {p.short}
-                      </button>
-                    );
-                  })}
-                  <span className="w-px h-4 bg-border mx-1 flex-shrink-0" />
-                  {[
-                    { key: "inspector_arrived", label: "Arrived", cls: "bg-emerald-50 border-emerald-200 text-emerald-800" },
-                    { key: "inspector_on_break", label: "On Break", cls: "bg-amber-50 border-amber-200 text-amber-800" },
-                    { key: "lunch_break", label: "Lunch", cls: "bg-orange-50 border-orange-200 text-orange-800" },
-                    { key: "quiet_time", label: "Quiet", cls: "bg-blue-50 border-blue-200 text-blue-800" },
-                    { key: "end_of_day_debrief", label: "EOD Debrief", cls: "bg-purple-50 border-purple-200 text-purple-800" },
-                    { key: "inspectors_left", label: "Left", cls: "bg-gray-100 border-gray-200 text-gray-700" },
-                  ].map(a => {
-                    const isActive = inspection.current_phase === a.key;
-                    return (
-                      <button key={a.key}
-                        onClick={() => handlePhaseChange(isActive ? "document_review" : a.key)}
-                        className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
-                          isActive
-                            ? `${a.cls} ring-1 ring-offset-0 ring-current`
-                            : "border-border text-muted-foreground hover:bg-accent opacity-70 hover:opacity-100"
-                        }`}>
-                        {isActive && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
-                        {a.label}
-                      </button>
-                    );
-                  })}
+      {/* ── Derived Alert Strip (priority-ranked) ────────────────────────────── */}
+      {(() => {
+        const unpreparedSMEs = smeRoomStatuses.filter(s => s.not_prepared && s.room_slot !== "off_site");
+        const derivedAlerts: { severity: "critical" | "warning"; title: string; body: string; dismissible: boolean }[] = [];
+
+        // Priority 1: unprepared SMEs — red, not dismissible
+        if (unpreparedSMEs.length > 0) {
+          derivedAlerts.push({
+            severity: "critical",
+            title: `${unpreparedSMEs.length} SME${unpreparedSMEs.length > 1 ? "s" : ""} not prep-cleared`,
+            body: unpreparedSMEs.map(s => s.name).join(", ") + " — not cleared for room entry",
+            dismissible: false,
+          });
+        }
+        // Priority 2: QA bottleneck
+        if (qaPendingCount >= 3) {
+          derivedAlerts.push({
+            severity: "warning",
+            title: `QA bottleneck — ${qaPendingCount} requests queued`,
+            body: "More than 3 requests waiting for QA review. Consider pulling in another reviewer.",
+            dismissible: true,
+          });
+        }
+        // Priority 3: overdue requests (only if no higher-priority alerts)
+        if (overdueCount > 0 && derivedAlerts.length === 0) {
+          derivedAlerts.push({
+            severity: "warning",
+            title: `${overdueCount} request${overdueCount > 1 ? "s" : ""} past SLA`,
+            body: "Click Overdue in the toolbar to see affected requests.",
+            dismissible: true,
+          });
+        }
+
+        if (derivedAlerts.length === 0) return null;
+        return (
+          <div className="space-y-1.5">
+            {derivedAlerts.map((a, i) => (
+              <div key={i} className={`flex items-start gap-3 px-4 py-2.5 rounded-xl border ${
+                a.severity === "critical" ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200"
+              }`}>
+                {a.severity === "critical"
+                  ? <AlertTriangle className="w-3.5 h-3.5 text-red-600 flex-shrink-0 mt-0.5" />
+                  : <AlertCircle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />}
+                <div className="flex-1 min-w-0">
+                  <span className={`text-xs font-semibold ${a.severity === "critical" ? "text-red-800" : "text-amber-800"}`}>{a.title}</span>
+                  <span className={`text-xs ml-2 ${a.severity === "critical" ? "text-red-700" : "text-amber-700"}`}>{a.body}</span>
                 </div>
-              )}
-            </div>
-
-            {/* Alert strip — max 2 alerts, highest priority first */}
-            {topAlerts.length > 0 && (
-              <div className="space-y-1.5">
-                {topAlerts.map((a, i) => (
-                  <div key={i} className={`flex items-start gap-3 px-4 py-2.5 rounded-xl border ${
-                    a.severity === "critical" ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200"
-                  }`}>
-                    {a.severity === "critical"
-                      ? <AlertTriangle className="w-3.5 h-3.5 text-red-600 flex-shrink-0 mt-0.5" />
-                      : <AlertCircle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />}
-                    <div className="flex-1 min-w-0">
-                      <span className={`text-xs font-semibold ${a.severity === "critical" ? "text-red-800" : "text-amber-800"}`}>{a.title}</span>
-                      <span className={`text-xs ml-2 ${a.severity === "critical" ? "text-red-700" : "text-amber-700"}`}>{a.body}</span>
-                    </div>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase flex-shrink-0 ${
-                      a.severity === "critical" ? "bg-red-200 text-red-800" : "bg-amber-200 text-amber-800"
-                    }`}>{a.severity}</span>
-                  </div>
-                ))}
+                {!a.dismissible && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase flex-shrink-0 bg-red-200 text-red-800">Action required</span>
+                )}
               </div>
-            )}
-          </>
+            ))}
+          </div>
         );
       })()}
 
