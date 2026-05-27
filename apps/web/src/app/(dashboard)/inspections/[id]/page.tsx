@@ -1268,7 +1268,7 @@ function RequestTableRow({ row, onClick, cols }: { row: RequestRow; onClick: () 
   return (
     <div
       onClick={onClick}
-      className={`group flex items-center gap-2 px-3 py-2.5 border-l-[3px] cursor-pointer hover:bg-muted/40 transition-colors ${
+      className={`group flex items-center gap-2 px-3 py-1.5 border-l-[3px] cursor-pointer hover:bg-muted/40 transition-colors ${
         row.is_overdue ? "border-l-red-500 bg-red-50/30" : (LEFT_BORDER[row.criticality] ?? "border-l-border")
       } ${isDone ? "opacity-55" : ""}`}
     >
@@ -2367,6 +2367,33 @@ export default function WarRoomPage() {
   const [showCmdCenterSettings, setShowCmdCenterSettings] = useState(false);
   const [showIntelPanel, setShowIntelPanel] = useState(false);
 
+  // Sidebar resize
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    if (typeof window !== "undefined") {
+      return parseInt(localStorage.getItem(`clyira_sbar_${id}`) ?? "256");
+    }
+    return 256;
+  });
+  const sidebarWidthRef = useRef(256);
+  const startSidebarResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidthRef.current;
+    const onMove = (me: MouseEvent) => {
+      const newW = Math.min(420, Math.max(180, startW + (startX - me.clientX)));
+      setSidebarWidth(newW);
+      sidebarWidthRef.current = newW;
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      if (typeof window !== "undefined")
+        localStorage.setItem(`clyira_sbar_${id}`, String(sidebarWidthRef.current));
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [id]);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     setLoadError("");
@@ -2506,6 +2533,9 @@ export default function WarRoomPage() {
       setInterimText("");
     }
   }, [tab]);
+
+  // Sync sidebar width ref
+  useEffect(() => { sidebarWidthRef.current = sidebarWidth; }, [sidebarWidth]);
 
   // Stop recording on unmount
   useEffect(() => {
@@ -3003,7 +3033,7 @@ export default function WarRoomPage() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3">
       {/* WebSocket toast notifications */}
       {wsToasts.length > 0 && (
         <div className="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none">
@@ -3152,7 +3182,7 @@ export default function WarRoomPage() {
       )}
 
       {/* ── Sticky War Room Header ──────────────────────────────────────────── */}
-      <div className="sticky top-0 z-40 bg-background/95 backdrop-blur-sm border-b -mx-4 px-4 py-3">
+      <div className="sticky top-0 z-40 bg-background/95 backdrop-blur-sm border-b -mx-4 px-4 py-2">
         {/* Row 1: title + actions */}
         <div className="flex items-center gap-3 min-w-0">
           {/* Left: back + identity */}
@@ -3321,15 +3351,15 @@ export default function WarRoomPage() {
             {kpis.map(kpi => (
               kpi.action ? (
                 <button key={kpi.label} onClick={kpi.action}
-                  className="px-3 py-2.5 text-center cursor-pointer hover:bg-muted/60 active:bg-muted transition-colors group relative">
-                  <p className={`text-xl font-bold tabular-nums ${kpi.color || "text-foreground"}`}>{kpi.value}</p>
-                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mt-0.5 group-hover:text-foreground transition-colors">{kpi.label}</p>
-                  <span className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[8px] text-muted-foreground/40 group-hover:text-primary/50 transition-colors">↓</span>
+                  className="px-3 py-1.5 text-center cursor-pointer hover:bg-muted/60 active:bg-muted transition-colors group relative">
+                  <p className={`text-base font-bold tabular-nums leading-snug ${kpi.color || "text-foreground"}`}>{kpi.value}</p>
+                  <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-wide group-hover:text-foreground transition-colors">{kpi.label}</p>
+                  <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 text-[7px] text-muted-foreground/40 group-hover:text-primary/50 transition-colors">↓</span>
                 </button>
               ) : (
-                <div key={kpi.label} className="px-3 py-2.5 text-center">
-                  <p className={`text-xl font-bold tabular-nums ${kpi.color || "text-foreground"}`}>{kpi.value}</p>
-                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mt-0.5">{kpi.label}</p>
+                <div key={kpi.label} className="px-3 py-1.5 text-center">
+                  <p className={`text-base font-bold tabular-nums leading-snug ${kpi.color || "text-foreground"}`}>{kpi.value}</p>
+                  <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-wide">{kpi.label}</p>
                 </div>
               )
             ))}
@@ -3390,13 +3420,9 @@ export default function WarRoomPage() {
         };
 
         return (
-          <div className="space-y-2.5">
-            {/* Header row */}
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 select-none">
-                Command Center
-              </span>
-              <div className="flex items-center gap-1">
+          <div className="space-y-2">
+            {/* Controls row — no section label */}
+            <div className="flex justify-end items-center gap-1">
                 <button
                   onClick={() => setShowIntelPanel(v => !v)}
                   className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-medium border transition-colors cursor-pointer ${
@@ -3452,16 +3478,15 @@ export default function WarRoomPage() {
                     </div>
                   )}
                 </div>
-              </div>
             </div>
 
             {/* 4-panel cards */}
             {visibleCount > 0 && (
               <div className={`grid ${gridCols} gap-3`}>
                 {showPanel("situation") && (
-                  <div className="bg-card border rounded-xl p-4">
+                  <div className="bg-card border rounded-xl p-3">
                     <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Current Moment</p>
-                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 mb-3">Live context</p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 mb-2">Live context</p>
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] text-muted-foreground w-10 flex-shrink-0">Phase</span>
@@ -3496,9 +3521,9 @@ export default function WarRoomPage() {
                 )}
 
                 {showPanel("attention") && (
-                  <div className="bg-card border rounded-xl p-4">
+                  <div className="bg-card border rounded-xl p-3">
                     <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Needs My Attention</p>
-                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 mb-3">Items requiring action</p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 mb-2">Items requiring action</p>
                     {attnItems.length === 0 ? (
                       <div className="flex items-center gap-1.5 py-1">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
@@ -3521,9 +3546,9 @@ export default function WarRoomPage() {
                 )}
 
                 {showPanel("focus") && (
-                  <div className="bg-card border rounded-xl p-4">
+                  <div className="bg-card border rounded-xl p-3">
                     <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Inspector Focus</p>
-                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 mb-3">Short signal, not a full report</p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 mb-2">Short signal, not a full report</p>
                     {!primaryFocus ? (
                       <span className="text-[10px] text-muted-foreground/50 italic">Not enough data yet</span>
                     ) : (
@@ -3550,9 +3575,9 @@ export default function WarRoomPage() {
                 )}
 
                 {showPanel("sme_status") && (
-                  <div className="bg-card border rounded-xl p-4">
+                  <div className="bg-card border rounded-xl p-3">
                     <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">SME Status</p>
-                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 mb-3">Room flow</p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 mb-2">Room flow</p>
                     {topSMEs.length === 0 ? (
                       <span className="text-[10px] text-muted-foreground/50 italic">No SMEs assigned yet</span>
                     ) : (
@@ -3748,7 +3773,7 @@ export default function WarRoomPage() {
               onExitExecView={() => setIsExecViewHidden(true)}
             />
           ) : (
-            <div className="flex gap-4 items-start">
+            <div className="flex gap-3 items-start">
               {/* ── Left: main table area ── */}
               <div className="flex-1 min-w-0 space-y-3">
 
@@ -4001,6 +4026,14 @@ export default function WarRoomPage() {
 
               </div>
 
+              {/* Sidebar resize handle */}
+              <div
+                onMouseDown={startSidebarResize}
+                className="hidden xl:flex flex-shrink-0 w-2 cursor-col-resize items-center justify-center group hover:bg-primary/5 rounded transition-colors select-none"
+                title="Drag to resize">
+                <div className="w-px h-8 bg-border rounded-full group-hover:bg-primary/40 group-active:bg-primary/60 transition-colors" />
+              </div>
+
               {/* ── Right: Intelligence Sidebar ── */}
               {(() => {
                 const sidebarNotes = log.filter(e => e.entry_type === "scribe_note").slice(-3).reverse();
@@ -4014,7 +4047,7 @@ export default function WarRoomPage() {
                 const openHighCt = requestRows.filter(r =>
                   (r.criticality === "critical" || r.criticality === "high") && !DONE_STATUSES.includes(r.stage)).length;
                 return (
-                  <div className="hidden xl:flex flex-col flex-shrink-0 w-64 space-y-2">
+                  <div className="hidden xl:flex flex-col flex-shrink-0 space-y-2" style={{ width: sidebarWidth }}>
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
                         <Layers className="w-3.5 h-3.5 text-primary" /> Live Intel
