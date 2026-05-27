@@ -419,6 +419,32 @@ function ProgressBar({ value }: { value: number }) {
   );
 }
 
+// ── Stage Progress ────────────────────────────────────────────────────────────
+const STAGE_ORDER = ["open","assigned","in_progress","evidence_gathering","qa_review","approved","released","fulfilled"];
+const STAGE_SHORT: Record<string, string> = {
+  open: "Logged", assigned: "Assigned", in_progress: "Runner", evidence_gathering: "Liaison",
+  qa_review: "Review", approved: "Host", released: "Delivered", fulfilled: "Done",
+};
+
+function StageProgress({ status }: { status: string }) {
+  const idx = STAGE_ORDER.indexOf(status);
+  if (idx < 0) return null;
+  return (
+    <div className="flex items-center gap-0.5 mt-1.5">
+      {STAGE_ORDER.map((s, i) => (
+        <div key={s} title={STAGE_SHORT[s]}
+          className={`h-1.5 flex-1 rounded-sm transition-all ${
+            i < idx ? "bg-emerald-400" : i === idx ? "bg-primary" : "bg-gray-100"
+          }`}
+        />
+      ))}
+      <span className="text-[9px] text-muted-foreground ml-1.5 whitespace-nowrap font-medium">
+        {STAGE_SHORT[status] ?? status}
+      </span>
+    </div>
+  );
+}
+
 // ── Phase Navigator ───────────────────────────────────────────────────────────
 function PhaseNavigator({
   current,
@@ -476,11 +502,25 @@ function PhaseNavigator({
 }
 
 // ── Add Request Modal ─────────────────────────────────────────────────────────
-function AddRequestModal({ onClose, onAdd }: { onClose: () => void; onAdd: (d: any) => Promise<void> }) {
+const COMMON_LOCATIONS = [
+  "Prep Room", "Audit Room / Front Room", "Manufacturing Floor",
+  "QC Lab", "Warehouse / Storage", "Conference Room", "Virtual / Remote",
+];
+
+function AddRequestModal({
+  onClose, onAdd, inspectorOptions, teamOptions,
+}: {
+  onClose: () => void;
+  onAdd: (d: any) => Promise<void>;
+  inspectorOptions: { name: string }[];
+  teamOptions: { name: string; role: string | null }[];
+}) {
   const [form, setForm] = useState({
     request_text: "", criticality: "medium", category: "question",
-    inspector_name: "", inspector_department: "", location: "",
+    inspector_name: "", inspector_department: "", location: "", assigned_to: "",
   });
+  const [customInspector, setCustomInspector] = useState(false);
+  const [customLocation, setCustomLocation] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
@@ -539,27 +579,73 @@ function AddRequestModal({ onClose, onAdd }: { onClose: () => void; onAdd: (d: a
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
-                Inspector Name
+                Inspector
               </label>
-              <input
-                value={form.inspector_name}
-                onChange={e => setForm(f => ({ ...f, inspector_name: e.target.value }))}
-                placeholder="e.g., Dr. Sarah Chen"
-                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
-              />
+              {!customInspector && inspectorOptions.length > 0 ? (
+                <select
+                  value={form.inspector_name}
+                  onChange={e => {
+                    if (e.target.value === "__custom__") { setCustomInspector(true); setForm(f => ({ ...f, inspector_name: "" })); }
+                    else setForm(f => ({ ...f, inspector_name: e.target.value }));
+                  }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                  <option value="">— select —</option>
+                  {inspectorOptions.map(i => <option key={i.name} value={i.name}>{i.name}</option>)}
+                  <option value="__custom__">Other…</option>
+                </select>
+              ) : (
+                <input
+                  value={form.inspector_name}
+                  onChange={e => setForm(f => ({ ...f, inspector_name: e.target.value }))}
+                  placeholder="Inspector name"
+                  className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+              )}
             </div>
             <div>
               <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
                 Location / Area
               </label>
-              <input
-                value={form.location}
-                onChange={e => setForm(f => ({ ...f, location: e.target.value }))}
-                placeholder="e.g., Prep Room A · Mfg Floor 2"
-                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
-              />
+              {!customLocation ? (
+                <select
+                  value={form.location}
+                  onChange={e => {
+                    if (e.target.value === "__custom__") { setCustomLocation(true); setForm(f => ({ ...f, location: "" })); }
+                    else setForm(f => ({ ...f, location: e.target.value }));
+                  }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                  <option value="">— select —</option>
+                  {COMMON_LOCATIONS.map(l => <option key={l} value={l}>{l}</option>)}
+                  <option value="__custom__">Other…</option>
+                </select>
+              ) : (
+                <input
+                  value={form.location}
+                  onChange={e => setForm(f => ({ ...f, location: e.target.value }))}
+                  placeholder="e.g., Mfg Floor 2"
+                  className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+              )}
             </div>
           </div>
+          {teamOptions.length > 0 && (
+            <div>
+              <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+                Assign to (Prep Room)
+              </label>
+              <select
+                value={form.assigned_to}
+                onChange={e => setForm(f => ({ ...f, assigned_to: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                <option value="">— unassigned —</option>
+                {teamOptions.map(m => (
+                  <option key={m.name} value={m.name}>
+                    {m.name}{m.role ? ` (${m.role.replace(/_/g, " ")})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm border rounded-lg hover:bg-accent">Cancel</button>
             <button type="submit" disabled={saving || !form.request_text.trim()}
@@ -580,11 +666,13 @@ function RequestDetailModal({
   inspectionId,
   onClose,
   onUpdate,
+  teamOptions,
 }: {
   req: InspRequest;
   inspectionId: string;
   onClose: () => void;
   onUpdate: () => void;
+  teamOptions: { name: string; role: string | null }[];
 }) {
   const [subTab, setSubTab] = useState<"overview" | "documents" | "comments" | "ai" | "trail">("overview");
   const [docs, setDocs] = useState<RequestDocument[]>([]);
@@ -605,6 +693,7 @@ function RequestDetailModal({
   const [progress, setProgress] = useState(req.fulfillment_progress);
   const [qaing, setQaing] = useState(false);
   const [converting, setConverting] = useState<string | null>(null);
+  const [assignedTo, setAssignedTo] = useState(req.assigned_to_name ?? "");
 
   const loadDocs = useCallback(async () => {
     setLoadingDocs(true);
@@ -796,13 +885,35 @@ function RequestDetailModal({
                   { label: "Category", value: req.category },
                   { label: "Criticality", value: req.criticality },
                   { label: "SLA Budget", value: req.sla_minutes ? `${req.sla_minutes} min` : "—" },
-                  { label: "Assigned To", value: req.assigned_to_name ?? "Unassigned" },
                 ].map(f => (
                   <div key={f.label} className="bg-muted/40 rounded-lg px-3 py-2.5">
                     <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{f.label}</p>
                     <p className="text-sm font-medium mt-0.5 capitalize">{f.value}</p>
                   </div>
                 ))}
+                <div className="bg-muted/40 rounded-lg px-3 py-2.5">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Assigned To</p>
+                  {teamOptions.length > 0 ? (
+                    <select
+                      value={assignedTo}
+                      onChange={async e => {
+                        const v = e.target.value;
+                        setAssignedTo(v);
+                        await inspectionsApi.updateRequest(inspectionId, req.id, { assigned_to: v || undefined });
+                        onUpdate();
+                      }}
+                      className="w-full text-sm bg-transparent border-0 outline-none font-medium -ml-0.5 cursor-pointer">
+                      <option value="">Unassigned</option>
+                      {teamOptions.map(m => (
+                        <option key={m.name} value={m.name}>
+                          {m.name}{m.role ? ` · ${m.role.replace(/_/g, " ")}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="text-sm font-medium">{assignedTo || "Unassigned"}</p>
+                  )}
+                </div>
               </div>
               <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-xs text-blue-800">
                 <p className="font-semibold mb-1 flex items-center gap-1.5"><Info className="w-3.5 h-3.5" /> What inspectors look for</p>
@@ -1098,11 +1209,7 @@ function RequestCard({
                 </span>
               ) : null}
             </div>
-            {req.status !== "open" && (
-              <div className="mt-2">
-                <ProgressBar value={req.fulfillment_progress} />
-              </div>
-            )}
+            <StageProgress status={req.status} />
           </div>
           <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
             <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${statusCfg.className}`}>
@@ -1228,6 +1335,9 @@ export default function WarRoomPage() {
   // Alerts
   const [alerts, setAlerts] = useState<InspectionAlert[]>([]);
   const [showAlerts, setShowAlerts] = useState(false);
+  const [reqFilterCrit, setReqFilterCrit] = useState("all");
+  const [reqFilterInspector, setReqFilterInspector] = useState("all");
+  const [reqSort, setReqSort] = useState("newest");
 
   // Safe mode
   const [safeMode, setSafeMode] = useState(false);
@@ -1668,8 +1778,26 @@ export default function WarRoomPage() {
   };
 
   const DONE_STATUSES = ["fulfilled", "declined", "withdrawn", "closed", "released"];
-  const openRequests = (inspection?.requests ?? []).filter(r => !DONE_STATUSES.includes(r.status));
-  const resolvedRequests = (inspection?.requests ?? []).filter(r => DONE_STATUSES.includes(r.status));
+
+  const applyReqFiltersSort = (reqs: InspRequest[]) => {
+    let r = [...reqs];
+    if (reqFilterCrit !== "all") r = r.filter(x => x.criticality === reqFilterCrit);
+    if (reqFilterInspector !== "all") r = r.filter(x => x.inspector_name === reqFilterInspector);
+    const CRIT_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+    if (reqSort === "oldest") r.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    else if (reqSort === "criticality") r.sort((a, b) => (CRIT_ORDER[a.criticality] ?? 4) - (CRIT_ORDER[b.criticality] ?? 4));
+    else if (reqSort === "sla") r.sort((a, b) => {
+      if (!a.due_at) return 1; if (!b.due_at) return -1;
+      return new Date(a.due_at).getTime() - new Date(b.due_at).getTime();
+    });
+    else r.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return r;
+  };
+
+  const allRequests = inspection?.requests ?? [];
+  const openRequests = applyReqFiltersSort(allRequests.filter(r => !DONE_STATUSES.includes(r.status)));
+  const resolvedRequests = applyReqFiltersSort(allRequests.filter(r => DONE_STATUSES.includes(r.status)));
+  const uniqueInspectors = Array.from(new Set(allRequests.map(r => r.inspector_name).filter(Boolean))) as string[];
   const teamCount = teamMembers.length + smes.length + inspectors.length;
 
   const TABS = [
@@ -1715,7 +1843,17 @@ export default function WarRoomPage() {
       )}
 
       {showAddRequest && (
-        <AddRequestModal onClose={() => setShowAddRequest(false)} onAdd={handleAddRequest} />
+        <AddRequestModal
+          onClose={() => setShowAddRequest(false)}
+          onAdd={handleAddRequest}
+          inspectorOptions={[
+            ...teamMembers.filter(m => m.room === "inspector").map(m => ({ name: m.name })),
+            ...inspectors.map(m => ({ name: m.name })),
+          ]}
+          teamOptions={teamMembers
+            .filter(m => m.room === "prep" || m.room === "front")
+            .map(m => ({ name: m.name, role: m.role }))}
+        />
       )}
       {selectedRequest && (
         <RequestDetailModal
@@ -1723,6 +1861,9 @@ export default function WarRoomPage() {
           inspectionId={id}
           onClose={() => setSelectedRequest(null)}
           onUpdate={loadAll}
+          teamOptions={teamMembers
+            .filter(m => m.room === "prep" || m.room === "front")
+            .map(m => ({ name: m.name, role: m.role }))}
         />
       )}
 
@@ -1903,7 +2044,7 @@ export default function WarRoomPage() {
       {/* ── Requests Tab ──────────────────────────────────────────────────────── */}
       {tab === "requests" && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <p className="text-sm text-muted-foreground">Track, respond to, and fulfill inspector requests in real time.</p>
             <button onClick={() => setShowAddRequest(true)}
               className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
@@ -1911,6 +2052,40 @@ export default function WarRoomPage() {
               Log Request
             </button>
           </div>
+          {allRequests.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap bg-muted/30 border rounded-xl px-3 py-2">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mr-1">Filter</span>
+              <select value={reqFilterCrit} onChange={e => setReqFilterCrit(e.target.value)}
+                className="text-xs border rounded-lg px-2 py-1 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                <option value="all">All priorities</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+              {uniqueInspectors.length > 0 && (
+                <select value={reqFilterInspector} onChange={e => setReqFilterInspector(e.target.value)}
+                  className="text-xs border rounded-lg px-2 py-1 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                  <option value="all">All inspectors</option>
+                  {uniqueInspectors.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              )}
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide ml-2 mr-1">Sort</span>
+              <select value={reqSort} onChange={e => setReqSort(e.target.value)}
+                className="text-xs border rounded-lg px-2 py-1 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+                <option value="criticality">Criticality (highest)</option>
+                <option value="sla">SLA (urgent first)</option>
+              </select>
+              {(reqFilterCrit !== "all" || reqFilterInspector !== "all" || reqSort !== "newest") && (
+                <button onClick={() => { setReqFilterCrit("all"); setReqFilterInspector("all"); setReqSort("newest"); }}
+                  className="text-xs text-primary hover:underline ml-1">
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
           {(inspection.requests ?? []).length === 0 ? (
             <div className="bg-muted/30 border border-dashed rounded-xl px-8 py-12 text-center">
               <MessageSquare className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
