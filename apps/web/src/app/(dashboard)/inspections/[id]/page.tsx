@@ -3261,9 +3261,10 @@ export default function WarRoomPage() {
             {kpis.map(kpi => (
               kpi.action ? (
                 <button key={kpi.label} onClick={kpi.action}
-                  className="px-3 py-2.5 text-center hover:bg-accent transition-colors group">
+                  className="px-3 py-2.5 text-center cursor-pointer hover:bg-muted/60 active:bg-muted transition-colors group relative">
                   <p className={`text-xl font-bold tabular-nums ${kpi.color || "text-foreground"}`}>{kpi.value}</p>
                   <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mt-0.5 group-hover:text-foreground transition-colors">{kpi.label}</p>
+                  <span className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[8px] text-muted-foreground/40 group-hover:text-primary/50 transition-colors">↓</span>
                 </button>
               ) : (
                 <div key={kpi.label} className="px-3 py-2.5 text-center">
