@@ -1235,6 +1235,8 @@ export default function WarRoomPage() {
   const [selectedRequest, setSelectedRequest] = useState<InspRequest | null>(null);
   const [scribeText, setScribeText] = useState("");
   const [scribeType, setScribeType] = useState("scribe_note");
+  const [scribeInspector, setScribeInspector] = useState("");
+  const [logInspectorFilter, setLogInspectorFilter] = useState("");
   const [sendingScribe, setSendingScribe] = useState(false);
 
   // Voice scribe
@@ -1514,7 +1516,8 @@ export default function WarRoomPage() {
     }
     setSendingScribe(true);
     try {
-      const res = await inspectionsApi.addScribeEntry(id, { content: scribeText, entry_type: scribeType });
+      const tags = scribeInspector ? [scribeInspector] : [];
+      const res = await inspectionsApi.addScribeEntry(id, { content: scribeText, entry_type: scribeType, tags });
       setLog(l => [...l, res.data]);
       setScribeText("");
       lastFinalRef.current = "";
@@ -1721,7 +1724,18 @@ export default function WarRoomPage() {
   };
 
   const handlePhaseChange = async (phase: string) => {
-    try { await inspectionsApi.updatePhase(id, phase); setInspection(i => i ? { ...i, current_phase: phase } : i); }
+    try {
+      await inspectionsApi.updatePhase(id, phase);
+      setInspection(i => i ? { ...i, current_phase: phase } : i);
+      if (phase === "inspector_arrived" || phase === "inspectors_left") {
+        const inspectorName = inspectors[0]?.name ?? teamMembers.find(m => m.room === "inspector")?.name;
+        inspectionsApi.notifyTeam(id, phase, inspectorName).catch(() => {});
+        addToast(
+          phase === "inspector_arrived" ? "Sending arrival notifications to team…" : "Sending departure notifications to team…",
+          "info"
+        );
+      }
+    }
     catch { /* ignore */ }
   };
 
@@ -1795,6 +1809,14 @@ export default function WarRoomPage() {
       setClosingSummary(r.data.summary ?? "");
     } finally { setGeneratingClosing(false); }
   };
+
+  // ── Role-based permissions ──────────────────────────────────────────────────
+  const isObserver = myRole === "observer";
+  const canLogRequest = !myRole || !isObserver;
+  const canAssign = !myRole || ["host", "prep_lead", "scribe"].includes(myRole);
+  const canManageTeam = !myRole || ["host", "prep_lead"].includes(myRole);
+  const canCloseInspection = !myRole || ["host"].includes(myRole);
+  const canQAReview = !myRole || ["host", "qa_reviewer", "prep_lead"].includes(myRole);
 
   const DONE_STATUSES = ["fulfilled", "declined", "withdrawn", "closed", "released"];
 
@@ -2067,7 +2089,7 @@ export default function WarRoomPage() {
                 Activate
               </button>
             )}
-            {inspection.status === "active" && (
+            {inspection.status === "active" && canCloseInspection && (
               <button onClick={handleClose} disabled={closing}
                 className="flex items-center gap-2 px-4 py-2 bg-muted border rounded-lg text-sm font-medium hover:bg-accent disabled:opacity-60">
                 {closing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
@@ -2215,12 +2237,20 @@ export default function WarRoomPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <p className="text-sm text-muted-foreground">Track, respond to, and fulfill inspector requests in real time.</p>
-            <button onClick={() => setShowAddRequest(true)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
-              <Plus className="w-3.5 h-3.5" />
-              Log Request
-            </button>
+            {canLogRequest && (
+              <button onClick={() => setShowAddRequest(true)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+                <Plus className="w-3.5 h-3.5" />
+                Log Request
+              </button>
+            )}
           </div>
+          {isObserver && (
+            <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-800">
+              <Eye className="w-3.5 h-3.5 flex-shrink-0" />
+              <span><strong>Observer mode</strong> — you have read-only access to this war room.</span>
+            </div>
+          )}
           {allRequests.length > 0 && (
             <div className="flex items-center gap-2 flex-wrap bg-muted/30 border rounded-xl px-3 py-2">
               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mr-1">Filter</span>
@@ -2762,10 +2792,12 @@ export default function WarRoomPage() {
               <h2 className="font-semibold flex items-center gap-2"><Users className="w-4 h-4 text-primary" /> Inspection Team</h2>
               <p className="text-xs text-muted-foreground mt-0.5">All personnel involved — front room, prep room, SMEs, and FDA investigators.</p>
             </div>
-            <button onClick={() => setShowAddTeamMember(f => !f)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
-              <Plus className="w-3.5 h-3.5" /> Add Member
-            </button>
+            {canManageTeam && (
+              <button onClick={() => setShowAddTeamMember(f => !f)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+                <Plus className="w-3.5 h-3.5" /> Add Member
+              </button>
+            )}
           </div>
 
           {showAddTeamMember && (
@@ -3132,15 +3164,30 @@ export default function WarRoomPage() {
           </div>
 
           <form onSubmit={handleScribe} className="bg-card border rounded-xl p-5 space-y-4">
-            <div className="flex gap-2 flex-wrap">
-              {ENTRY_TYPES.map(t => (
-                <button key={t.value} type="button" onClick={() => setScribeType(t.value)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                    scribeType === t.value ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:text-foreground"
-                  }`}>
-                  {t.label}
-                </button>
-              ))}
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="flex gap-2 flex-wrap">
+                {ENTRY_TYPES.map(t => (
+                  <button key={t.value} type="button" onClick={() => setScribeType(t.value)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      scribeType === t.value ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:text-foreground"
+                    }`}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              {(inspectors.length > 0 || teamMembers.some(m => m.room === "inspector")) && (
+                <select
+                  value={scribeInspector}
+                  onChange={e => setScribeInspector(e.target.value)}
+                  className="text-xs border rounded-lg px-2.5 py-1.5 bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 flex-shrink-0"
+                  title="Tag which inspector this note is about"
+                >
+                  <option value="">All inspectors</option>
+                  {[...teamMembers.filter(m => m.room === "inspector"), ...inspectors.map(i => ({ name: i.name }))].map(i => (
+                    <option key={i.name} value={i.name}>{i.name}</option>
+                  ))}
+                </select>
+              )}
             </div>
 
             {voiceSupported && (
@@ -3203,8 +3250,23 @@ export default function WarRoomPage() {
 
           {log.length > 0 && (
             <div className="space-y-2">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Timeline</p>
-              {[...log].reverse().map(entry => (
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Timeline</p>
+                {(inspectors.length > 0 || teamMembers.some(m => m.room === "inspector")) && (
+                  <select
+                    value={logInspectorFilter}
+                    onChange={e => setLogInspectorFilter(e.target.value)}
+                    className="text-xs border rounded-lg px-2.5 py-1 bg-background focus:outline-none">
+                    <option value="">All inspectors</option>
+                    {[...teamMembers.filter(m => m.room === "inspector"), ...inspectors.map(i => ({ name: i.name }))].map(i => (
+                      <option key={i.name} value={i.name}>{i.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              {[...log].reverse()
+                .filter(entry => !logInspectorFilter || entry.tags?.includes(logInspectorFilter))
+                .map(entry => (
                 <div key={entry.id} className="group">
                   <LogEntryCard entry={entry} />
                   <div className="hidden group-hover:flex items-center gap-1 px-4 pb-2 -mt-1">
@@ -3261,6 +3323,49 @@ export default function WarRoomPage() {
               </button>
             </div>
           </div>
+
+          {/* Document Template Library */}
+          {binderDocs.length === 0 && (
+            <div className="bg-card border rounded-xl p-5">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                <BookOpen className="w-3.5 h-3.5 text-primary" /> FDA Inspection Document Templates
+              </p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                {[
+                  { title: "Company Profile Deck", category: "presentation", desc: "Overview, regulatory history, key personnel" },
+                  { title: "SOP Register", category: "sop", desc: "All relevant SOPs with version/status" },
+                  { title: "Training Matrix", category: "training", desc: "Personnel training records & completion" },
+                  { title: "Master Validation Plan", category: "validation", desc: "Validation lifecycle overview" },
+                  { title: "Batch Records (Recent)", category: "batch_records", desc: "Last 3 manufactured batches" },
+                  { title: "CAPA Summary", category: "capa", desc: "Open and recently closed CAPAs" },
+                  { title: "Deviation Log", category: "deviation", desc: "Deviations from last 12 months" },
+                  { title: "OOS Investigation Summary", category: "oos", desc: "Out-of-specification results & dispositions" },
+                  { title: "Equipment Qualification Records", category: "equipment", desc: "IQ/OQ/PQ for critical equipment" },
+                  { title: "Stability Data Summary", category: "stability", desc: "Ongoing and completed stability studies" },
+                  { title: "Supplier Qualification List", category: "supplier", desc: "Approved suppliers + audit dates" },
+                  { title: "Annual Product Review", category: "apr", desc: "Most recent APR / PQR report" },
+                ].map(tmpl => (
+                  <button
+                    key={tmpl.title}
+                    onClick={async () => {
+                      await inspectionsApi.addBinderDoc(id, { title: tmpl.title, category: tmpl.category });
+                      const r = await inspectionsApi.listBinder(id);
+                      setBinderDocs(r.data.binder_docs ?? []);
+                      addToast(`Added: ${tmpl.title}`, "info");
+                    }}
+                    className="flex items-start gap-2 p-3 border rounded-xl text-left hover:border-primary hover:bg-primary/5 transition-all group"
+                  >
+                    <FileText className="w-4 h-4 text-muted-foreground group-hover:text-primary flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-semibold">{tmpl.title}</p>
+                      <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{tmpl.desc}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-3">Click to add individual documents, or use "Pre-fill Standard Docs" above to add all at once.</p>
+            </div>
+          )}
 
           {/* Add form */}
           {showAddBinder && (

@@ -3741,3 +3741,61 @@ async def delete_team_member(
         raise HTTPException(status_code=404, detail="Team member not found")
     await db.delete(member)
     await db.commit()
+
+
+# ── Team Notification ─────────────────────────────────────────────────────────
+class NotifyTeamIn(BaseModel):
+    event_type: str   # inspector_arrived | inspectors_left
+    inspector_name: Optional[str] = None
+
+
+@router.post("/{inspection_id}/notify-team")
+async def notify_team(
+    inspection_id: str,
+    body: NotifyTeamIn,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Send email notifications to all team members with email addresses."""
+    inspection = await db.get(Inspection, inspection_id)
+    if not inspection:
+        raise HTTPException(status_code=404, detail="Inspection not found")
+
+    # Collect all emails: team members + legacy SMEs + inspectors with email
+    emails_sent = 0
+    try:
+        from app.services.email_service import send_inspection_event, _email_available
+        if not _email_available():
+            return {"sent": 0, "reason": "email_not_configured"}
+
+        # New unified team members
+        tm_res = await db.execute(
+            select(InspectionTeamMember).where(
+                InspectionTeamMember.inspection_id == inspection_id,
+                InspectionTeamMember.email.isnot(None),
+            )
+        )
+        team_emails = [m.email for m in tm_res.scalars().all() if m.email]
+
+        # Also include the current user
+        if current_user.email and current_user.email not in team_emails:
+            team_emails.append(current_user.email)
+
+        import asyncio
+        tasks = [
+            send_inspection_event(
+                to=email,
+                inspection_title=inspection.title,
+                event_type=body.event_type,
+                inspector_name=body.inspector_name,
+                inspection_id=inspection_id,
+            )
+            for email in team_emails
+        ]
+        await asyncio.gather(*tasks)
+        emails_sent = len(tasks)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"notify_team failed: {e}")
+
+    return {"sent": emails_sent, "event_type": body.event_type}

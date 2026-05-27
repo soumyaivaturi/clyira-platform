@@ -180,6 +180,43 @@ async def send_di_hold_alert(
     )
 
 
+async def send_inspection_event(
+    to: str,
+    inspection_title: str,
+    event_type: str,
+    inspector_name: Optional[str],
+    inspection_id: str,
+) -> None:
+    """Send inspection event notification (inspector arrived / left)."""
+    if event_type == "inspector_arrived":
+        headline = "🔴 Inspector Has Arrived"
+        color = "#dc2626"
+        sub = f"Inspector{f' {inspector_name}' if inspector_name else ''} is now on-site. The inspection is live."
+        cta_label = "Open War Room →"
+    else:
+        headline = "✅ Inspectors Have Left"
+        color = "#059669"
+        sub = f"Inspector{f' {inspector_name}' if inspector_name else ''} has departed. Begin end-of-day debrief."
+        cta_label = "Open War Room →"
+
+    body = f"""
+<div style="background:{'#fef2f2' if event_type == 'inspector_arrived' else '#f0fdf4'};border:2px solid {color};border-radius:10px;padding:16px 20px;margin-bottom:24px;">
+  <p style="margin:0;color:{color};font-size:16px;font-weight:700;">{headline}</p>
+</div>
+<h2 style="margin:0 0 8px;color:#1e293b;font-size:18px;font-weight:700;">{inspection_title}</h2>
+<p style="margin:0 0 24px;color:#64748b;font-size:14px;">{sub}</p>
+<a href="https://clyira-platform-web.vercel.app/inspections/{inspection_id}"
+   style="display:inline-block;background:{color};color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:600;">
+  {cta_label}
+</a>"""
+
+    await _send(
+        to=to,
+        subject=f"{'🔴 Inspector Arrived' if event_type == 'inspector_arrived' else '✅ Inspectors Left'} — {inspection_title}",
+        html=_base_email(body),
+    )
+
+
 async def send_bulk_assessment_complete(
     to: str,
     docs_assessed: int,

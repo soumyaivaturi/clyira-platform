@@ -386,6 +386,8 @@ export const inspectionsApi = {
   updateTeamMember: (id: string, memberId: string, data: Record<string, any>) =>
     api.patch(`/inspections/${id}/team/${memberId}`, data),
   deleteTeamMember: (id: string, memberId: string) => api.delete(`/inspections/${id}/team/${memberId}`),
+  notifyTeam: (id: string, event_type: string, inspector_name?: string) =>
+    api.post(`/inspections/${id}/notify-team`, { event_type, inspector_name }),
 
   // §9 Binder
   listBinder: (id: string) => api.get(`/inspections/${id}/binder`),
