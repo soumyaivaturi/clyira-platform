@@ -112,7 +112,7 @@ export default function DashboardLayout({
         {/* Logo */}
         <div className="h-16 flex items-center px-6 border-b">
           <Link href="/dashboard">
-            <ClyiraLogo className="h-7 w-auto" />
+            <ClyiraLogo className="h-14 w-auto" />
           </Link>
         </div>
 
