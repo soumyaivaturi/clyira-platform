@@ -153,7 +153,6 @@ async def scan_document_for_fields(
     The file is NOT persisted — call the normal document upload endpoint separately.
     """
     from app.services.bpr_extraction_service import BPRExtractionService
-    from app.services.idp_engine import IDPEngine
 
     content = await file.read()
     filename = file.filename or "upload"
@@ -161,17 +160,12 @@ async def scan_document_for_fields(
 
     import io
 
-    # Step 1a: IDPEngine auto-routing (docling for native PDF/DOCX, paddleocr for scans)
+    # Scan uses fast extractors only (no Tesseract — too slow for form pre-fill).
+    # IDPEngine with OCR runs only in the full assessment pipeline (background task).
     extracted_text = ""
-    try:
-        idp_output = IDPEngine().extract(content, filename)
-        extracted_text = IDPEngine.full_text(idp_output)
-        logger.info(f"IDPEngine extracted {len(extracted_text)} chars from {filename!r}")
-    except Exception as e:
-        logger.warning(f"IDPEngine failed for scan: {e}")
 
-    # Step 1b: DOCX fallback via python-docx (always installed, no extra deps)
-    if not extracted_text.strip() and file_type in ("docx", "doc"):
+    # Step 1a: DOCX via python-docx
+    if file_type in ("docx", "doc"):
         try:
             from docx import Document as DocxDocument
             doc = DocxDocument(io.BytesIO(content))
@@ -185,11 +179,11 @@ async def scan_document_for_fields(
                     if cells:
                         parts.append(" | ".join(cells))
             extracted_text = "\n".join(parts)
-            logger.info(f"python-docx extracted {len(extracted_text)} chars from {filename!r}")
+            logger.info(f"python-docx: {len(extracted_text)} chars from {filename!r}")
         except Exception as e:
-            logger.warning(f"python-docx fallback failed: {e}")
+            logger.warning(f"python-docx failed: {e}")
 
-    # Step 1c: pdfplumber fallback for native PDFs
+    # Step 1b: pdfplumber for native/digital PDFs (fast, <1s — skipped for scanned PDFs)
     if not extracted_text.strip() and file_type == "pdf":
         try:
             import pdfplumber
@@ -203,9 +197,9 @@ async def scan_document_for_fields(
                     if t.strip():
                         pages.append(t)
             extracted_text = "\n".join(pages)
-            logger.info(f"pdfplumber extracted {len(extracted_text)} chars from {filename!r}")
+            logger.info(f"pdfplumber: {len(extracted_text)} chars from {filename!r}")
         except Exception as e:
-            logger.warning(f"pdfplumber fallback failed: {e}")
+            logger.warning(f"pdfplumber failed: {e}")
 
     # Step 1d: Gemini Vision — for scanned/screenshot PDFs where no text could be extracted.
     # Returns structured fields directly (skips regex + LLM text path).
