@@ -1,8 +1,13 @@
 "use client";
 
-import { useMemo, useRef, useState, useEffect } from "react";
-import { AlertTriangle, AlertCircle, Info, ChevronDown, ChevronUp, X, BookOpen, Zap } from "lucide-react";
+import { useMemo, useRef, useState, useCallback, useEffect } from "react";
+import {
+  AlertTriangle, AlertCircle, Info, ChevronDown, ChevronUp,
+  BookOpen, Zap, GripVertical, Maximize2, X,
+  CheckCircle2, XCircle, MessageSquare, Loader2, Check, Ban,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { assessmentsApi } from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -20,6 +25,7 @@ interface Finding {
   enforcement_context?: string;
   severity_elevated: boolean;
   suggestion_draft?: string;
+  status?: string;
 }
 
 interface Section {
@@ -34,21 +40,23 @@ interface Props {
   documentText: string;
   fileType?: string;
   findings: Finding[];
+  documentId?: string;
+  assessmentId?: string;
 }
 
 // ── Section detection ─────────────────────────────────────────────────────────
 
 const HEADING_PATTERNS = [
-  /^#{1,3}\s+(.+)$/,                          // Markdown headings
-  /^([A-Z][A-Z\s\-\/]{3,60})$/,              // ALL CAPS lines
-  /^(\d+[\.\d]*\.?\s+[A-Z].{3,60})$/,        // Numbered: "1. Section Name"
-  /^([A-Z][a-z].{4,60}):?\s*$/,              // Title Case short line
+  /^#{1,3}\s+(.+)$/,
+  /^([A-Z][A-Z\s\-\/]{3,60})$/,
+  /^(\d+[\.\d]*\.?\s+[A-Z].{3,60})$/,
+  /^([A-Z][a-z].{4,60}):?\s*$/,
 ];
 
 function isHeading(line: string): boolean {
   const t = line.trim();
   if (!t || t.length > 80 || t.length < 3) return false;
-  if (t.endsWith(".") && t.split(" ").length > 6) return false; // sentence, not heading
+  if (t.endsWith(".") && t.split(" ").length > 6) return false;
   return HEADING_PATTERNS.some((re) => re.test(t));
 }
 
@@ -61,7 +69,7 @@ function detectSections(text: string): Section[] {
   let charOffset = 0;
 
   for (const line of lines) {
-    const lineLen = line.length + 1; // +1 for \n
+    const lineLen = line.length + 1;
     if (isHeading(line) && currentBody.trim().length > 0) {
       sections.push({ title: currentTitle, body: currentBody, charStart: currentStart, charEnd: charOffset });
       currentTitle = line.trim().replace(/^#+\s*/, "");
@@ -78,12 +86,9 @@ function detectSections(text: string): Section[] {
   if (currentBody.trim()) {
     sections.push({ title: currentTitle, body: currentBody, charStart: currentStart, charEnd: charOffset });
   }
-
-  // If no sections detected, treat whole doc as one section
   if (sections.length === 0) {
     sections.push({ title: "Document", body: text, charStart: 0, charEnd: text.length });
   }
-
   return sections.map((s) => ({ ...s, findings: [] }));
 }
 
@@ -105,141 +110,290 @@ function similarity(a: string, b: string): number {
 
 function findBestSection(finding: Finding, sections: Section[]): number {
   if (sections.length === 0) return 0;
-
   const candidates = [
     finding.location,
-    // Extract section name from "Required section missing: X"
     finding.title.match(/(?:missing|section):\s*(.+)/i)?.[1],
-    // Extract section name from "Weak X analysis"
     finding.title.replace(/^(weak|missing|incomplete|inadequate|no)\s+/i, ""),
     finding.title,
   ].filter(Boolean) as string[];
 
   let bestIdx = -1;
-  let bestScore = 0.25; // minimum threshold
-
+  let bestScore = 0.25;
   for (const candidate of candidates) {
     for (let i = 0; i < sections.length; i++) {
       const score = similarity(candidate, sections[i].title);
-      if (score > bestScore) {
-        bestScore = score;
-        bestIdx = i;
-      }
+      if (score > bestScore) { bestScore = score; bestIdx = i; }
     }
   }
-
-  return bestIdx; // -1 means unmapped
+  return bestIdx;
 }
 
 function assignFindingsToSections(sections: Section[], findings: Finding[]): Section[] {
   const result = sections.map((s) => ({ ...s, findings: [] as Finding[] }));
   const unmapped: Finding[] = [];
-
   for (const f of findings) {
     const idx = findBestSection(f, result);
-    if (idx >= 0) {
-      result[idx].findings.push(f);
-    } else {
-      unmapped.push(f);
-    }
+    if (idx >= 0) result[idx].findings.push(f);
+    else unmapped.push(f);
   }
-
-  // Unmapped findings go to first section
-  if (unmapped.length > 0 && result.length > 0) {
-    result[0].findings.push(...unmapped);
-  }
-
+  if (unmapped.length > 0 && result.length > 0) result[0].findings.push(...unmapped);
   return result;
 }
 
 // ── Severity helpers ──────────────────────────────────────────────────────────
 
 const SEV_CONFIG = {
-  critical: {
-    border: "border-l-red-500",
-    bg: "bg-red-50",
-    badge: "bg-red-100 text-red-700",
-    dot: "bg-red-500",
-    icon: AlertTriangle,
-    textHighlight: "bg-red-100 border-b-2 border-red-400",
-  },
-  high: {
-    border: "border-l-orange-400",
-    bg: "bg-orange-50/60",
-    badge: "bg-orange-100 text-orange-700",
-    dot: "bg-orange-400",
-    icon: AlertTriangle,
-    textHighlight: "bg-orange-100 border-b-2 border-orange-300",
-  },
-  medium: {
-    border: "border-l-amber-400",
-    bg: "bg-amber-50/40",
-    badge: "bg-amber-100 text-amber-700",
-    dot: "bg-amber-400",
-    icon: AlertCircle,
-    textHighlight: "bg-amber-50 border-b-2 border-amber-300",
-  },
-  low: {
-    border: "border-l-blue-400",
-    bg: "bg-blue-50/30",
-    badge: "bg-blue-100 text-blue-700",
-    dot: "bg-blue-400",
-    icon: Info,
-    textHighlight: "bg-blue-50 border-b-2 border-blue-200",
-  },
-  info: {
-    border: "border-l-gray-300",
-    bg: "bg-gray-50/30",
-    badge: "bg-gray-100 text-gray-600",
-    dot: "bg-gray-300",
-    icon: Info,
-    textHighlight: "bg-gray-50",
-  },
+  critical: { border: "border-l-red-500", bg: "bg-red-50", badge: "bg-red-100 text-red-700", dot: "bg-red-500", icon: AlertTriangle, textHighlight: "bg-red-100 border-b-2 border-red-400", iconColor: "text-red-500" },
+  high:     { border: "border-l-orange-400", bg: "bg-orange-50/60", badge: "bg-orange-100 text-orange-700", dot: "bg-orange-400", icon: AlertTriangle, textHighlight: "bg-orange-100 border-b-2 border-orange-300", iconColor: "text-orange-500" },
+  medium:   { border: "border-l-amber-400", bg: "bg-amber-50/40", badge: "bg-amber-100 text-amber-700", dot: "bg-amber-400", icon: AlertCircle, textHighlight: "bg-amber-50 border-b-2 border-amber-300", iconColor: "text-amber-500" },
+  low:      { border: "border-l-blue-400", bg: "bg-blue-50/30", badge: "bg-blue-100 text-blue-700", dot: "bg-blue-400", icon: Info, textHighlight: "bg-blue-50 border-b-2 border-blue-200", iconColor: "text-blue-400" },
+  info:     { border: "border-l-gray-300", bg: "bg-gray-50/30", badge: "bg-gray-100 text-gray-600", dot: "bg-gray-300", icon: Info, textHighlight: "bg-gray-50", iconColor: "text-gray-400" },
 };
 
 function sectionSeverity(section: Section): string {
-  const order = ["critical", "high", "medium", "low", "info"];
-  for (const sev of order) {
+  for (const sev of ["critical", "high", "medium", "low", "info"]) {
     if (section.findings.some((f) => f.severity === sev)) return sev;
   }
   return "clean";
 }
 
-// ── Comment bubble ────────────────────────────────────────────────────────────
+// ── Finding Detail Modal ──────────────────────────────────────────────────────
+
+function FindingDetailModal({
+  finding,
+  assessmentId,
+  onClose,
+  onActionDone,
+}: {
+  finding: Finding;
+  assessmentId?: string;
+  onClose: () => void;
+  onActionDone?: (findingId: string, newStatus: string) => void;
+}) {
+  const cfg = SEV_CONFIG[finding.severity as keyof typeof SEV_CONFIG] ?? SEV_CONFIG.info;
+  const Icon = cfg.icon;
+  const [mode, setMode] = useState<"accept" | "deny" | "comment" | null>(null);
+  const [text, setText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const submit = async () => {
+    if (!assessmentId) return;
+    setLoading(true);
+    try {
+      const status = mode === "accept" ? "resolved" : mode === "deny" ? "disputed" : "acknowledged";
+      const responseText = mode === "comment" ? text : "";
+      const disputeReason = mode === "deny" ? text : "";
+      await assessmentsApi.actionFinding(assessmentId, finding.id, status, responseText, disputeReason);
+      setDone(status);
+      onActionDone?.(finding.id, status);
+    } catch { /* non-critical */ }
+    finally { setLoading(false); }
+  };
+
+  const needsText = mode === "deny" || mode === "comment";
+  const canSubmit = mode === "accept" || (needsText && text.trim().length > 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-card border rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className={cn("flex items-start gap-3 px-5 py-4 border-b border-l-4", cfg.border, cfg.bg)}>
+          <Icon className={cn("w-4 h-4 mt-0.5 shrink-0", cfg.iconColor)} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide", cfg.badge)}>{finding.severity}</span>
+              <span className="text-[10px] font-mono text-muted-foreground">{finding.level}</span>
+              {finding.enforcement_match && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">⚡ Enforcement</span>
+              )}
+              {finding.status && finding.status !== "open" && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground capitalize font-medium">{finding.status}</span>
+              )}
+            </div>
+            <p className="text-sm font-semibold leading-snug">{finding.title}</p>
+          </div>
+          <button onClick={onClose} className="shrink-0 p-1 rounded hover:bg-black/10 transition-colors">
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="flex flex-col md:flex-row min-h-0">
+            {/* Finding details */}
+            <div className="flex-1 px-5 py-4 space-y-4 overflow-y-auto">
+              <div>
+                <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">Description</p>
+                <p className="text-sm leading-relaxed">{finding.description}</p>
+              </div>
+
+              {finding.evidence && (
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">Evidence</p>
+                  <p className="text-sm italic text-muted-foreground leading-relaxed border-l-2 border-muted pl-3">"{finding.evidence}"</p>
+                </div>
+              )}
+
+              {(finding.location || finding.regulatory_citation) && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {finding.location && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">Location</p>
+                      <p className="text-xs bg-muted rounded px-2 py-1.5">{finding.location}</p>
+                    </div>
+                  )}
+                  {finding.regulatory_citation && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">
+                        Regulatory Citation{finding.citation_type ? ` · ${finding.citation_type}` : ""}
+                      </p>
+                      <p className="text-xs font-mono bg-clyira-50 text-clyira-800 border border-clyira-100 rounded px-2 py-1.5 leading-relaxed flex items-center gap-1.5">
+                        <BookOpen className="w-3 h-3 shrink-0" />
+                        {finding.regulatory_citation}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {finding.enforcement_match && finding.enforcement_context && (
+                <div className="rounded-lg bg-purple-50 border border-purple-200 p-3">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <Zap className="w-3.5 h-3.5 text-purple-600" />
+                    <p className="text-[10px] font-semibold text-purple-700 uppercase tracking-wide">Enforcement Intelligence</p>
+                  </div>
+                  <p className="text-xs text-purple-800 leading-relaxed">{finding.enforcement_context}</p>
+                </div>
+              )}
+
+              {finding.suggestion_draft && (
+                <div className="rounded-lg bg-green-50 border border-green-200 p-3">
+                  <p className="text-[10px] font-semibold text-green-700 uppercase tracking-wide mb-1.5">Suggested Fix</p>
+                  <p className="text-sm text-green-900 leading-relaxed whitespace-pre-wrap">{finding.suggestion_draft}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Actions panel */}
+            {assessmentId && (
+              <div className="md:w-56 shrink-0 border-t md:border-t-0 md:border-l px-4 py-4 space-y-3 bg-muted/20">
+                <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground">Review Actions</p>
+
+                {done ? (
+                  <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-center">
+                    <CheckCircle2 className="w-5 h-5 text-green-600 mx-auto mb-1" />
+                    <p className="text-xs font-semibold text-green-800 capitalize">{done}</p>
+                    <p className="text-[10px] text-green-700 mt-0.5">Action recorded</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Accept */}
+                    <button
+                      onClick={() => { setMode("accept"); }}
+                      className={cn(
+                        "w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-all",
+                        mode === "accept"
+                          ? "bg-green-600 text-white border-green-600"
+                          : "border-green-300 text-green-700 hover:bg-green-50"
+                      )}
+                    >
+                      <Check className="w-3.5 h-3.5" /> Accept Finding
+                    </button>
+
+                    {/* Deny */}
+                    <button
+                      onClick={() => setMode(mode === "deny" ? null : "deny")}
+                      className={cn(
+                        "w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-all",
+                        mode === "deny"
+                          ? "bg-red-600 text-white border-red-600"
+                          : "border-red-300 text-red-700 hover:bg-red-50"
+                      )}
+                    >
+                      <Ban className="w-3.5 h-3.5" /> Dispute Finding
+                    </button>
+
+                    {/* Comment */}
+                    <button
+                      onClick={() => setMode(mode === "comment" ? null : "comment")}
+                      className={cn(
+                        "w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-all",
+                        mode === "comment"
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "border-blue-300 text-blue-700 hover:bg-blue-50"
+                      )}
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" /> Add Comment
+                    </button>
+
+                    {/* Text input for deny/comment */}
+                    {needsText && (
+                      <textarea
+                        autoFocus
+                        value={text}
+                        onChange={(e) => setText(e.target.value)}
+                        placeholder={mode === "deny" ? "Reason for dispute…" : "Your comment…"}
+                        className="w-full text-xs border rounded-lg px-2.5 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[72px] resize-none"
+                      />
+                    )}
+
+                    {/* Submit */}
+                    {mode && (
+                      <button
+                        onClick={submit}
+                        disabled={!canSubmit || loading}
+                        className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                      >
+                        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                        {mode === "accept" ? "Confirm Accept" : mode === "deny" ? "Submit Dispute" : "Send Comment"}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Comment Bubble ────────────────────────────────────────────────────────────
+
+const COMMENTS_INITIAL = 4;
 
 function CommentBubble({
   finding,
-  index,
   expanded,
   onToggle,
+  onOpenModal,
 }: {
   finding: Finding;
-  index: number;
   expanded: boolean;
   onToggle: () => void;
+  onOpenModal: () => void;
 }) {
   const cfg = SEV_CONFIG[finding.severity as keyof typeof SEV_CONFIG] ?? SEV_CONFIG.info;
   const Icon = cfg.icon;
 
   return (
-    <div
-      className={cn(
-        "rounded-lg border shadow-sm cursor-pointer transition-all duration-200",
-        expanded ? "shadow-md" : "hover:shadow-md",
-        cfg.bg,
-        "border-l-4",
-        cfg.border
-      )}
-      onClick={onToggle}
-    >
-      {/* Header row */}
+    <div className={cn("rounded-lg border shadow-sm transition-all duration-200", expanded ? "shadow-md" : "hover:shadow-md", cfg.bg, "border-l-4", cfg.border)}>
       <div className="flex items-start gap-2 px-3 py-2.5">
-        <Icon className={cn("w-3.5 h-3.5 mt-0.5 shrink-0", finding.severity === "critical" || finding.severity === "high" ? "text-red-500" : finding.severity === "medium" ? "text-amber-500" : "text-blue-400")} />
-        <div className="flex-1 min-w-0">
+        <Icon className={cn("w-3.5 h-3.5 mt-0.5 shrink-0", cfg.iconColor)} />
+        <div className="flex-1 min-w-0 cursor-pointer" onClick={onToggle}>
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide", cfg.badge)}>
-              {finding.severity}
-            </span>
+            <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide", cfg.badge)}>{finding.severity}</span>
             <span className="text-[10px] text-muted-foreground font-mono">{finding.level}</span>
             {finding.enforcement_match && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">⚡ Enf</span>
@@ -250,12 +404,20 @@ function CommentBubble({
             <p className="text-[10px] text-muted-foreground mt-0.5 font-mono truncate">{finding.regulatory_citation}</p>
           )}
         </div>
-        <button className="shrink-0 text-muted-foreground mt-0.5">
-          {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-        </button>
+        <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
+          <button
+            onClick={onOpenModal}
+            title="Open full detail"
+            className="p-0.5 rounded hover:bg-black/10 transition-colors text-muted-foreground"
+          >
+            <Maximize2 className="w-3 h-3" />
+          </button>
+          <button onClick={onToggle} className="p-0.5 text-muted-foreground">
+            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+        </div>
       </div>
 
-      {/* Expanded detail */}
       {expanded && (
         <div className="px-3 pb-3 space-y-2.5 border-t border-black/5 pt-2.5">
           <div>
@@ -272,9 +434,6 @@ function CommentBubble({
             <div className="flex items-center gap-1.5">
               <BookOpen className="w-3 h-3 text-muted-foreground shrink-0" />
               <span className="text-[11px] font-mono text-primary">{finding.regulatory_citation}</span>
-              {finding.citation_type && (
-                <span className="text-[10px] text-muted-foreground">· {finding.citation_type}</span>
-              )}
             </div>
           )}
           {finding.enforcement_context && (
@@ -292,24 +451,32 @@ function CommentBubble({
               <p className="text-[11px] text-green-900 leading-relaxed">{finding.suggestion_draft}</p>
             </div>
           )}
+          <button
+            onClick={onOpenModal}
+            className="w-full text-[10px] text-primary hover:underline font-medium text-left"
+          >
+            Open full detail + review actions →
+          </button>
         </div>
       )}
     </div>
   );
 }
 
-// ── Section row ───────────────────────────────────────────────────────────────
-
-const COMMENTS_INITIAL = 4;
+// ── Section Row ───────────────────────────────────────────────────────────────
 
 function SectionRow({
   section,
+  commentWidth,
   expandedFinding,
   onToggleFinding,
+  onOpenModal,
 }: {
   section: Section;
+  commentWidth: number;
   expandedFinding: string | null;
   onToggleFinding: (id: string) => void;
+  onOpenModal: (finding: Finding) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
   const sev = sectionSeverity(section);
@@ -324,7 +491,7 @@ function SectionRow({
 
   return (
     <div className={cn("flex gap-0 min-h-[2rem]", hasFindings && "bg-card rounded-lg overflow-hidden border border-border/60 shadow-sm mb-2")}>
-      {/* Document text pane */}
+      {/* Document text */}
       <div className={cn("flex-1 min-w-0 border-l-4 px-4 py-3", hasFindings ? borderColor : "border-l-transparent px-4 py-1.5")}>
         <h3 className={cn("font-semibold mb-1", hasFindings ? "text-sm" : "text-sm text-muted-foreground")}>
           {section.title}
@@ -338,16 +505,16 @@ function SectionRow({
         </div>
       </div>
 
-      {/* Margin comment column */}
+      {/* Comment column */}
       {hasFindings && (
-        <div className="w-64 shrink-0 border-l border-border/40 bg-muted/20 px-2 py-2 space-y-1.5">
-          {visibleFindings.map((f, i) => (
+        <div style={{ width: commentWidth }} className="shrink-0 border-l border-border/40 bg-muted/20 px-2 py-2 space-y-1.5 overflow-y-auto">
+          {visibleFindings.map((f) => (
             <CommentBubble
               key={f.id}
               finding={f}
-              index={i}
               expanded={expandedFinding === f.id}
               onToggle={() => onToggleFinding(f.id)}
+              onOpenModal={() => onOpenModal(f)}
             />
           ))}
           {overflow > 0 && !showAll && (
@@ -372,10 +539,33 @@ function SectionRow({
   );
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+// ── Main Component ────────────────────────────────────────────────────────────
 
-export function DocumentReviewPane({ documentText, fileType, findings }: Props) {
+export function DocumentReviewPane({ documentText, fileType, findings, documentId, assessmentId }: Props) {
   const [expandedFinding, setExpandedFinding] = useState<string | null>(null);
+  const [modalFinding, setModalFinding] = useState<Finding | null>(null);
+  const [commentWidth, setCommentWidth] = useState(280);
+
+  // Drag-to-resize comment column
+  const dragState = useRef({ active: false, startX: 0, startWidth: 0 });
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragState.current = { active: true, startX: e.clientX, startWidth: commentWidth };
+
+    const onMove = (ev: MouseEvent) => {
+      if (!dragState.current.active) return;
+      const delta = dragState.current.startX - ev.clientX;
+      setCommentWidth(Math.min(520, Math.max(160, dragState.current.startWidth + delta)));
+    };
+    const onUp = () => {
+      dragState.current.active = false;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [commentWidth]);
 
   const sections = useMemo(() => {
     if (!documentText?.trim()) return [];
@@ -392,7 +582,7 @@ export function DocumentReviewPane({ documentText, fileType, findings }: Props) 
         <AlertCircle className="w-10 h-10 mb-3 opacity-30" />
         <p className="font-medium">No document text available</p>
         <p className="text-sm mt-1 max-w-sm">
-          This document has no extracted text — it may be a placeholder or skeleton created by the AI creator.
+          This document has no extracted text — it may be a placeholder created by the AI creator.
           Upload a real PDF or DOCX to see the annotated review.
         </p>
       </div>
@@ -400,47 +590,65 @@ export function DocumentReviewPane({ documentText, fileType, findings }: Props) 
   }
 
   const totalAnchored = sections.reduce((n, s) => n + s.findings.length, 0);
-  const totalFindings = findings.length;
 
   return (
-    <div className="space-y-1">
-      {/* Legend bar */}
-      <div className="flex items-center justify-between px-1 pb-2 border-b">
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          {(["critical", "high", "medium", "low"] as const).map((sev) => {
-            const count = findings.filter((f) => f.severity === sev).length;
-            if (!count) return null;
-            const cfg = SEV_CONFIG[sev];
-            return (
-              <span key={sev} className="flex items-center gap-1">
-                <span className={cn("w-2 h-2 rounded-full", cfg.dot)} />
-                <span className="capitalize">{sev} ({count})</span>
-              </span>
-            );
-          })}
+    <>
+      {modalFinding && (
+        <FindingDetailModal
+          finding={modalFinding}
+          assessmentId={assessmentId}
+          onClose={() => setModalFinding(null)}
+          onActionDone={() => setModalFinding(null)}
+        />
+      )}
+
+      <div className="space-y-1">
+        {/* Legend + resize hint */}
+        <div className="flex items-center justify-between px-1 pb-2 border-b">
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            {(["critical", "high", "medium", "low"] as const).map((sev) => {
+              const count = findings.filter((f) => f.severity === sev).length;
+              if (!count) return null;
+              const cfg = SEV_CONFIG[sev];
+              return (
+                <span key={sev} className="flex items-center gap-1">
+                  <span className={cn("w-2 h-2 rounded-full", cfg.dot)} />
+                  <span className="capitalize">{sev} ({count})</span>
+                </span>
+              );
+            })}
+          </div>
+          <span className="text-xs text-muted-foreground">
+            {totalAnchored}/{findings.length} anchored · {sections.length} sections · <span className="text-muted-foreground/60">drag divider to resize</span>
+          </span>
         </div>
-        <span className="text-xs text-muted-foreground">
-          {totalAnchored}/{totalFindings} findings anchored · {sections.length} sections
-        </span>
-      </div>
 
-      {/* Column headers */}
-      <div className="flex gap-0 px-1 pb-1">
-        <div className="flex-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Document</div>
-        <div className="w-64 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground pl-2">Comments</div>
-      </div>
+        {/* Column headers */}
+        <div className="flex gap-0 px-1 pb-1">
+          <div className="flex-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Document</div>
+          <div style={{ width: commentWidth }} className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground pl-2 flex items-center gap-1">
+            <GripVertical
+              className="w-3 h-3 cursor-col-resize text-muted-foreground/40 hover:text-muted-foreground -ml-1 select-none"
+              onMouseDown={onDragStart}
+            />
+            Comments
+          </div>
+        </div>
 
-      {/* Sections */}
-      <div className="space-y-0.5">
-        {sections.map((section, i) => (
-          <SectionRow
-            key={i}
-            section={section}
-            expandedFinding={expandedFinding}
-            onToggleFinding={toggleFinding}
-          />
-        ))}
+        {/* Sections */}
+        <div className="space-y-0.5">
+          {sections.map((section, i) => (
+            <SectionRow
+              key={i}
+              section={section}
+              commentWidth={commentWidth}
+              expandedFinding={expandedFinding}
+              onToggleFinding={toggleFinding}
+              onOpenModal={setModalFinding}
+            />
+          ))}
+        </div>
       </div>
-    </div>
+    </>
   );
 }

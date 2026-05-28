@@ -1192,6 +1192,8 @@ export default function DocumentDetailPage() {
                 documentText={documentText}
                 fileType={doc.file_type}
                 findings={findings}
+                documentId={id}
+                assessmentId={assessment.id}
               />
             </div>
           ) : sortedFindings.length === 0 ? (

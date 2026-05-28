@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -15,6 +15,8 @@ import {
   Layers,
   FlaskConical,
   Package,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { NotificationBell } from "@/components/shared/notification-bell";
@@ -81,6 +83,7 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const handleLogout = () => {
     logout();
@@ -115,44 +118,68 @@ export default function DashboardLayout({
       {/* Terms modal — shown on first login until user accepts (Part 11 §11.10(j)) */}
       {user && !user.terms_accepted_at && <TermsModal />}
       {/* Sidebar */}
-      <aside className="w-64 border-r bg-card flex flex-col">
+      <aside className={`${sidebarCollapsed ? "w-14" : "w-64"} border-r bg-card flex flex-col transition-all duration-200 shrink-0`}>
         {/* Logo */}
-        <div className="h-16 border-b flex items-center px-4">
-          <Link href="/dashboard" className="block w-full">
-            <ClyiraLogo className="w-full h-auto" />
-          </Link>
+        <div className="h-16 border-b flex items-center justify-center px-3">
+          {sidebarCollapsed ? (
+            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+              <span className="text-xs font-bold text-primary">C</span>
+            </div>
+          ) : (
+            <Link href="/dashboard" className="block w-full">
+              <ClyiraLogo className="w-full h-auto" />
+            </Link>
+          )}
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        <nav className="flex-1 px-2 py-4 space-y-0.5">
           {navigation.map((item) => {
             const isActive = pathname.startsWith(item.href);
             return (
               <Link
                 key={item.name}
                 href={item.href}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${
+                title={sidebarCollapsed ? item.name : undefined}
+                className={`flex items-center gap-3 rounded-md text-sm font-medium transition-colors ${
+                  sidebarCollapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5"
+                } ${
                   isActive
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:bg-accent hover:text-foreground"
                 }`}
               >
-                <item.icon className="w-5 h-5" />
-                <span>{item.name}</span>
+                <item.icon className="w-5 h-5 shrink-0" />
+                {!sidebarCollapsed && <span>{item.name}</span>}
               </Link>
             );
           })}
         </nav>
 
         {/* Bottom */}
-        <div className="border-t p-3">
+        <div className="border-t p-2 space-y-0.5">
           <Link
             href="/settings"
-            className="flex items-center gap-3 px-3 py-2.5 rounded-md text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+            title={sidebarCollapsed ? "Settings" : undefined}
+            className={`flex items-center gap-3 rounded-md text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors ${
+              sidebarCollapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5"
+            }`}
           >
-            <Settings className="w-5 h-5" />
-            <span>Settings</span>
+            <Settings className="w-5 h-5 shrink-0" />
+            {!sidebarCollapsed && <span>Settings</span>}
           </Link>
+          <button
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className={`w-full flex items-center gap-3 rounded-md text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors ${
+              sidebarCollapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5"
+            }`}
+          >
+            {sidebarCollapsed
+              ? <PanelLeftOpen className="w-5 h-5 shrink-0" />
+              : <><PanelLeftClose className="w-5 h-5 shrink-0" /><span>Collapse</span></>
+            }
+          </button>
         </div>
       </aside>
 
