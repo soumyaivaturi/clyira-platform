@@ -110,9 +110,9 @@ export default function DashboardLayout({
       {/* Sidebar */}
       <aside className="w-64 border-r bg-card flex flex-col">
         {/* Logo */}
-        <div className="h-20 flex items-center px-4 border-b">
-          <Link href="/dashboard" className="w-full">
-            <ClyiraLogo className="h-16 w-full object-contain object-left" />
+        <div className="h-20 border-b px-3 py-2">
+          <Link href="/dashboard" className="block w-full h-full">
+            <ClyiraLogo className="w-full h-full object-fill" />
           </Link>
         </div>
 
