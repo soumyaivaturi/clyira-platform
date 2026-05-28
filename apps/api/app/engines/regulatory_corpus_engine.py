@@ -31,6 +31,17 @@ _GLOB_PATTERNS = [
     "ich_guidelines*.jsonl",
     "eu_gmp*.jsonl",
     "pics_guidelines*.jsonl",
+    # Phase-2: FDA guidance documents
+    "fda_guidance_documents*.jsonl",
+    # Phase-2: OTC monographs, REMS, PMR/PMC (regulatory requirements)
+    "fda_otc_monographs*.jsonl",
+    "fda_rems*.jsonl",
+    "fda_pmr_pmc*.jsonl",
+    # Phase-2: EMA EPARs and EDQM
+    "ema_epars*.jsonl",
+    "edqm_cep*.jsonl",
+    # Phase-2: BPDR annual summaries (CBER regulatory context)
+    "fda_bpdr_summaries*.jsonl",
 ]
 
 # Map glob prefix → regulatory body label
@@ -39,6 +50,13 @@ _SOURCE_LABELS = {
     "ich_guidelines": "ICH",
     "eu_gmp": "EMA/EU GMP",
     "pics_guidelines": "PIC/S",
+    "fda_guidance_documents": "FDA Guidance",
+    "fda_otc_monographs": "FDA/OTC",
+    "fda_rems": "FDA/REMS",
+    "fda_pmr_pmc": "FDA/PMR-PMC",
+    "ema_epars": "EMA/EPAR",
+    "edqm_cep": "EDQM",
+    "fda_bpdr_summaries": "FDA/CBER",
 }
 
 _lock = threading.Lock()

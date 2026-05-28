@@ -6238,3 +6238,627 @@ class RuleEngine:
             ))
 
         return findings
+
+    # ══════════════════════════════════════════════════════════════════════
+    # MBR (Master Batch Record / Batch Production Record) — DTAP-007
+    # Grounded in 21 CFR 211.186, 211.188, 211.192, EU GMP Ch4, ALCOA+
+    # Informed by Acodis, Tulip, Assyro, GMP Pros review patterns
+    # ══════════════════════════════════════════════════════════════════════
+
+    # ── L1: MBR Structural Checks ──
+
+    def _check_l1_product_identification_complete(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """21 CFR 211.186(a): product name, strength, and dosage form must be present."""
+        findings = []
+        text_lower = ctx.document_text.lower()
+
+        has_name = bool(re.search(r'(?:product\s*name|drug\s*product|product\s*designation)\s*[:.]?\s*\S', text_lower))
+        has_strength = bool(re.search(r'(?:strength|potency|concentration|dose)\s*[:.]?\s*\d', text_lower))
+        has_dosage = bool(re.search(
+            r'(?:dosage\s*form|formulation\s*type|tablet|capsule|injection|solution|suspension|cream|ointment|syrup|powder\s*for)',
+            text_lower
+        ))
+
+        if not has_name:
+            findings.append(FindingResult(
+                level="L1", severity="high", category="product_identification",
+                title="Product name not identified in batch record",
+                description="No product name or designation was detected. Per 21 CFR 211.186(a), the master "
+                            "batch record must include the name of the drug product.",
+                regulatory_citation="21 CFR 211.186(a)",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.90, validated=True,
+            ))
+        if not has_strength:
+            findings.append(FindingResult(
+                level="L1", severity="high", category="product_identification",
+                title="Product strength/potency not specified",
+                description="No strength, potency, or concentration value was detected. Per 21 CFR 211.186(a), "
+                            "the batch record must specify the strength or concentration of the drug product.",
+                regulatory_citation="21 CFR 211.186(a)",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.88, validated=True,
+            ))
+        if not has_dosage:
+            findings.append(FindingResult(
+                level="L1", severity="medium", category="product_identification",
+                title="Dosage form not specified",
+                description="No dosage form designation was detected (e.g., tablet, capsule, injection). "
+                            "Per 21 CFR 211.186(a), the dosage form must be identified.",
+                regulatory_citation="21 CFR 211.186(a)",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.85, validated=True,
+            ))
+        return findings
+
+    def _check_l1_batch_number_format(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Verify batch/lot number is present and follows a recognizable format."""
+        text = ctx.document_text
+        patterns = [
+            r'(?:batch|lot)\s*(?:no|number|#|id)\s*[:.]?\s*[A-Z0-9][\w\-]{3,}',
+            r'(?:batch|lot)\s*[:.]?\s*[A-Z]{1,3}[\-]?\d{4,}',
+            r'[A-Z]{2,5}-\d{6,}',
+        ]
+        for pattern in patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                return []
+        return [FindingResult(
+            level="L1", severity="high", category="batch_identification",
+            title="Batch/lot number not detected",
+            description="No recognizable batch or lot number was found. Per 21 CFR 211.188(a), each batch "
+                        "production record must include a unique batch identification number for traceability.",
+            regulatory_citation="21 CFR 211.188(a)",
+            citation_type="direct", agency="FDA",
+            confidence_score=0.92, validated=True,
+        )]
+
+    def _check_l1_batch_size_and_yield_range_specified(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """21 CFR 211.186(b)(2): theoretical yield with max/min percentages."""
+        findings = []
+        text_lower = ctx.document_text.lower()
+
+        has_batch_size = bool(re.search(
+            r'(?:batch\s*size|lot\s*size|theoretical\s*(?:batch|quantity))\s*[:.]?\s*[\d,]+',
+            text_lower
+        ))
+        has_yield_range = bool(re.search(
+            r'(?:theoretical\s*yield|expected\s*yield|target\s*yield|yield\s*range|minimum.*maximum.*yield|'
+            r'yield.*\d+\s*%\s*(?:to|[-–])\s*\d+\s*%)',
+            text_lower
+        ))
+
+        if not has_batch_size:
+            findings.append(FindingResult(
+                level="L1", severity="high", category="batch_size",
+                title="Batch size not specified",
+                description="No batch size or theoretical quantity was detected. Per 21 CFR 211.186(b)(2), "
+                            "the master batch record must include the batch size.",
+                regulatory_citation="21 CFR 211.186(b)(2)",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.88, validated=True,
+            ))
+        if not has_yield_range:
+            findings.append(FindingResult(
+                level="L1", severity="medium", category="yield_specification",
+                title="Theoretical yield range (max/min percentages) not specified",
+                description="No theoretical yield with acceptable percentage range was detected. Per "
+                            "21 CFR 211.186(b)(2), the batch record must state the theoretical yield "
+                            "including the maximum and minimum percentages of theoretical yield beyond "
+                            "which investigation is required per 211.192.",
+                regulatory_citation="21 CFR 211.186(b)(2); 21 CFR 211.192",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.82, validated=True,
+            ))
+        return findings
+
+    def _check_l1_mbr_version_reference(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """21 CFR 211.188(a): executed record must reference approved MBR version."""
+        text_lower = ctx.document_text.lower()
+        has_mbr_ref = bool(re.search(
+            r'(?:master\s*(?:batch|production)\s*record|mbr|master\s*formula)\s*'
+            r'(?:version|rev|revision|no|number|ref)\s*[:.]?\s*[\w\d]',
+            text_lower
+        ))
+        if not has_mbr_ref:
+            return [FindingResult(
+                level="L1", severity="medium", category="mbr_traceability",
+                title="Master batch record version reference not found",
+                description="The executed batch record does not reference a specific approved master batch "
+                            "record version. Per 21 CFR 211.188(a), the batch production record must be an "
+                            "accurate reproduction of the appropriate master production or control record, "
+                            "checked for accuracy, dated, and signed.",
+                regulatory_citation="21 CFR 211.188(a)",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.85, validated=True,
+            )]
+        return []
+
+    def _check_l1_manufacturing_date_recorded(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Verify manufacturing/production date is documented."""
+        text_lower = ctx.document_text.lower()
+        has_mfg_date = bool(re.search(
+            r'(?:manufactur(?:ing|e)\s*date|production\s*date|date\s*of\s*manufactur|'
+            r'start\s*date|batch\s*start|processing\s*date)\s*[:.]?\s*\d',
+            text_lower
+        ))
+        if not has_mfg_date:
+            return [FindingResult(
+                level="L1", severity="high", category="manufacturing_date",
+                title="Manufacturing/production date not recorded",
+                description="No manufacturing or production date was detected. The date of manufacturing "
+                            "is required for calculating expiry dating, stability placement, and for "
+                            "traceability during investigations.",
+                regulatory_citation="21 CFR 211.188; 21 CFR 211.137",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.90, validated=True,
+            )]
+        return []
+
+    def _check_l1_expiry_or_retest_date_present(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """21 CFR 211.137: expiration or retest date must be assigned."""
+        text_lower = ctx.document_text.lower()
+        has_expiry = bool(re.search(
+            r'(?:expir(?:y|ation)\s*date|retest\s*date|shelf\s*life|best\s*before|use\s*by)\s*[:.]?\s*\d',
+            text_lower
+        ))
+        if not has_expiry:
+            return [FindingResult(
+                level="L1", severity="medium", category="expiry_dating",
+                title="Expiration or retest date not assigned",
+                description="No expiration date or retest date was detected in the batch record. "
+                            "Per 21 CFR 211.137, expiration dating must be determined and documented.",
+                regulatory_citation="21 CFR 211.137",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.85, validated=True,
+            )]
+        return []
+
+    def _check_l1_page_numbering_sequential(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Industry best practice: all pages accounted for (Assyro checklist)."""
+        text = ctx.document_text
+        page_refs = re.findall(r'(?:page|pg\.?)\s*(\d+)\s*(?:of|/)\s*(\d+)', text, re.IGNORECASE)
+        if not page_refs:
+            return []
+        findings = []
+        for current, total in page_refs:
+            try:
+                if int(current) > int(total):
+                    findings.append(FindingResult(
+                        level="L1", severity="medium", category="page_integrity",
+                        title=f"Page numbering error: page {current} of {total}",
+                        description=f"Page number {current} exceeds total page count {total}. "
+                                    "This suggests missing pages or pagination errors.",
+                        regulatory_citation="EU GMP Chapter 4 — Documentation integrity",
+                        citation_type="indirect", agency="EMA",
+                        confidence_score=0.88, validated=True,
+                    ))
+            except ValueError:
+                pass
+        return findings
+
+    def _check_l1_bill_of_materials_present(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """21 CFR 211.186(b)(1): complete list of components with quantities."""
+        text_lower = ctx.document_text.lower()
+        has_bom = bool(re.search(
+            r'(?:bill\s*of\s*materials|component\s*list|raw\s*material|formulation\s*table|'
+            r'ingredient|excipient|active\s*(?:pharmaceutical\s*)?ingredient)',
+            text_lower
+        ))
+        if not has_bom:
+            return [FindingResult(
+                level="L1", severity="high", category="bill_of_materials",
+                title="Bill of materials / component list not found",
+                description="No bill of materials, component list, or formulation table was detected. "
+                            "Per 21 CFR 211.186(b)(1), the master batch record must include a complete "
+                            "list of components, including quantities and grade designations.",
+                regulatory_citation="21 CFR 211.186(b)(1)",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.88, validated=True,
+            )]
+        return []
+
+    def _check_l1_equipment_list_present(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """21 CFR 211.188(b)(5): major equipment must be identified."""
+        text_lower = ctx.document_text.lower()
+        has_equipment = bool(re.search(
+            r'(?:equipment\s*(?:id|identification|list|number|no|used)|asset\s*(?:id|number|no|tag)|'
+            r'machine\s*(?:id|number)|instrument\s*(?:id|number))',
+            text_lower
+        ))
+        if not has_equipment:
+            return [FindingResult(
+                level="L1", severity="medium", category="equipment_identification",
+                title="Equipment identification not documented",
+                description="No equipment identification (asset IDs, equipment numbers) was detected. "
+                            "Per 21 CFR 211.188(b)(5), the batch record must identify major equipment used.",
+                regulatory_citation="21 CFR 211.188(b)(5)",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.85, validated=True,
+            )]
+        return []
+
+    # ── L2: MBR Document Control Checks ──
+
+    def _check_l2_executed_vs_master_version_match(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Check that executed batch record references a specific MBR version."""
+        text_lower = ctx.document_text.lower()
+        has_version = bool(re.search(
+            r'(?:master|mbr|approved)\s*.*?(?:version|rev|revision)\s*[:.]?\s*[\d\.]+',
+            text_lower
+        ))
+        has_verified = bool(re.search(
+            r'(?:verified|checked|confirmed)\s*(?:against|per|as per)\s*(?:master|mbr|approved)',
+            text_lower
+        ))
+        if not has_version and not has_verified:
+            return [FindingResult(
+                level="L2", severity="medium", category="version_control",
+                title="Executed record not verified against master batch record version",
+                description="No evidence that the executed batch record was checked against the "
+                            "current approved master batch record version. Per 21 CFR 211.188(a), "
+                            "the batch production record must be an accurate reproduction of the "
+                            "appropriate master record, checked for accuracy.",
+                regulatory_citation="21 CFR 211.188(a)",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.80, validated=True,
+            )]
+        return []
+
+    def _check_l2_operator_identification_complete(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """21 CFR 211.188(b)(7): persons performing each step must be identified."""
+        text_lower = ctx.document_text.lower()
+        has_operator_ids = bool(re.search(
+            r'(?:operator|performed\s*by|executed\s*by|initials?|signature)\s*[:.]?\s*\S',
+            text_lower
+        ))
+        if not has_operator_ids:
+            return [FindingResult(
+                level="L2", severity="high", category="operator_identification",
+                title="Operator identification not documented",
+                description="No operator identification (names, initials, or signatures) was detected. "
+                            "Per 21 CFR 211.188(b)(7), the batch record must identify persons performing "
+                            "and directly supervising or checking each significant step.",
+                regulatory_citation="21 CFR 211.188(b)(7)",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.88, validated=True,
+            )]
+        return []
+
+    def _check_l2_qa_reviewer_signature_present(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """21 CFR 211.192: QA/QC unit must review and approve before release."""
+        text_lower = ctx.document_text.lower()
+        has_qa_review = bool(re.search(
+            r'(?:quality\s*(?:assurance|control|unit)|qa|qc|qp)\s*'
+            r'(?:review|approval|approved|sign|signature|disposition|released)',
+            text_lower
+        ))
+        if not has_qa_review:
+            return [FindingResult(
+                level="L2", severity="critical", category="qa_review",
+                title="QA/QC review and approval not documented",
+                description="No evidence of quality unit review and approval was found. Per 21 CFR 211.192, "
+                            "all production and control records shall be reviewed and approved by the quality "
+                            "control unit before a batch is released or distributed.",
+                regulatory_citation="21 CFR 211.192",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.92, validated=True,
+            )]
+        return []
+
+    def _check_l2_dual_signature_verification(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """21 CFR 211.186: MBR requires independent check by second person."""
+        text_lower = ctx.document_text.lower()
+        has_dual = bool(re.search(
+            r'(?:verified\s*by|checked\s*by|second\s*(?:person|check|verif)|independent\s*(?:check|verif)|'
+            r'co-?sign|counter-?sign|witness)',
+            text_lower
+        ))
+        if not has_dual:
+            return [FindingResult(
+                level="L2", severity="medium", category="dual_verification",
+                title="Dual signature / independent verification not evident",
+                description="No evidence of independent second-person verification was detected. "
+                            "Per 21 CFR 211.186, the master batch record must be independently "
+                            "checked, dated, and signed by a second person.",
+                regulatory_citation="21 CFR 211.186; 21 CFR 211.101(d)",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.78, validated=True,
+            )]
+        return []
+
+    def _check_l2_supervisory_approval_documented(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Verify supervisory sign-off for critical manufacturing steps."""
+        text_lower = ctx.document_text.lower()
+        has_supervisor = bool(re.search(
+            r'(?:supervisor|manager|lead|foreman)\s*(?:sign|approv|review|initial)',
+            text_lower
+        ))
+        if not has_supervisor:
+            return [FindingResult(
+                level="L2", severity="low", category="supervisory_approval",
+                title="Supervisory approval not clearly documented",
+                description="No clear supervisory approval or sign-off was detected. Supervisory "
+                            "oversight of manufacturing steps is expected by GMP (21 CFR 211.25).",
+                regulatory_citation="21 CFR 211.25",
+                citation_type="indirect", agency="FDA",
+                confidence_score=0.70, validated=True,
+            )]
+        return []
+
+    # ── L4: MBR Data Integrity Checks (ALCOA+) ──
+
+    def _check_l4_corrections_single_line_strikethrough(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Detect indicators of improper corrections (white-out, erasure)."""
+        text_lower = ctx.document_text.lower()
+        findings = []
+        bad_patterns = [
+            (r'(?:white[\s-]?out|correction\s*fluid|liquid\s*paper)', "Use of correction fluid/white-out"),
+            (r'(?:erased|erasure|rubbed\s*out)', "Erasure of original entry"),
+            (r'(?:overwritten|written\s*over|obliterat)', "Overwriting/obliteration of original entry"),
+        ]
+        for pattern, desc in bad_patterns:
+            matches = list(re.finditer(pattern, text_lower))
+            for m in matches:
+                sentence = _extract_sentence(ctx.document_text, m.start())
+                findings.append(FindingResult(
+                    level="L4", severity="critical", category="data_integrity",
+                    title=f"Improper correction detected: {desc}",
+                    description="GMP requires corrections by single-line strikethrough with the original "
+                                "entry remaining legible, initialed, dated, and reason documented. "
+                                "Obliteration or correction fluid is a serious data integrity concern.",
+                    evidence=sentence[:200],
+                    regulatory_citation="21 CFR 211.194(a); EU GMP Chapter 4; FDA Data Integrity Guidance",
+                    citation_type="direct", agency="FDA",
+                    confidence_score=0.90, validated=True,
+                ))
+        return findings
+
+    def _check_l4_no_blank_required_fields(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Detect blank/unfilled fields — top FDA 483 observation for batch records."""
+        text = ctx.document_text
+        blank_indicators = re.findall(r'(?:_{3,}|\.{3,}|\[\s*\]|\(\s*\))\s*(?:$|\n)', text)
+        if len(blank_indicators) > 5:
+            return [FindingResult(
+                level="L4", severity="high", category="data_completeness",
+                title=f"Multiple potentially blank fields detected ({len(blank_indicators)} instances)",
+                description="Multiple blank or unfilled fields were detected. Missing data in batch records "
+                            "is among the most common FDA 483 observations. Every required field must be "
+                            "completed; use 'N/A' with justification if not applicable.",
+                evidence=f"{len(blank_indicators)} potential blank fields detected.",
+                regulatory_citation="21 CFR 211.188; FDA Data Integrity Guidance",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.75, validated=True,
+            )]
+        return []
+
+    def _check_l4_timestamp_logical_consistency(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Check for impossible time sequences (timestamps going backward)."""
+        text = ctx.document_text
+        times = list(re.finditer(r'(\d{1,2}:\d{2}(?::\d{2})?)\s*(?:hrs?|hours?|am|pm)?', text, re.IGNORECASE))
+        if len(times) < 2:
+            return []
+        prev_pos = times[0].start()
+        for i in range(1, len(times)):
+            curr_pos = times[i].start()
+            if curr_pos - prev_pos < 500:
+                try:
+                    p = times[i-1].group(1).split(':')
+                    c = times[i].group(1).split(':')
+                    prev_mins = int(p[0]) * 60 + int(p[1])
+                    curr_mins = int(c[0]) * 60 + int(c[1])
+                    if prev_mins - curr_mins > 720:
+                        return [FindingResult(
+                            level="L4", severity="high", category="data_integrity",
+                            title="Timestamp sequence anomaly detected",
+                            description=f"Timestamps appear to go backward: {times[i-1].group(1)} "
+                                        f"followed by {times[i].group(1)}. This could indicate backdated "
+                                        f"entries or data integrity concerns. Contemporaneous recording "
+                                        f"is a core ALCOA+ requirement.",
+                            regulatory_citation="ALCOA+ — Contemporaneous; FDA Data Integrity Guidance",
+                            citation_type="direct", agency="FDA",
+                            confidence_score=0.72, validated=True,
+                        )]
+                except (ValueError, IndexError):
+                    pass
+            prev_pos = curr_pos
+        return []
+
+    def _check_l4_duplicate_data_detection(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Flag suspiciously identical data entries across independent measurements."""
+        text = ctx.document_text
+        numbers = re.findall(r'\b(\d+\.\d{2,})\b', text)
+        if len(numbers) < 4:
+            return []
+        from collections import Counter
+        counts = Counter(numbers)
+        suspicious = [(num, count) for num, count in counts.items()
+                      if count >= 4 and len(num) >= 4]
+        findings = []
+        for num, count in suspicious[:2]:
+            findings.append(FindingResult(
+                level="L4", severity="medium", category="data_integrity",
+                title=f"Suspiciously repeated value: {num} appears {count} times",
+                description=f"The value '{num}' appears {count} times. Identical values across "
+                            f"independent measurements may indicate data copying rather than "
+                            f"actual recording. An inspector may request investigation.",
+                regulatory_citation="ALCOA+ — Original; FDA Data Integrity Guidance",
+                citation_type="interpretive", agency="FDA",
+                confidence_score=0.65, validated=True,
+            ))
+        return findings
+
+    # ── L7: MBR Lifecycle / Timeliness Checks ──
+
+    def _check_l7_batch_review_timeliness(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """21 CFR 211.192: flag indicators of delayed review or premature release."""
+        text_lower = ctx.document_text.lower()
+        delayed = [
+            r'(?:review\s*(?:delayed|pending|overdue|backlog))',
+            r'(?:released?\s*(?:before|prior\s*to|without)\s*(?:qa|quality|review|approval))',
+        ]
+        for pattern in delayed:
+            if re.search(pattern, text_lower):
+                return [FindingResult(
+                    level="L7", severity="critical", category="review_timeliness",
+                    title="Batch review delay or premature release indicator detected",
+                    description="Language suggesting delayed QA review or product release before "
+                                "batch record review completion was detected. Per 21 CFR 211.192, "
+                                "records must be reviewed and approved BEFORE a batch is released.",
+                    regulatory_citation="21 CFR 211.192",
+                    citation_type="direct", agency="FDA",
+                    confidence_score=0.85, validated=True,
+                )]
+        return []
+
+    def _check_l7_deviation_closure_before_release(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Deviations must be investigated and closed before batch disposition."""
+        text_lower = ctx.document_text.lower()
+        has_deviation = bool(re.search(r'(?:deviation|non-?conformance|excursion|incident)', text_lower))
+        if not has_deviation:
+            return []
+        has_open = bool(re.search(
+            r'(?:deviation|investigation)\s*.*?(?:open|pending|ongoing|in\s*progress)', text_lower
+        ))
+        if has_open:
+            return [FindingResult(
+                level="L7", severity="critical", category="deviation_status",
+                title="Open deviation or investigation at time of batch disposition",
+                description="Deviations or investigations appear to be open or pending at batch "
+                            "disposition. Per 21 CFR 211.192, unexplained discrepancies must be "
+                            "thoroughly investigated before a batch can be released.",
+                regulatory_citation="21 CFR 211.192",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.82, validated=True,
+            )]
+        return []
+
+    def _check_l7_no_open_action_items_at_release(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Batch cannot be released with open corrective actions."""
+        text_lower = ctx.document_text.lower()
+        has_open = bool(re.search(
+            r'(?:action\s*item|corrective\s*action|follow[\s-]?up)\s*.*?(?:open|pending|outstanding|due)',
+            text_lower
+        ))
+        if has_open:
+            return [FindingResult(
+                level="L7", severity="high", category="open_actions",
+                title="Open action items detected at time of batch review",
+                description="Open or pending action items were detected. Before batch disposition, "
+                            "all quality-impacting action items should be closed or a formal risk "
+                            "assessment should justify release with open items.",
+                regulatory_citation="21 CFR 211.192; ICH Q10",
+                citation_type="interpretive", agency="FDA",
+                confidence_score=0.78, validated=True,
+            )]
+        return []
+
+    def _check_l7_reprocessing_documentation_if_applicable(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """21 CFR 211.115: reprocessing must be fully documented and approved."""
+        text_lower = ctx.document_text.lower()
+        has_reprocess = bool(re.search(r'(?:reprocess|rework|re-?manufactur)', text_lower))
+        if not has_reprocess:
+            return []
+        has_doc = bool(re.search(
+            r'(?:reprocess|rework)\s*.*?(?:approved|authorized|justified|per\s*sop|per\s*procedure)',
+            text_lower
+        ))
+        if not has_doc:
+            return [FindingResult(
+                level="L7", severity="high", category="reprocessing",
+                title="Reprocessing mentioned but approval/documentation not evident",
+                description="Reprocessing or rework is mentioned but no evidence of formal approval "
+                            "per 21 CFR 211.115 was found. Reprocessing requires prior written "
+                            "procedures, quality unit approval, and complete documentation.",
+                regulatory_citation="21 CFR 211.115",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.80, validated=True,
+            )]
+        return []
+
+    def _check_l7_yield_check_timing_appropriate(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Yield calculations should be present at interim and final stages."""
+        text_lower = ctx.document_text.lower()
+        has_yield = bool(re.search(r'(?:yield|theoretical\s*%|actual\s*yield)', text_lower))
+        if not has_yield:
+            return [FindingResult(
+                level="L7", severity="medium", category="yield_tracking",
+                title="No yield calculations detected in batch record",
+                description="No yield calculation or percentage of theoretical yield was found. "
+                            "Per 21 CFR 211.188(b)(3), the batch record must include actual yield "
+                            "and percentage of theoretical yield at appropriate stages.",
+                regulatory_citation="21 CFR 211.188(b)(3)",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.82, validated=True,
+            )]
+        return []
+
+    # ── L11: MBR Inspectability Checks ──
+
+    def _check_l11_all_pages_accounted_for(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Verify page count consistency across the document."""
+        text = ctx.document_text
+        page_totals = re.findall(r'(?:page|pg)\s*\d+\s*(?:of|/)\s*(\d+)', text, re.IGNORECASE)
+        if not page_totals:
+            return []
+        try:
+            totals = set(int(t) for t in page_totals)
+            if len(totals) > 1:
+                return [FindingResult(
+                    level="L11", severity="medium", category="page_integrity",
+                    title=f"Inconsistent total page counts: {sorted(totals)}",
+                    description=f"Different total page numbers found (values: {sorted(totals)}). "
+                                "This suggests pages may have been added or removed without "
+                                "updating pagination — a document integrity concern.",
+                    regulatory_citation="EU GMP Chapter 4",
+                    citation_type="indirect", agency="EMA",
+                    confidence_score=0.82, validated=True,
+                )]
+        except ValueError:
+            pass
+        return []
+
+    def _check_l11_internal_cross_section_consistency(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Check that batch number is consistent throughout the document."""
+        text = ctx.document_text
+        batch_numbers = re.findall(
+            r'(?:batch|lot)\s*(?:no|number|#|id)?\.?\s*[:.]?\s*([A-Z0-9][\w\-]{3,})',
+            text, re.IGNORECASE
+        )
+        if len(batch_numbers) < 2:
+            return []
+        unique = set(b.upper().strip() for b in batch_numbers)
+        if len(unique) > 2:
+            return [FindingResult(
+                level="L11", severity="high", category="internal_consistency",
+                title=f"Multiple different batch/lot numbers in same record ({len(unique)} unique)",
+                description=f"Distinct batch/lot numbers detected: {', '.join(sorted(unique)[:5])}. "
+                            "Inconsistent batch numbers indicate a potential mix-up or document error.",
+                evidence=f"Unique identifiers: {', '.join(sorted(unique)[:5])}",
+                regulatory_citation="21 CFR 211.188(a)",
+                citation_type="direct", agency="FDA",
+                confidence_score=0.80, validated=True,
+            )]
+        return []
+
+    def _check_l11_legibility_indicators(self, ctx: AssessmentContext) -> list[FindingResult]:
+        """Flag indicators of illegible or ambiguous entries."""
+        text_lower = ctx.document_text.lower()
+        patterns = [
+            r'(?:illegible|unreadable|cannot\s*(?:read|decipher)|hard\s*to\s*read)',
+            r'(?:unclear|ambiguous|indecipherable)',
+        ]
+        findings = []
+        for pattern in patterns:
+            for m in re.finditer(pattern, text_lower):
+                sentence = _extract_sentence(ctx.document_text, m.start())
+                findings.append(FindingResult(
+                    level="L11", severity="medium", category="legibility",
+                    title="Illegible or unclear entry noted in batch record",
+                    description="The batch record references illegible or unclear entries. Per ALCOA+ "
+                                "principles, all documentation must be legible and permanent.",
+                    evidence=sentence[:200],
+                    regulatory_citation="ALCOA+ — Legible; EU GMP Chapter 4",
+                    citation_type="direct", agency="FDA",
+                    confidence_score=0.85, validated=True,
+                ))
+        return findings[:2]

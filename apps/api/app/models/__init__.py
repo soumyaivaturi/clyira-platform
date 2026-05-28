@@ -24,6 +24,7 @@ from app.models.audit import AuditLog
 from app.models.api_key import APIKey
 from app.models.password_history import PasswordHistory
 from app.models.document_signature import DocumentSignature
+from app.models.batch_dossier import BatchDossier, BatchDossierDocument, EvidencePackageTemplate, FeedbackCorrection
 
 __all__ = [
     "Base",
@@ -58,4 +59,8 @@ __all__ = [
     "APIKey",
     "PasswordHistory",
     "DocumentSignature",
+    "BatchDossier",
+    "BatchDossierDocument",
+    "EvidencePackageTemplate",
+    "FeedbackCorrection",
 ]

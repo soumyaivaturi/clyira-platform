@@ -106,6 +106,12 @@ class Finding(Base, TimestampMixin):
     validated = Column(Boolean, default=False)  # Passed verification check
     confidence_score = Column(Float)  # Model confidence in finding
 
+    # Phase 1 MBR / 4-state verification fields
+    verification_state = Column(String(10), nullable=True)  # green, red, blue, gray
+    field_criticality = Column(String(10), nullable=True)   # critical, high, medium, low
+    source_page = Column(Integer, nullable=True)
+    human_verification_required = Column(Boolean, default=False, nullable=True)
+
     # Relationships
     assessment = relationship("Assessment", back_populates="findings")
 

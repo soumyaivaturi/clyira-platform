@@ -336,6 +336,10 @@ class AssessmentService:
                 confidence_score=finding.confidence_score,
                 remediation_priority=ScoringEngine.get_remediation_priority(finding.severity),
                 status="open",
+                verification_state=finding.verification_state or None,
+                field_criticality=finding.field_criticality or None,
+                source_page=finding.source_page,
+                human_verification_required=finding.human_verification_required or False,
             )
             self.db.add(db_finding)
 

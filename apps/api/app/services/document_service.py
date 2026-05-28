@@ -251,7 +251,26 @@ class DocumentService:
         filename_lower = filename.lower()
         text_lower = text[:2000].lower()
 
-        if "sop" in filename_lower or "standard operating" in text_lower:
+        # MBR/BPR — check before SOP to avoid false positives from "batch" appearing in SOPs
+        if (
+            any(kw in filename_lower for kw in ("mbr", "bpr", "batch_record", "batch-record", "batch_production", "dhr"))
+            or "master batch record" in text_lower
+            or "batch production record" in text_lower
+            or "device history record" in text_lower
+            or bool(re.search(r'\bbpr\b', text_lower))
+            or bool(re.search(r'\bmbr\b', text_lower))
+            or bool(re.search(r'\bdhr\b', text_lower))
+            or (
+                "batch record" in text_lower
+                and any(kw in text_lower for kw in (
+                    "lot number", "theoretical yield", "bill of materials",
+                    "batch disposition", "in-process control", "manufacturing steps",
+                    "executed by", "line clearance",
+                ))
+            )
+        ):
+            return "MBR"
+        elif "sop" in filename_lower or "standard operating" in text_lower:
             return "SOP"
         elif "capa" in filename_lower or "corrective and preventive" in text_lower:
             return "CAPA"
@@ -270,9 +289,6 @@ class DocumentService:
             return "LIR"
         elif (
             "validation" in filename_lower
-            or "iq\b" in text_lower
-            or "oq\b" in text_lower
-            or "pq\b" in text_lower
             or "installation qualification" in text_lower
             or "operational qualification" in text_lower
             or "performance qualification" in text_lower

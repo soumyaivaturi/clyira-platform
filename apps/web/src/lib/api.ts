@@ -426,3 +426,41 @@ export const inspectionsApi = {
   exportScribeTxt: (id: string) => api.get(`/inspections/${id}/export/scribe-txt`, { responseType: "blob" }),
   exportCommitmentsCsv: (id: string) => api.get(`/inspections/${id}/export/commitments-csv`, { responseType: "blob" }),
 };
+
+// ── Batch & Lot Record Review ─────────────────────────────────────────────────
+export const batchDossiersApi = {
+  list: (status?: string) => api.get("/batch-dossiers", { params: status ? { status } : {} }),
+  create: (data: {
+    lot_number: string; product_name: string; product_code?: string;
+    dosage_form?: string; batch_size?: string; manufacturing_site?: string;
+    manufacturing_date?: string; target_release_date?: string;
+    record_family: string; product_type: string; is_sterile: boolean;
+    manufacturing_context: string; batch_purpose: string;
+    target_markets: string[]; shadow_mode?: boolean;
+  }) => api.post("/batch-dossiers", data),
+  get: (id: string) => api.get(`/batch-dossiers/${id}`),
+  update: (id: string, data: Partial<{
+    product_name: string; dosage_form: string; batch_size: string;
+    manufacturing_date: string; record_family: string; product_type: string;
+    is_sterile: boolean; manufacturing_context: string; batch_purpose: string;
+    target_markets: string[]; status: string; shadow_mode: boolean;
+  }>) => api.patch(`/batch-dossiers/${id}`, data),
+  delete: (id: string) => api.delete(`/batch-dossiers/${id}`),
+  addDocument: (id: string, data: { document_id: string; role: string; notes?: string }) =>
+    api.post(`/batch-dossiers/${id}/documents`, data),
+  removeDocument: (id: string, dossierDocId: string) =>
+    api.delete(`/batch-dossiers/${id}/documents/${dossierDocId}`),
+  assessReadiness: (id: string) => api.post(`/batch-dossiers/${id}/assess-readiness`),
+  recordDisposition: (id: string, data: {
+    decision: string; rationale: string; conditional_conditions?: string[];
+  }) => api.post(`/batch-dossiers/${id}/disposition`, data),
+  getFindings: (id: string, filters?: { verification_state?: string; severity?: string }) =>
+    api.get(`/batch-dossiers/${id}/findings`, { params: filters || {} }),
+  submitCorrection: (id: string, data: {
+    finding_id: string; document_id: string; field_name: string;
+    original_value?: string; corrected_value: string;
+    field_criticality?: string; correction_rationale?: string;
+  }) => api.post(`/batch-dossiers/${id}/feedback-correction`, data),
+  stats: () => api.get("/batch-dossiers/stats/summary"),
+};
+

@@ -52,3 +52,8 @@ class FindingResult:
     confidence_score: float = 0.0
     validated: bool = False
     remediation_priority: int = 0
+    # Phase 1 MBR fields
+    verification_state: str = ""  # green, red, blue, gray
+    field_criticality: str = ""   # critical, high, medium, low
+    source_page: Optional[int] = None
+    human_verification_required: bool = False

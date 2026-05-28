@@ -34,14 +34,42 @@ _LOCAL_INDEX_DIR = Path.home() / "Documents" / "Clyira-Corpus" / "rag_index"
 # (glob_pattern, source_agency_label, weight_vs_fda)
 # Weight < 1.0 means results will be scored lower relative to FDA actions in combined ranking
 _SOURCE_CONFIGS = [
-    ("consent_decrees*.jsonl",   "FDA/DOJ",        1.0),
-    ("who_pq*.jsonl",            "WHO",            0.7),
-    ("mhra*.jsonl",              "MHRA",           0.85),
-    ("health_canada*.jsonl",     "Health Canada",  0.80),
-    ("tga*.jsonl",               "TGA",            0.75),
-    ("cdsco*.jsonl",             "CDSCO",          0.60),
-    ("eu_alerts*.jsonl",         "EMA",            0.85),
-    ("doj*.jsonl",               "DOJ",            0.90),
+    # FDA-adjacent
+    ("consent_decrees*.jsonl",          "FDA/DOJ",        1.0),
+    ("doj*.jsonl",                      "DOJ",            0.90),
+    # MHRA (UK)
+    ("mhra*.jsonl",                     "MHRA",           0.85),
+    ("mhra_gmdp*.jsonl",                "MHRA",           0.85),
+    ("mhra_deficiencies*.jsonl",        "MHRA",           0.85),
+    ("mhra_alerts*.jsonl",              "MHRA",           0.85),
+    # Health Canada
+    ("health_canada*.jsonl",            "Health Canada",  0.80),
+    ("hc_dhpid*.jsonl",                 "Health Canada",  0.80),
+    ("hc_inspection*.jsonl",            "Health Canada",  0.80),
+    ("hc_recalls*.jsonl",               "Health Canada",  0.80),
+    # EMA / EU
+    ("eu_alerts*.jsonl",                "EMA",            0.85),
+    ("ema_epars*.jsonl",                "EMA",            0.85),
+    ("ema_metrics*.jsonl",              "EMA",            0.80),
+    ("eu_quality_defects*.jsonl",       "EMA",            0.85),
+    ("edqm_cep*.jsonl",                 "EDQM",           0.80),
+    # WHO
+    ("who_pq*.jsonl",                   "WHO",            0.70),
+    ("who_whopirs*.jsonl",              "WHO",            0.70),
+    ("who_notices*.jsonl",              "WHO",            0.70),
+    ("who_alerts*.jsonl",               "WHO",            0.70),
+    # TGA (Australia)
+    ("tga*.jsonl",                      "TGA",            0.75),
+    ("tga_gmp_notices*.jsonl",          "TGA",            0.75),
+    ("tga_recalls*.jsonl",              "TGA",            0.75),
+    # PMDA (Japan)
+    ("pmda*.jsonl",                     "PMDA",           0.70),
+    # Swissmedic
+    ("swissmedic*.jsonl",               "Swissmedic",     0.70),
+    # CDSCO (India)
+    ("cdsco*.jsonl",                    "CDSCO",          0.60),
+    # ANVISA (Brazil)
+    ("anvisa*.jsonl",                   "ANVISA",         0.60),
 ]
 
 _lock = threading.Lock()

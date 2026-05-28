@@ -13,6 +13,7 @@ import {
   ChevronDown,
   ClipboardList,
   Layers,
+  FlaskConical,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { NotificationBell } from "@/components/shared/notification-bell";
@@ -44,6 +45,12 @@ const navigation = [
     href: "/inspections",
     icon: Radio,
     description: "Real-time audit support",
+  },
+  {
+    name: "Batch Review",
+    href: "/batch-dossiers",
+    icon: FlaskConical,
+    description: "MBR / BPR lot record review",
   },
   {
     name: "Evidence Fabric",

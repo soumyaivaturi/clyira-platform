@@ -88,24 +88,40 @@ def _load_index() -> bool:
         logger.warning("rank-bm25 not installed — enforcement matching disabled")
         return False
 
-    # Load all observations*.jsonl files so WL + 483 observations are searched together
-    obs_files = sorted(INDEX_DIR.glob("observations*.jsonl"))
-    if not obs_files:
-        logger.warning(f"No observations*.jsonl found in {INDEX_DIR} — enforcement matching disabled")
-        return False
+    # Glob patterns for all FDA enforcement-type JSONL files.
+    # Each pattern is optional — missing files are skipped gracefully.
+    _ENFORCEMENT_PATTERNS = [
+        "observations*.jsonl",           # Phase 0: Warning Letter + 483 observations (core)
+        "fda_foia_483_responses*.jsonl", # Phase 2: FOIA 483s + firm responses
+        "fda_cder_foia_records*.jsonl",  # Phase 2: CDER FOIA compliance records
+        "fda_crl*.jsonl",                # Phase 2: Complete Response Letters
+        "fda_closeout_letters*.jsonl",   # Phase 2: Warning Letter closeout letters
+        "fda_cber_alerts*.jsonl",        # Phase 2: CBER biologics safety alerts
+        "fda_dashboard_compliance*.jsonl", # Phase 2: FDA dashboard compliance actions
+    ]
 
     combined: list[dict] = []
-    for path in obs_files:
-        count_before = len(combined)
-        with open(path, 'r', encoding='utf-8') as f:
-            combined.extend(json.loads(line) for line in f if line.strip())
-        logger.info(f"  Loaded {len(combined) - count_before} records from {path.name}")
+    files_loaded = 0
+    for pattern in _ENFORCEMENT_PATTERNS:
+        for path in sorted(INDEX_DIR.glob(pattern)):
+            count_before = len(combined)
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    combined.extend(json.loads(line) for line in f if line.strip())
+                logger.info(f"  Loaded {len(combined) - count_before} records from {path.name}")
+                files_loaded += 1
+            except Exception as e:
+                logger.warning(f"  Failed to load {path.name}: {e}")
+
+    if not combined:
+        logger.warning(f"No enforcement JSONL files found in {INDEX_DIR} — enforcement matching disabled")
+        return False
 
     _corpus = combined
     tokenized = [_tokenize(doc.get('text', '')) for doc in _corpus]
     _bm25 = BM25Okapi(tokenized)
     _cfr_freq = _build_cfr_freq(_corpus)
-    logger.info(f"BM25 index ready: {len(_corpus)} observations across {len(obs_files)} files, {len(_cfr_freq)} unique CFR sections")
+    logger.info(f"BM25 index ready: {len(_corpus)} enforcement records across {files_loaded} files, {len(_cfr_freq)} unique CFR sections")
     return True
 
 

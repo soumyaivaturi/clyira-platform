@@ -66,8 +66,19 @@ def _load_data() -> bool:
         return False
 
     for pattern, target_list, label in [
-        ("inspections*.jsonl", _inspections, "inspections"),
-        ("import_alerts*.jsonl", _import_alerts, "import alerts"),
+        # Phase 0: FDA inspection classifications and import alerts
+        ("inspections*.jsonl",          _inspections,   "inspections"),
+        ("import_alerts*.jsonl",        _import_alerts, "import alerts"),
+        # Phase 2: FDA dashboard inspections (broader history)
+        ("fda_dashboard_inspections*.jsonl", _inspections, "FDA dashboard inspections"),
+        # Phase 2: International GMP clearance / facility status
+        ("mhra_gmdp*.jsonl",            _inspections,   "MHRA GMDP"),
+        ("hc_dhpid*.jsonl",             _inspections,   "Health Canada DHPID"),
+        ("hc_inspection*.jsonl",        _inspections,   "HC inspection reports"),
+        ("tga_gmp_notices*.jsonl",      _inspections,   "TGA GMP notices"),
+        ("pmda*.jsonl",                 _inspections,   "PMDA GMP notices"),
+        # Phase 2: FDA 503B compounding facilities
+        ("fda_503b_facilities*.jsonl",  _inspections,   "FDA 503B facilities"),
     ]:
         for path in sorted(index_dir.glob(pattern)):
             count_before = len(target_list)
