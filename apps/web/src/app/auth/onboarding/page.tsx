@@ -202,7 +202,7 @@ export default function OnboardingPage() {
 
   if (step === "done") {
     return (
-      <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-white flex items-center justify-center p-4">
         <div className="w-full max-w-md text-center">
           <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
             <Sparkles className="w-8 h-8 text-primary" />
@@ -227,12 +227,12 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-white flex items-center justify-center p-4">
       <div className="w-full max-w-2xl">
         {/* Header */}
         <div className="text-center mb-8">
           <div className="flex justify-center mb-4">
-            <ClyiraLogo className="h-12 w-auto" />
+            <ClyiraLogo className="w-56 h-auto" />
           </div>
           <h1 className="text-xl font-semibold">Configure your regulatory workspace</h1>
           <p className="text-sm text-muted-foreground mt-1">
