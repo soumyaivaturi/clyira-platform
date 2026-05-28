@@ -98,9 +98,10 @@ async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
     )
     payload = {
         "contents": [{"role": "user", "parts": [{"text": _BPR_VISION_PROMPT}] + image_parts}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 512},
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024},
     }
     try:
+        import re
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code != 200:
@@ -108,8 +109,16 @@ async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
                 logger.warning(f"Vision scan: {msg}")
                 return {}, msg
             raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-            data = json.loads(raw)
+            logger.info(f"Gemini raw response (first 300): {raw[:300]}")
+            # Strip markdown fences
+            raw = raw.strip()
+            raw = re.sub(r'^```(?:json)?\s*', '', raw)
+            raw = re.sub(r'\s*```$', '', raw).strip()
+            # Extract first {...} block (handles extra prose before/after)
+            m = re.search(r'\{[^{}]*\}', raw, re.DOTALL)
+            if not m:
+                return {}, f"No JSON object in Gemini response: {raw[:100]}"
+            data = json.loads(m.group())
             result = {k: str(v).strip() if v not in (None, "", "null") else None
                       for k, v in data.items() if k in _BPR_FIELDS}
             logger.info(f"Gemini Vision extracted: {result}")
