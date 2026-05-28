@@ -14,6 +14,7 @@ import {
   ClipboardList,
   Layers,
   FlaskConical,
+  Package,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { NotificationBell } from "@/components/shared/notification-bell";
@@ -51,6 +52,12 @@ const navigation = [
     href: "/batch-dossiers",
     icon: FlaskConical,
     description: "MBR / BPR lot record review",
+  },
+  {
+    name: "Product Profiles",
+    href: "/product-profiles",
+    icon: Package,
+    description: "Classification defaults & templates",
   },
   {
     name: "Evidence Fabric",

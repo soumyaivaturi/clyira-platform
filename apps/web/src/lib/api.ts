@@ -76,6 +76,7 @@ export const documentsApi = {
     api.post(`/documents/${documentId}/references`, formData, {
       headers: { "Content-Type": "multipart/form-data" },
     }),
+  getText: (id: string) => api.get(`/documents/${id}/text`),
 };
 
 // ── Assessments ───────────────────────────────────────────────────────────────
@@ -469,6 +470,10 @@ export const batchDossiersApi = {
       headers: { "Content-Type": "multipart/form-data" },
     });
   },
+  reopen: (id: string, reason: string) =>
+    api.post(`/batch-dossiers/${id}/reopen`, { reason }),
+  getConflicts: (id: string) => api.get(`/batch-dossiers/${id}/conflicts`),
+  getReport: (id: string) => api.get(`/batch-dossiers/${id}/report`),
 };
 
 export const productProfilesApi = {

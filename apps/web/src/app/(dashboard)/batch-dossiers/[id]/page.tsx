@@ -4,9 +4,10 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  ChevronLeft, FlaskConical, CheckCircle2, AlertCircle, XCircle,
-  Clock, AlertTriangle, FileText, Plus, RefreshCw, ChevronDown,
-  ChevronRight, Loader2, Shield, Info,
+  ChevronLeft, CheckCircle2, AlertCircle, XCircle,
+  AlertTriangle, FileText, Plus, RefreshCw, ChevronDown,
+  ChevronRight, Loader2, Shield, Info, RotateCcw,
+  Download, Pencil, X, GitCompare,
 } from "lucide-react";
 import { batchDossiersApi, documentsApi } from "@/lib/api";
 
@@ -39,6 +40,14 @@ interface Dossier {
   readiness_detail?: { complete: boolean; missing_required_labels?: string[]; missing_conditional?: Record<string, string>; summary: string; };
 }
 interface DocOption { id: string; title: string; document_category: string; }
+
+interface Conflict {
+  field: string;
+  severity: string;
+  description: string;
+  documents_involved: string[];
+  values_found?: Record<string, string>;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -94,14 +103,55 @@ function ScoreBadge({ score, band }: { score?: number; band?: string }) {
 
 // ── Finding Card ─────────────────────────────────────────────────────────────
 
-function FindingCard({ f }: { f: Finding }) {
+function FindingCard({ f, dossierId }: { f: Finding; dossierId: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [showCorrection, setShowCorrection] = useState(false);
+  const [correctionField, setCorrectionField] = useState("");
+  const [correctedValue, setCorrectedValue] = useState("");
+  const [correctionRationale, setCorrectionRationale] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [correctionError, setCorrectionError] = useState("");
+
   const vState = f.verification_state ? VSTATE_CONFIG[f.verification_state] : null;
   const sevColor = SEVERITY_COLOR[f.severity] ?? SEVERITY_COLOR.info;
 
+  const handleSubmitCorrection = async () => {
+    if (!correctionField.trim()) { setCorrectionError("Field name is required"); return; }
+    if (!correctedValue.trim()) { setCorrectionError("Corrected value is required"); return; }
+    if (!f.document_id) { setCorrectionError("No document associated with this finding"); return; }
+    setSubmitting(true);
+    setCorrectionError("");
+    try {
+      await batchDossiersApi.submitCorrection(dossierId, {
+        finding_id: f.id,
+        document_id: f.document_id,
+        field_name: correctionField.trim(),
+        corrected_value: correctedValue.trim(),
+        correction_rationale: correctionRationale.trim() || undefined,
+        field_criticality: f.field_criticality,
+      });
+      setSubmitted(true);
+      setShowCorrection(false);
+    } catch {
+      setCorrectionError("Failed to submit correction. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const borderColor = vState
+    ? vState.dot === "bg-emerald-500" ? "#10b981"
+    : vState.dot === "bg-red-500" ? "#ef4444"
+    : vState.dot === "bg-blue-500" ? "#3b82f6"
+    : "#9ca3af"
+    : undefined;
+
   return (
-    <div className={`border rounded-lg overflow-hidden ${vState ? `border-l-4` : ""}`}
-      style={vState ? { borderLeftColor: vState.dot === "bg-emerald-500" ? "#10b981" : vState.dot === "bg-red-500" ? "#ef4444" : vState.dot === "bg-blue-500" ? "#3b82f6" : "#9ca3af" } : {}}>
+    <div
+      className={`border rounded-lg overflow-hidden ${vState ? "border-l-4" : ""}`}
+      style={borderColor ? { borderLeftColor: borderColor } : {}}
+    >
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -124,11 +174,17 @@ function FindingCard({ f }: { f: Finding }) {
                 Human verification required
               </span>
             )}
+            {submitted && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded border bg-teal-50 text-teal-700 border-teal-200">
+                Correction submitted
+              </span>
+            )}
           </div>
           <div className="text-sm font-medium mt-0.5 truncate">{f.title}</div>
         </div>
         {expanded ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />}
       </button>
+
       {expanded && (
         <div className="px-3 pb-3 text-sm text-muted-foreground border-t bg-muted/10">
           <p className="mt-2">{f.description}</p>
@@ -143,6 +199,55 @@ function FindingCard({ f }: { f: Finding }) {
           {f.source_page && (
             <p className="mt-1.5 text-xs text-muted-foreground">Source: Page {f.source_page}</p>
           )}
+
+          {/* Correction toggle */}
+          {!submitted && (
+            <div className="mt-3 border-t pt-2">
+              <button
+                type="button"
+                onClick={() => setShowCorrection(!showCorrection)}
+                className="flex items-center gap-1.5 text-xs text-primary hover:underline"
+              >
+                <Pencil className="w-3 h-3" />
+                {showCorrection ? "Cancel correction" : "Flag a correction"}
+              </button>
+            </div>
+          )}
+
+          {showCorrection && (
+            <div className="mt-2 space-y-2 p-3 bg-background rounded-lg border">
+              <p className="text-xs font-medium text-foreground">Submit a correction to improve future assessments</p>
+              <input
+                className="w-full px-2 py-1.5 border rounded text-xs bg-background focus:outline-none focus:ring-1 focus:ring-primary/30"
+                placeholder="Field name (e.g. lot_number, yield_percentage)"
+                value={correctionField}
+                onChange={e => setCorrectionField(e.target.value)}
+              />
+              <textarea
+                className="w-full px-2 py-1.5 border rounded text-xs bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 resize-none"
+                rows={2}
+                placeholder="Correct value or correction"
+                value={correctedValue}
+                onChange={e => setCorrectedValue(e.target.value)}
+              />
+              <textarea
+                className="w-full px-2 py-1.5 border rounded text-xs bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 resize-none"
+                rows={2}
+                placeholder="Rationale (optional)"
+                value={correctionRationale}
+                onChange={e => setCorrectionRationale(e.target.value)}
+              />
+              {correctionError && <p className="text-[10px] text-destructive">{correctionError}</p>}
+              <button
+                onClick={handleSubmitCorrection}
+                disabled={submitting}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded text-xs font-medium hover:bg-primary/90 disabled:opacity-60"
+              >
+                {submitting && <Loader2 className="w-3 h-3 animate-spin" />}
+                Submit correction
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -151,7 +256,7 @@ function FindingCard({ f }: { f: Finding }) {
 
 // ── Document Card ─────────────────────────────────────────────────────────────
 
-function DocCard({ dd }: { dd: DossierDoc }) {
+function DocCard({ dd, dossierId }: { dd: DossierDoc; dossierId: string }) {
   const [expanded, setExpanded] = useState(false);
   const findings = dd.findings ?? [];
   const byState = {
@@ -197,7 +302,7 @@ function DocCard({ dd }: { dd: DossierDoc }) {
       {expanded && findings.length > 0 && (
         <div className="px-4 pb-4 space-y-2 border-t">
           <div className="pt-3 text-xs font-semibold text-muted-foreground mb-2">{findings.length} finding{findings.length !== 1 ? "s" : ""}</div>
-          {findings.map(f => <FindingCard key={f.id} f={f} />)}
+          {findings.map(f => <FindingCard key={f.id} f={f} dossierId={dossierId} />)}
         </div>
       )}
       {expanded && findings.length === 0 && dd.assessment && (
@@ -229,8 +334,9 @@ function AddDocumentModal({ dossierId, onClose, onAdded }: {
     try {
       await batchDossiersApi.addDocument(dossierId, { document_id: selectedDoc, role, notes: notes || undefined });
       onAdded();
-    } catch (err: any) {
-      setError(err?.response?.data?.detail ?? "Failed to add document");
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { detail?: string } } };
+      setError(e?.response?.data?.detail ?? "Failed to add document");
     } finally {
       setLoading(false);
     }
@@ -287,13 +393,233 @@ function AddDocumentModal({ dossierId, onClose, onAdded }: {
   );
 }
 
+// ── Reopen Modal ──────────────────────────────────────────────────────────────
+
+function ReopenModal({ dossierId, onClose, onReopened }: {
+  dossierId: string; onClose: () => void; onReopened: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async () => {
+    if (reason.trim().length < 100) {
+      setError(`Reason must be at least 100 characters (§22.5). Currently ${reason.trim().length}/100.`);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      await batchDossiersApi.reopen(dossierId, reason.trim());
+      onReopened();
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { detail?: string } } };
+      setError(e?.response?.data?.detail ?? "Failed to reopen dossier");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-card rounded-xl shadow-xl w-full max-w-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-base font-semibold">Reopen Dossier</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">A documented reason of at least 100 characters is required (§22.5)</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-accent text-muted-foreground">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="space-y-3">
+          <textarea
+            className="w-full px-3 py-2.5 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+            rows={5}
+            placeholder="Document the reason for reopening. Include: what was found incorrect, what new evidence requires review, and who authorised the reopen…"
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+          />
+          <div className={`text-xs ${reason.trim().length >= 100 ? "text-emerald-600" : "text-muted-foreground"}`}>
+            {reason.trim().length}/100 characters minimum
+          </div>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
+        <div className="flex gap-2 mt-4">
+          <button onClick={onClose} className="flex-1 py-2 border rounded-lg text-sm hover:bg-accent">Cancel</button>
+          <button
+            onClick={handleSubmit}
+            disabled={loading || reason.trim().length < 100}
+            className="flex-1 flex items-center justify-center gap-2 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-60"
+          >
+            {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            <RotateCcw className="w-3.5 h-3.5" />
+            Reopen Dossier
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Report Modal ──────────────────────────────────────────────────────────────
+
+function ReportModal({ report, onClose }: { report: Record<string, unknown>; onClose: () => void }) {
+  const dossier = report.dossier as Record<string, unknown> | undefined;
+  const readiness = report.readiness as Record<string, unknown> | undefined;
+  const disposition = report.disposition as Record<string, unknown> | undefined;
+  const docSections = (report.document_sections as unknown[]) ?? [];
+  const totals = report.finding_totals as Record<string, number> | undefined;
+
+  const handleDownload = () => {
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `dossier-review-${String(dossier?.lot_number ?? "report")}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-card rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b sticky top-0 bg-card">
+          <div>
+            <h3 className="text-base font-semibold">Batch Dossier Review Report</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Generated {report.generated_at ? new Date(report.generated_at as string).toLocaleString() : "—"}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleDownload}
+              className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-medium hover:bg-accent"
+            >
+              <Download className="w-3.5 h-3.5" /> Download JSON
+            </button>
+            <button onClick={onClose} className="p-1.5 rounded hover:bg-accent text-muted-foreground">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="px-6 py-4 space-y-5">
+          {/* Dossier summary */}
+          <section>
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Lot Information</h4>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              {([
+                ["Lot Number", dossier?.lot_number],
+                ["Product", dossier?.product_name],
+                ["Dosage Form", dossier?.dosage_form],
+                ["Batch Size", dossier?.batch_size],
+                ["Mfg Site", dossier?.manufacturing_site],
+                ["Mfg Date", dossier?.manufacturing_date],
+              ] as [string, unknown][]).filter(([, v]) => v).map(([label, value]) => (
+                <div key={label} className="flex justify-between bg-muted/30 rounded p-2">
+                  <span className="text-muted-foreground">{label}</span>
+                  <span className="font-medium">{String(value)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* Readiness */}
+          {readiness != null && (
+            <section>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Readiness Assessment</h4>
+              <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
+                <div className="text-2xl font-bold text-primary">{readiness.score != null ? String((readiness.score as number).toFixed(1)) : "—"}</div>
+                <div>
+                  <div className="text-sm font-medium capitalize">{String(readiness.status ?? "").replace(/_/g, " ")}</div>
+                  <div className="text-xs text-muted-foreground">{String(readiness.band ?? "")}</div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* Finding totals */}
+          {totals != null && (
+            <section>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Open Findings</h4>
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { label: "Total Open", val: totals.total_open, color: "text-gray-700" },
+                  { label: "Critical", val: totals.critical_open, color: "text-red-700" },
+                  { label: "High", val: totals.high_open, color: "text-orange-700" },
+                  { label: "Medium", val: totals.medium_open, color: "text-amber-700" },
+                ].map(({ label, val, color }) => (
+                  <div key={label} className="text-center p-2 bg-muted/30 rounded-lg">
+                    <div className={`text-xl font-bold ${color}`}>{val ?? 0}</div>
+                    <div className="text-[10px] text-muted-foreground">{label}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Disposition */}
+          {disposition?.decision != null && (
+            <section>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Disposition</h4>
+              <div className="p-3 bg-muted/30 rounded-lg text-sm">
+                <div className="font-medium capitalize">{String(disposition.decision).replace(/_/g, " ")}</div>
+                {disposition.decided_at != null && (
+                  <div className="text-xs text-muted-foreground mt-0.5">{new Date(String(disposition.decided_at)).toLocaleString()}</div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* Documents */}
+          {docSections.length > 0 && (
+            <section>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Documents ({docSections.length})</h4>
+              <div className="space-y-2">
+                {(docSections as Record<string, unknown>[]).map((ds, i) => {
+                  const assessment = ds.assessment as Record<string, unknown> | null;
+                  const summary = ds.findings_summary as Record<string, number> | undefined;
+                  return (
+                    <div key={i} className="flex items-center gap-3 p-2.5 bg-muted/20 rounded-lg text-sm">
+                      <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="font-medium truncate block">{String(ds.document_title ?? ds.document_id)}</span>
+                        <span className="text-xs text-muted-foreground capitalize">{String(ds.role ?? "").replace(/_/g, " ")}</span>
+                      </div>
+                      {assessment?.clyira_score != null && (
+                        <span className="text-xs font-mono text-muted-foreground">{String((assessment.clyira_score as number).toFixed(1))}</span>
+                      )}
+                      {summary && Object.keys(summary).length > 0 && (
+                        <div className="flex gap-1">
+                          {summary.critical > 0 && <span className="text-[10px] px-1 bg-red-100 text-red-700 rounded">{summary.critical}C</span>}
+                          {summary.high > 0 && <span className="text-[10px] px-1 bg-orange-100 text-orange-700 rounded">{summary.high}H</span>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Disposition Panel ─────────────────────────────────────────────────────────
 
-function DispositionPanel({ dossier, onDecision }: { dossier: Dossier; onDecision: () => void }) {
+function DispositionPanel({ dossier, onDecision, onReopen }: {
+  dossier: Dossier;
+  onDecision: () => void;
+  onReopen: () => void;
+}) {
   const [decision, setDecision] = useState("");
   const [rationale, setRationale] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showReopenModal, setShowReopenModal] = useState(false);
 
   const handleSubmit = async () => {
     if (!decision) { setError("Select a disposition decision"); return; }
@@ -302,8 +628,9 @@ function DispositionPanel({ dossier, onDecision }: { dossier: Dossier; onDecisio
     try {
       await batchDossiersApi.recordDisposition(dossier.id, { decision, rationale });
       onDecision();
-    } catch (err: any) {
-      setError(err?.response?.data?.detail ?? "Failed to record disposition");
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { detail?: string } } };
+      setError(e?.response?.data?.detail ?? "Failed to record disposition");
     } finally {
       setLoading(false);
     }
@@ -317,21 +644,37 @@ function DispositionPanel({ dossier, onDecision }: { dossier: Dossier; onDecisio
       reject: "text-red-700 bg-red-50 border-red-200",
     };
     return (
-      <div className={`p-4 rounded-xl border ${colors[dossier.disposition_decision] ?? ""}`}>
-        <div className="flex items-center gap-2 font-semibold capitalize">
-          <Shield className="w-4 h-4" />
-          Disposition: {dossier.disposition_decision.replace("_", " ")}
-        </div>
-        {dossier.disposition_rationale && (
-          <p className="text-sm mt-1.5">{dossier.disposition_rationale}</p>
+      <>
+        {showReopenModal && (
+          <ReopenModal
+            dossierId={dossier.id}
+            onClose={() => setShowReopenModal(false)}
+            onReopened={() => { setShowReopenModal(false); onReopen(); }}
+          />
         )}
-        {dossier.disposition_divergence && (
-          <div className="mt-2 text-xs flex items-center gap-1 text-amber-700">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            Human decision diverges from AI readiness assessment — rationale logged in audit trail
+        <div className={`p-4 rounded-xl border ${colors[dossier.disposition_decision] ?? ""}`}>
+          <div className="flex items-center gap-2 font-semibold capitalize">
+            <Shield className="w-4 h-4" />
+            Disposition: {dossier.disposition_decision.replace("_", " ")}
           </div>
-        )}
-      </div>
+          {dossier.disposition_rationale && (
+            <p className="text-sm mt-1.5">{dossier.disposition_rationale}</p>
+          )}
+          {dossier.disposition_divergence && (
+            <div className="mt-2 text-xs flex items-center gap-1 text-amber-700">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Human decision diverges from AI readiness assessment — rationale logged in audit trail
+            </div>
+          )}
+          <button
+            onClick={() => setShowReopenModal(true)}
+            className="mt-3 flex items-center gap-1.5 text-xs px-3 py-1.5 border rounded-lg hover:bg-white/50 transition-colors w-full justify-center"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            Reopen Dossier
+          </button>
+        </div>
+      </>
     );
   }
 
@@ -380,6 +723,12 @@ export default function DossierPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [showAddDoc, setShowAddDoc] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "documents" | "findings">("overview");
+  const [conflicts, setConflicts] = useState<Conflict[]>([]);
+  const [conflictsLoading, setConflictsLoading] = useState(false);
+  const [conflictsLoaded, setConflictsLoaded] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [report, setReport] = useState<Record<string, unknown> | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -394,6 +743,17 @@ export default function DossierPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Auto-load conflicts when overview tab is active
+  useEffect(() => {
+    if (activeTab === "overview" && !conflictsLoaded) {
+      setConflictsLoading(true);
+      batchDossiersApi.getConflicts(id)
+        .then(res => setConflicts(res.data.conflicts ?? []))
+        .catch(() => {})
+        .finally(() => { setConflictsLoading(false); setConflictsLoaded(true); });
+    }
+  }, [activeTab, conflictsLoaded, id]);
+
   const handleRefreshReadiness = async () => {
     if (!dossier) return;
     setRefreshing(true);
@@ -402,6 +762,19 @@ export default function DossierPage() {
       await load();
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const handleGenerateReport = async () => {
+    setReportLoading(true);
+    try {
+      const res = await batchDossiersApi.getReport(id);
+      setReport(res.data);
+      setShowReport(true);
+    } catch {
+      // silently fail — button will re-enable
+    } finally {
+      setReportLoading(false);
     }
   };
 
@@ -421,6 +794,7 @@ export default function DossierPage() {
   };
 
   const readinessCfg = dossier.readiness_status ? READINESS_CONFIG[dossier.readiness_status] : null;
+  const criticalConflicts = conflicts.filter(c => c.severity === "critical");
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -430,6 +804,9 @@ export default function DossierPage() {
           onClose={() => setShowAddDoc(false)}
           onAdded={() => { setShowAddDoc(false); load(); }}
         />
+      )}
+      {showReport && report && (
+        <ReportModal report={report} onClose={() => setShowReport(false)} />
       )}
 
       {/* Header */}
@@ -448,6 +825,12 @@ export default function DossierPage() {
             {dossier.shadow_mode && (
               <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full">Shadow Mode</span>
             )}
+            {criticalConflicts.length > 0 && (
+              <span className="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full flex items-center gap-1">
+                <GitCompare className="w-3 h-3" />
+                {criticalConflicts.length} conflict{criticalConflicts.length !== 1 ? "s" : ""}
+              </span>
+            )}
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
             {dossier.record_family.replace(/_/g, " ").toUpperCase()} · {dossier.batch_purpose.replace(/_/g, " ")}
@@ -461,6 +844,14 @@ export default function DossierPage() {
         >
           {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
           Recompute
+        </button>
+        <button
+          onClick={handleGenerateReport}
+          disabled={reportLoading}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground px-3 py-1.5 border rounded-lg hover:bg-accent transition-colors"
+        >
+          {reportLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+          Report
         </button>
         <button
           onClick={() => setShowAddDoc(true)}
@@ -551,6 +942,51 @@ export default function DossierPage() {
                 </div>
               )}
 
+              {/* Cross-document conflicts */}
+              <div className="bg-card border rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <GitCompare className="w-4 h-4 text-muted-foreground" />
+                  <h3 className="text-sm font-semibold">Cross-Document Conflicts</h3>
+                  {conflictsLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground ml-auto" />}
+                </div>
+                {conflictsLoaded && conflicts.length === 0 && (
+                  <div className="flex items-center gap-2 text-sm text-emerald-700">
+                    <CheckCircle2 className="w-4 h-4" /> No cross-document conflicts detected
+                  </div>
+                )}
+                {conflictsLoaded && conflicts.length > 0 && (
+                  <div className="space-y-2">
+                    {conflicts.map((c, i) => (
+                      <div
+                        key={i}
+                        className={`rounded-lg border p-3 text-sm ${
+                          c.severity === "critical" ? "border-red-200 bg-red-50"
+                          : c.severity === "high" ? "border-orange-200 bg-orange-50"
+                          : "border-amber-200 bg-amber-50"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${SEVERITY_COLOR[c.severity] ?? SEVERITY_COLOR.info}`}>
+                            {c.severity.toUpperCase()}
+                          </span>
+                          <span className="font-medium capitalize">{c.field.replace(/_/g, " ")}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{c.description}</p>
+                        {c.values_found && Object.keys(c.values_found).length > 0 && (
+                          <div className="mt-1.5 space-y-0.5">
+                            {Object.entries(c.values_found).map(([doc, val]) => (
+                              <div key={doc} className="text-xs text-muted-foreground font-mono">
+                                {doc}: <span className="text-foreground">{val}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Finding summary by state */}
               {allFindings.length > 0 && (
                 <div className="bg-card border rounded-xl p-4">
@@ -614,7 +1050,7 @@ export default function DossierPage() {
                   <button onClick={() => setShowAddDoc(true)} className="text-primary hover:underline">Add the primary batch record</button>
                 </div>
               ) : (
-                dossier.documents.map(dd => <DocCard key={dd.id} dd={dd} />)
+                dossier.documents.map(dd => <DocCard key={dd.id} dd={dd} dossierId={id} />)
               )}
             </div>
           )}
@@ -634,7 +1070,7 @@ export default function DossierPage() {
                       const order = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
                       return (order[a.severity as keyof typeof order] ?? 5) - (order[b.severity as keyof typeof order] ?? 5);
                     })
-                    .map(f => <FindingCard key={f.id} f={f} />)
+                    .map(f => <FindingCard key={f.id} f={f} dossierId={id} />)
                   }
                 </>
               )}
@@ -653,7 +1089,7 @@ export default function DossierPage() {
           )}
 
           {/* Disposition */}
-          <DispositionPanel dossier={dossier} onDecision={load} />
+          <DispositionPanel dossier={dossier} onDecision={load} onReopen={load} />
 
           {/* Dossier metadata */}
           <div className="bg-card border rounded-xl p-4 text-xs space-y-2 text-muted-foreground">
