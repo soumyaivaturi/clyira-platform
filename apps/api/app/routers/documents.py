@@ -343,6 +343,55 @@ async def add_references(
     return {"document_id": document_id, "references_added": len(added), "references": added}
 
 
+@router.get("/{document_id}/download")
+async def download_document(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stream the original uploaded file for in-browser preview (PDF viewer)."""
+    import os
+    from fastapi.responses import StreamingResponse, Response
+
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.company_id == current_user.company_id,
+        )
+    )
+    document = result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not document.file_path:
+        raise HTTPException(status_code=404, detail="No file attached to this document")
+
+    ext = (document.file_type or "").lower()
+    content_type = "application/pdf" if ext == "pdf" else "application/octet-stream"
+
+    if settings.SUPABASE_URL and settings.SUPABASE_SERVICE_KEY:
+        from supabase import create_client
+        client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
+        data = client.storage.from_(settings.SUPABASE_STORAGE_BUCKET).download(document.file_path)
+        return Response(content=data, media_type=content_type,
+                        headers={"Content-Disposition": f'inline; filename="{document.title}"'})
+
+    # Local dev — file_path is an absolute path on disk
+    if not os.path.exists(document.file_path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    import aiofiles
+
+    async def _stream():
+        async with aiofiles.open(document.file_path, "rb") as f:
+            while chunk := await f.read(65536):
+                yield chunk
+
+    return StreamingResponse(
+        _stream(), media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{document.title}"'},
+    )
+
+
 @router.get("/{document_id}/assessment-history", response_model=dict)
 async def get_assessment_history(
     document_id: str,

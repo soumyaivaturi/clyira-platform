@@ -1,78 +1,72 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  ChevronLeft, CheckCircle2, AlertCircle, XCircle,
-  AlertTriangle, FileText, Plus, RefreshCw, ChevronDown,
-  ChevronRight, Loader2, Shield, Info, RotateCcw,
-  Download, Pencil, X, GitCompare,
+  ChevronLeft, CheckCircle2, AlertCircle, XCircle, AlertTriangle,
+  FileText, Plus, RefreshCw, Loader2, Shield, RotateCcw, Download,
+  X, MessageSquare, Check, Flag, ChevronDown, ChevronRight,
 } from "lucide-react";
 import { batchDossiersApi, documentsApi } from "@/lib/api";
+import api from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface Gate { evidence_complete: boolean; data_integrity_ok: boolean; all_findings_addressed: boolean; gray_findings_resolved: boolean; }
+interface Gate {
+  evidence_complete: boolean; data_integrity_ok: boolean;
+  all_findings_addressed: boolean; gray_findings_resolved: boolean;
+}
 interface Finding {
   id: string; level: string; severity: string; title: string; description: string;
-  verification_state?: string; field_criticality?: string; source_page?: number;
-  human_verification_required?: boolean; status: string; confidence_score?: number;
-  regulatory_citation?: string; suggestion_draft?: string; document_id?: string; document_role?: string;
+  verification_state?: string; source_page?: number; status: string;
+  confidence_score?: number; regulatory_citation?: string; suggestion_draft?: string;
+  document_id?: string; document_role?: string; human_verification_required?: boolean;
 }
 interface DossierDoc {
   id: string; document_id: string; document_title?: string; document_category?: string;
-  role: string; notes?: string; assessment?: {
-    id: string; clyira_score?: number; score_band?: string;
-    findings_critical: number; findings_high: number; findings_medium: number;
-    findings_low: number; completed_at?: string;
-  };
+  role: string; notes?: string;
+  assessment?: { id: string; clyira_score?: number; score_band?: string; };
   findings?: Finding[];
 }
 interface Dossier {
-  id: string; lot_number: string; product_name: string; dosage_form?: string;
-  record_family: string; product_type: string; is_sterile: boolean; batch_purpose: string;
-  manufacturing_context?: string; manufacturing_date?: string; target_release_date?: string;
-  target_markets: string[];
-  status: string; readiness_status?: string; readiness_score?: number; readiness_band?: string;
-  disposition_decision?: string; disposition_rationale?: string; disposition_divergence?: boolean;
-  gates: Gate; shadow_mode: boolean; documents: DossierDoc[];
-  readiness_detail?: { complete: boolean; missing_required_labels?: string[]; missing_conditional?: Record<string, string>; summary: string; };
+  id: string; lot_number: string; product_name: string; product_code?: string;
+  dosage_form?: string; batch_size?: string; manufacturing_site?: string;
+  manufacturing_date?: string; target_release_date?: string;
+  record_family: string; product_type: string; is_sterile: boolean;
+  batch_purpose: string; manufacturing_context?: string; target_markets: string[];
+  status: string; readiness_status?: string; readiness_score?: number;
+  readiness_band?: string; disposition_decision?: string; disposition_rationale?: string;
+  disposition_divergence?: boolean; gates: Gate; shadow_mode: boolean;
+  documents: DossierDoc[];
+  readiness_detail?: { complete: boolean; missing_required_labels?: string[]; summary: string; };
 }
 interface DocOption { id: string; title: string; document_category: string; }
 
-interface Conflict {
-  field: string;
-  severity: string;
-  description: string;
-  documents_involved: string[];
-  values_found?: Record<string, string>;
-}
+type ReviewState = "pending" | "pass" | "fail";
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+const HEADER_FIELDS: { key: keyof Dossier; label: string; critical: boolean }[] = [
+  { key: "lot_number",          label: "Lot / Batch Number",    critical: true },
+  { key: "product_name",        label: "Product Name",          critical: true },
+  { key: "product_code",        label: "Product Code",          critical: false },
+  { key: "dosage_form",         label: "Dosage Form",           critical: false },
+  { key: "batch_size",          label: "Batch Size",            critical: true },
+  { key: "manufacturing_site",  label: "Manufacturing Site",    critical: true },
+  { key: "manufacturing_date",  label: "Manufacturing Date",    critical: true },
+  { key: "target_release_date", label: "Target Release Date",   critical: false },
+];
 
-const SEVERITY_COLOR: Record<string, string> = {
-  critical: "bg-red-100 text-red-700 border-red-200",
-  high: "bg-orange-100 text-orange-700 border-orange-200",
-  medium: "bg-amber-100 text-amber-700 border-amber-200",
-  low: "bg-blue-100 text-blue-700 border-blue-200",
-  info: "bg-gray-100 text-gray-600 border-gray-200",
+const SEVERITY_DOT: Record<string, string> = {
+  critical: "bg-red-500", high: "bg-orange-500",
+  medium: "bg-amber-400", low: "bg-blue-400", info: "bg-gray-400",
 };
-
-const VSTATE_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
-  green: { label: "Verified Pass",  color: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" },
-  red:   { label: "Verified Fail",  color: "bg-red-50 text-red-700 border-red-200",             dot: "bg-red-500" },
-  blue:  { label: "AI-Assisted",    color: "bg-blue-50 text-blue-700 border-blue-200",           dot: "bg-blue-500" },
-  gray:  { label: "Unverified",     color: "bg-gray-100 text-gray-600 border-gray-200",          dot: "bg-gray-400" },
+const SEVERITY_LABEL: Record<string, string> = {
+  critical: "text-red-700 bg-red-50 border-red-200",
+  high: "text-orange-700 bg-orange-50 border-orange-200",
+  medium: "text-amber-700 bg-amber-50 border-amber-200",
+  low: "text-blue-700 bg-blue-50 border-blue-200",
+  info: "text-gray-600 bg-gray-100 border-gray-200",
 };
-
-const READINESS_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
-  ready:       { label: "Ready for QA Disposition Review", bg: "bg-emerald-50 border-emerald-200", text: "text-emerald-800" },
-  conditional: { label: "Conditional Readiness",           bg: "bg-amber-50 border-amber-200",     text: "text-amber-800" },
-  not_ready:   { label: "Not Ready",                       bg: "bg-red-50 border-red-200",         text: "text-red-800" },
-  hold:        { label: "Hold for QA Evaluation",          bg: "bg-red-100 border-red-300",        text: "text-red-900" },
-};
-
 const ROLE_LABELS: Record<string, string> = {
   primary_bpr: "Primary BPR", deviation: "Deviation", capa: "CAPA",
   qc_result: "QC Results", coa: "COA", environmental_monitoring: "Env. Monitoring",
@@ -80,234 +74,177 @@ const ROLE_LABELS: Record<string, string> = {
   filter_integrity: "Filter Integrity", packaging_record: "Packaging",
   labeling_record: "Labeling", other: "Other",
 };
+const READINESS_CFG: Record<string, { label: string; bg: string; text: string; icon: React.ReactNode }> = {
+  ready:       { label: "Ready for QA Disposition", bg: "bg-emerald-50 border-emerald-200", text: "text-emerald-700", icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
+  conditional: { label: "Conditional Readiness",    bg: "bg-amber-50 border-amber-200",     text: "text-amber-700",   icon: <AlertCircle className="w-3.5 h-3.5" /> },
+  not_ready:   { label: "Not Ready",                bg: "bg-red-50 border-red-200",         text: "text-red-700",     icon: <XCircle className="w-3.5 h-3.5" /> },
+  hold:        { label: "Hold — QA Evaluation",     bg: "bg-red-100 border-red-300",        text: "text-red-900",     icon: <AlertTriangle className="w-3.5 h-3.5" /> },
+};
 
-function GatePill({ pass, label }: { pass: boolean; label: string }) {
+// ── Review Item — header field ────────────────────────────────────────────────
+
+function FieldReviewItem({
+  label, value, critical,
+  state, onPass, onFail, comment, onComment,
+}: {
+  label: string; value: string | null | undefined; critical: boolean;
+  state: ReviewState; onPass: () => void; onFail: () => void;
+  comment: string; onComment: (v: string) => void;
+}) {
+  const [showComment, setShowComment] = useState(false);
+
+  const bgColor = state === "pass" ? "bg-emerald-50 border-emerald-200"
+    : state === "fail" ? "bg-red-50 border-red-200"
+    : "bg-white border-gray-200";
+  const stateLabel = state === "pass" ? "Verified Pass"
+    : state === "fail" ? "Verified Fail"
+    : "Need Review";
+  const stateDot = state === "pass" ? "bg-emerald-500"
+    : state === "fail" ? "bg-red-500"
+    : "bg-amber-400";
+
   return (
-    <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full border ${pass ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-red-50 text-red-700 border-red-200"}`}>
-      {pass ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-      {label}
+    <div className={`rounded-lg border px-3 py-2.5 ${bgColor} transition-colors`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 mb-0.5">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{label}</span>
+            {critical && <span className="text-[9px] px-1 py-0.5 bg-primary/10 text-primary rounded">Required</span>}
+          </div>
+          <div className="text-sm font-medium text-foreground truncate">
+            {value || <span className="text-muted-foreground italic">Not extracted</span>}
+          </div>
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <div className="flex items-center gap-1 mr-1">
+            <span className={`w-1.5 h-1.5 rounded-full ${stateDot}`} />
+            <span className="text-[10px] text-muted-foreground">{stateLabel}</span>
+          </div>
+          <button
+            onClick={onPass}
+            title="Verify Pass"
+            className={`p-1 rounded transition-colors ${state === "pass" ? "bg-emerald-500 text-white" : "hover:bg-emerald-100 text-muted-foreground hover:text-emerald-700 border border-transparent hover:border-emerald-200"}`}
+          >
+            <Check className="w-3 h-3" />
+          </button>
+          <button
+            onClick={() => { onFail(); setShowComment(true); }}
+            title="Flag Issue"
+            className={`p-1 rounded transition-colors ${state === "fail" ? "bg-red-500 text-white" : "hover:bg-red-100 text-muted-foreground hover:text-red-700 border border-transparent hover:border-red-200"}`}
+          >
+            <Flag className="w-3 h-3" />
+          </button>
+          <button
+            onClick={() => setShowComment(!showComment)}
+            title="Add comment"
+            className={`p-1 rounded transition-colors ${comment ? "text-blue-600" : "text-muted-foreground hover:text-foreground"} border border-transparent hover:border-gray-200`}
+          >
+            <MessageSquare className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+      {showComment && (
+        <textarea
+          className="mt-2 w-full px-2 py-1.5 text-xs border rounded bg-white focus:outline-none focus:ring-1 focus:ring-primary/30 resize-none"
+          rows={2}
+          placeholder="Add review comment…"
+          value={comment}
+          onChange={e => onComment(e.target.value)}
+        />
+      )}
     </div>
   );
 }
 
-function ScoreBadge({ score, band }: { score?: number; band?: string }) {
-  if (score == null) return <span className="text-xs text-muted-foreground">—</span>;
-  const color = score >= 85 ? "text-emerald-700" : score >= 70 ? "text-amber-700" : "text-red-700";
-  return (
-    <div className="text-center">
-      <div className={`text-2xl font-bold ${color}`}>{score.toFixed(1)}</div>
-      {band && <div className="text-[10px] text-muted-foreground">{band}</div>}
-    </div>
-  );
-}
+// ── Review Item — finding ─────────────────────────────────────────────────────
 
-// ── Finding Card ─────────────────────────────────────────────────────────────
-
-function FindingCard({ f, dossierId }: { f: Finding; dossierId: string }) {
+function FindingReviewItem({
+  finding, dossierId, onStateChange,
+}: {
+  finding: Finding; dossierId: string; onStateChange: (id: string, state: string) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const [showCorrection, setShowCorrection] = useState(false);
-  const [correctionField, setCorrectionField] = useState("");
-  const [correctedValue, setCorrectedValue] = useState("");
-  const [correctionRationale, setCorrectionRationale] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const [correctionError, setCorrectionError] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const vState = f.verification_state ? VSTATE_CONFIG[f.verification_state] : null;
-  const sevColor = SEVERITY_COLOR[f.severity] ?? SEVERITY_COLOR.info;
+  const vs = finding.verification_state ?? "gray";
+  const bgColor = vs === "green" ? "bg-emerald-50 border-emerald-200 border-l-emerald-500"
+    : vs === "red" ? "bg-red-50 border-red-200 border-l-red-500"
+    : vs === "blue" ? "bg-blue-50 border-blue-200 border-l-blue-500"
+    : "bg-white border-gray-200 border-l-amber-400";
+  const vsLabel = vs === "green" ? "Verified Pass"
+    : vs === "red" ? "Verified Fail"
+    : vs === "blue" ? "AI-Assisted"
+    : "Need Review";
 
-  const handleSubmitCorrection = async () => {
-    if (!correctionField.trim()) { setCorrectionError("Field name is required"); return; }
-    if (!correctedValue.trim()) { setCorrectionError("Corrected value is required"); return; }
-    if (!f.document_id) { setCorrectionError("No document associated with this finding"); return; }
-    setSubmitting(true);
-    setCorrectionError("");
+  const handleVerify = async (newState: string) => {
+    setSaving(true);
     try {
-      await batchDossiersApi.submitCorrection(dossierId, {
-        finding_id: f.id,
-        document_id: f.document_id,
-        field_name: correctionField.trim(),
-        corrected_value: correctedValue.trim(),
-        correction_rationale: correctionRationale.trim() || undefined,
-        field_criticality: f.field_criticality,
-      });
-      setSubmitted(true);
-      setShowCorrection(false);
+      await batchDossiersApi.reviewFinding(dossierId, finding.id, newState);
+      onStateChange(finding.id, newState);
     } catch {
-      setCorrectionError("Failed to submit correction. Please try again.");
+      // ignore — UI already optimistic
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   };
 
-  const borderColor = vState
-    ? vState.dot === "bg-emerald-500" ? "#10b981"
-    : vState.dot === "bg-red-500" ? "#ef4444"
-    : vState.dot === "bg-blue-500" ? "#3b82f6"
-    : "#9ca3af"
-    : undefined;
-
   return (
-    <div
-      className={`border rounded-lg overflow-hidden ${vState ? "border-l-4" : ""}`}
-      style={borderColor ? { borderLeftColor: borderColor } : {}}
-    >
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="w-full text-left px-3 py-2.5 flex items-start gap-2 hover:bg-muted/20 transition-colors"
-      >
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${sevColor}`}>
-              {f.severity.toUpperCase()}
-            </span>
-            <span className="text-[10px] text-muted-foreground">{f.level}</span>
-            {vState && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${vState.color}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${vState.dot}`} />
-                {vState.label}
+    <div className={`rounded-lg border border-l-4 ${bgColor} transition-colors`}>
+      <div className="px-3 py-2">
+        <div className="flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${SEVERITY_LABEL[finding.severity] ?? SEVERITY_LABEL.info}`}>
+                {finding.severity.toUpperCase()}
               </span>
-            )}
-            {f.human_verification_required && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">
-                Human verification required
-              </span>
-            )}
-            {submitted && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded border bg-teal-50 text-teal-700 border-teal-200">
-                Correction submitted
-              </span>
-            )}
-          </div>
-          <div className="text-sm font-medium mt-0.5 truncate">{f.title}</div>
-        </div>
-        {expanded ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />}
-      </button>
-
-      {expanded && (
-        <div className="px-3 pb-3 text-sm text-muted-foreground border-t bg-muted/10">
-          <p className="mt-2">{f.description}</p>
-          {f.regulatory_citation && (
-            <p className="mt-1.5 text-xs"><span className="font-medium text-foreground">Regulatory basis:</span> {f.regulatory_citation}</p>
-          )}
-          {f.suggestion_draft && (
-            <div className="mt-2 p-2 bg-background rounded border text-xs">
-              <span className="font-medium text-foreground">Suggested action: </span>{f.suggestion_draft}
-            </div>
-          )}
-          {f.source_page && (
-            <p className="mt-1.5 text-xs text-muted-foreground">Source: Page {f.source_page}</p>
-          )}
-
-          {/* Correction toggle */}
-          {!submitted && (
-            <div className="mt-3 border-t pt-2">
-              <button
-                type="button"
-                onClick={() => setShowCorrection(!showCorrection)}
-                className="flex items-center gap-1.5 text-xs text-primary hover:underline"
-              >
-                <Pencil className="w-3 h-3" />
-                {showCorrection ? "Cancel correction" : "Flag a correction"}
-              </button>
-            </div>
-          )}
-
-          {showCorrection && (
-            <div className="mt-2 space-y-2 p-3 bg-background rounded-lg border">
-              <p className="text-xs font-medium text-foreground">Submit a correction to improve future assessments</p>
-              <input
-                className="w-full px-2 py-1.5 border rounded text-xs bg-background focus:outline-none focus:ring-1 focus:ring-primary/30"
-                placeholder="Field name (e.g. lot_number, yield_percentage)"
-                value={correctionField}
-                onChange={e => setCorrectionField(e.target.value)}
-              />
-              <textarea
-                className="w-full px-2 py-1.5 border rounded text-xs bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 resize-none"
-                rows={2}
-                placeholder="Correct value or correction"
-                value={correctedValue}
-                onChange={e => setCorrectedValue(e.target.value)}
-              />
-              <textarea
-                className="w-full px-2 py-1.5 border rounded text-xs bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 resize-none"
-                rows={2}
-                placeholder="Rationale (optional)"
-                value={correctionRationale}
-                onChange={e => setCorrectionRationale(e.target.value)}
-              />
-              {correctionError && <p className="text-[10px] text-destructive">{correctionError}</p>}
-              <button
-                onClick={handleSubmitCorrection}
-                disabled={submitting}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded text-xs font-medium hover:bg-primary/90 disabled:opacity-60"
-              >
-                {submitting && <Loader2 className="w-3 h-3 animate-spin" />}
-                Submit correction
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Document Card ─────────────────────────────────────────────────────────────
-
-function DocCard({ dd, dossierId }: { dd: DossierDoc; dossierId: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const findings = dd.findings ?? [];
-  const byState = {
-    red: findings.filter(f => f.verification_state === "red").length,
-    blue: findings.filter(f => f.verification_state === "blue").length,
-    gray: findings.filter(f => f.verification_state === "gray").length,
-    green: findings.filter(f => f.verification_state === "green").length,
-  };
-
-  return (
-    <div className="border rounded-xl overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-muted/20 transition-colors"
-      >
-        <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium truncate">{dd.document_title ?? dd.document_id}</span>
-            <span className="text-[10px] px-1.5 py-0.5 bg-muted rounded text-muted-foreground">
-              {ROLE_LABELS[dd.role] ?? dd.role}
-            </span>
-          </div>
-          {dd.assessment && (
-            <div className="flex items-center gap-3 mt-0.5">
-              <span className="text-xs text-muted-foreground">Score: {dd.assessment.clyira_score?.toFixed(1) ?? "—"}</span>
-              {findings.length > 0 && (
-                <div className="flex items-center gap-1.5">
-                  {byState.red > 0 && <span className="text-[10px] px-1 py-0.5 bg-red-100 text-red-700 rounded">{byState.red} fail</span>}
-                  {byState.blue > 0 && <span className="text-[10px] px-1 py-0.5 bg-blue-100 text-blue-700 rounded">{byState.blue} AI</span>}
-                  {byState.gray > 0 && <span className="text-[10px] px-1 py-0.5 bg-gray-100 text-gray-600 rounded">{byState.gray} gray</span>}
-                </div>
+              <span className="text-[10px] text-muted-foreground">{finding.level}</span>
+              <span className="text-[10px] text-muted-foreground">· {vsLabel}</span>
+              {finding.source_page && (
+                <span className="text-[10px] text-muted-foreground">· p.{finding.source_page}</span>
               )}
             </div>
-          )}
-          {!dd.assessment && (
-            <span className="text-xs text-muted-foreground">No assessment yet</span>
-          )}
+            <div className="text-xs font-medium text-foreground leading-snug">{finding.title}</div>
+          </div>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {saving ? (
+              <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
+            ) : (
+              <>
+                <button
+                  onClick={() => handleVerify("green")}
+                  title="Verify Pass"
+                  className={`p-1 rounded transition-colors ${vs === "green" ? "bg-emerald-500 text-white" : "hover:bg-emerald-100 text-muted-foreground hover:text-emerald-700 border border-transparent hover:border-emerald-200"}`}
+                >
+                  <Check className="w-3 h-3" />
+                </button>
+                <button
+                  onClick={() => handleVerify("red")}
+                  title="Verify Fail"
+                  className={`p-1 rounded transition-colors ${vs === "red" ? "bg-red-500 text-white" : "hover:bg-red-100 text-muted-foreground hover:text-red-700 border border-transparent hover:border-red-200"}`}
+                >
+                  <Flag className="w-3 h-3" />
+                </button>
+              </>
+            )}
+            <button onClick={() => setExpanded(!expanded)} className="p-1 text-muted-foreground hover:text-foreground rounded">
+              {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            </button>
+          </div>
         </div>
-        {expanded ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
-      </button>
-      {expanded && findings.length > 0 && (
-        <div className="px-4 pb-4 space-y-2 border-t">
-          <div className="pt-3 text-xs font-semibold text-muted-foreground mb-2">{findings.length} finding{findings.length !== 1 ? "s" : ""}</div>
-          {findings.map(f => <FindingCard key={f.id} f={f} dossierId={dossierId} />)}
-        </div>
-      )}
-      {expanded && findings.length === 0 && dd.assessment && (
-        <div className="px-4 pb-4 pt-3 border-t text-xs text-muted-foreground text-center">No findings — all checks passed</div>
-      )}
+        {expanded && (
+          <div className="mt-2 pt-2 border-t text-[11px] text-muted-foreground space-y-1">
+            <p>{finding.description}</p>
+            {finding.regulatory_citation && (
+              <p><span className="font-medium text-foreground">Regulatory basis:</span> {finding.regulatory_citation}</p>
+            )}
+            {finding.suggestion_draft && (
+              <div className="mt-1 p-2 bg-white rounded border text-[11px]">
+                <span className="font-medium text-foreground">Suggested action: </span>{finding.suggestion_draft}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -319,7 +256,7 @@ function AddDocumentModal({ dossierId, onClose, onAdded }: {
 }) {
   const [docs, setDocs] = useState<DocOption[]>([]);
   const [selectedDoc, setSelectedDoc] = useState("");
-  const [role, setRole] = useState("other");
+  const [role, setRole] = useState("primary_bpr");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -337,54 +274,43 @@ function AddDocumentModal({ dossierId, onClose, onAdded }: {
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string } } };
       setError(e?.response?.data?.detail ?? "Failed to add document");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div className="bg-card rounded-xl shadow-xl w-full max-w-md p-6">
-        <h3 className="text-base font-semibold mb-4">Add Document to Dossier</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-semibold">Add Document to Dossier</h3>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-accent text-muted-foreground"><X className="w-4 h-4" /></button>
+        </div>
         <div className="space-y-3">
           <div>
             <label className="text-sm font-medium block mb-1.5">Document</label>
-            <select
-              className="w-full px-3 py-2.5 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-              value={selectedDoc} onChange={e => setSelectedDoc(e.target.value)}
-            >
+            <select className="w-full px-3 py-2.5 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+              value={selectedDoc} onChange={e => setSelectedDoc(e.target.value)}>
               <option value="">Select a document…</option>
-              {docs.map(d => (
-                <option key={d.id} value={d.id}>{d.title} ({d.document_category})</option>
-              ))}
+              {docs.map(d => <option key={d.id} value={d.id}>{d.title} ({d.document_category})</option>)}
             </select>
           </div>
           <div>
             <label className="text-sm font-medium block mb-1.5">Role in dossier</label>
-            <select
-              className="w-full px-3 py-2.5 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-              value={role} onChange={e => setRole(e.target.value)}
-            >
-              {Object.entries(ROLE_LABELS).map(([v, l]) => (
-                <option key={v} value={v}>{l}</option>
-              ))}
+            <select className="w-full px-3 py-2.5 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+              value={role} onChange={e => setRole(e.target.value)}>
+              {Object.entries(ROLE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </div>
           <div>
             <label className="text-sm font-medium block mb-1.5">Notes (optional)</label>
-            <input
-              className="w-full px-3 py-2.5 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-              value={notes} onChange={e => setNotes(e.target.value)} placeholder="Context or notes for this document…"
-            />
+            <input className="w-full px-3 py-2.5 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+              value={notes} onChange={e => setNotes(e.target.value)} placeholder="Context or notes…" />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <div className="flex gap-2 mt-5">
           <button onClick={onClose} className="flex-1 py-2 border rounded-lg text-sm hover:bg-accent">Cancel</button>
-          <button
-            onClick={handleAdd} disabled={loading}
-            className="flex-1 flex items-center justify-center gap-2 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60"
-          >
+          <button onClick={handleAdd} disabled={loading}
+            className="flex-1 flex items-center justify-center gap-2 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
             {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Add Document
           </button>
         </div>
@@ -393,322 +319,108 @@ function AddDocumentModal({ dossierId, onClose, onAdded }: {
   );
 }
 
-// ── Reopen Modal ──────────────────────────────────────────────────────────────
-
-function ReopenModal({ dossierId, onClose, onReopened }: {
-  dossierId: string; onClose: () => void; onReopened: () => void;
-}) {
-  const [reason, setReason] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  const handleSubmit = async () => {
-    if (reason.trim().length < 100) {
-      setError(`Reason must be at least 100 characters (§22.5). Currently ${reason.trim().length}/100.`);
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      await batchDossiersApi.reopen(dossierId, reason.trim());
-      onReopened();
-    } catch (err: unknown) {
-      const e = err as { response?: { data?: { detail?: string } } };
-      setError(e?.response?.data?.detail ?? "Failed to reopen dossier");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-card rounded-xl shadow-xl w-full max-w-lg p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-base font-semibold">Reopen Dossier</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">A documented reason of at least 100 characters is required (§22.5)</p>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-accent text-muted-foreground">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="space-y-3">
-          <textarea
-            className="w-full px-3 py-2.5 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
-            rows={5}
-            placeholder="Document the reason for reopening. Include: what was found incorrect, what new evidence requires review, and who authorised the reopen…"
-            value={reason}
-            onChange={e => setReason(e.target.value)}
-          />
-          <div className={`text-xs ${reason.trim().length >= 100 ? "text-emerald-600" : "text-muted-foreground"}`}>
-            {reason.trim().length}/100 characters minimum
-          </div>
-          {error && <p className="text-sm text-destructive">{error}</p>}
-        </div>
-        <div className="flex gap-2 mt-4">
-          <button onClick={onClose} className="flex-1 py-2 border rounded-lg text-sm hover:bg-accent">Cancel</button>
-          <button
-            onClick={handleSubmit}
-            disabled={loading || reason.trim().length < 100}
-            className="flex-1 flex items-center justify-center gap-2 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-60"
-          >
-            {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            <RotateCcw className="w-3.5 h-3.5" />
-            Reopen Dossier
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Report Modal ──────────────────────────────────────────────────────────────
-
-function ReportModal({ report, onClose }: { report: Record<string, unknown>; onClose: () => void }) {
-  const dossier = report.dossier as Record<string, unknown> | undefined;
-  const readiness = report.readiness as Record<string, unknown> | undefined;
-  const disposition = report.disposition as Record<string, unknown> | undefined;
-  const docSections = (report.document_sections as unknown[]) ?? [];
-  const totals = report.finding_totals as Record<string, number> | undefined;
-
-  const handleDownload = () => {
-    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `dossier-review-${String(dossier?.lot_number ?? "report")}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-card rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-6 py-4 border-b sticky top-0 bg-card">
-          <div>
-            <h3 className="text-base font-semibold">Batch Dossier Review Report</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Generated {report.generated_at ? new Date(report.generated_at as string).toLocaleString() : "—"}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleDownload}
-              className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-medium hover:bg-accent"
-            >
-              <Download className="w-3.5 h-3.5" /> Download JSON
-            </button>
-            <button onClick={onClose} className="p-1.5 rounded hover:bg-accent text-muted-foreground">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        <div className="px-6 py-4 space-y-5">
-          {/* Dossier summary */}
-          <section>
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Lot Information</h4>
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              {([
-                ["Lot Number", dossier?.lot_number],
-                ["Product", dossier?.product_name],
-                ["Dosage Form", dossier?.dosage_form],
-                ["Batch Size", dossier?.batch_size],
-                ["Mfg Site", dossier?.manufacturing_site],
-                ["Mfg Date", dossier?.manufacturing_date],
-              ] as [string, unknown][]).filter(([, v]) => v).map(([label, value]) => (
-                <div key={label} className="flex justify-between bg-muted/30 rounded p-2">
-                  <span className="text-muted-foreground">{label}</span>
-                  <span className="font-medium">{String(value)}</span>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          {/* Readiness */}
-          {readiness != null && (
-            <section>
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Readiness Assessment</h4>
-              <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
-                <div className="text-2xl font-bold text-primary">{readiness.score != null ? String((readiness.score as number).toFixed(1)) : "—"}</div>
-                <div>
-                  <div className="text-sm font-medium capitalize">{String(readiness.status ?? "").replace(/_/g, " ")}</div>
-                  <div className="text-xs text-muted-foreground">{String(readiness.band ?? "")}</div>
-                </div>
-              </div>
-            </section>
-          )}
-
-          {/* Finding totals */}
-          {totals != null && (
-            <section>
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Open Findings</h4>
-              <div className="grid grid-cols-4 gap-2">
-                {[
-                  { label: "Total Open", val: totals.total_open, color: "text-gray-700" },
-                  { label: "Critical", val: totals.critical_open, color: "text-red-700" },
-                  { label: "High", val: totals.high_open, color: "text-orange-700" },
-                  { label: "Medium", val: totals.medium_open, color: "text-amber-700" },
-                ].map(({ label, val, color }) => (
-                  <div key={label} className="text-center p-2 bg-muted/30 rounded-lg">
-                    <div className={`text-xl font-bold ${color}`}>{val ?? 0}</div>
-                    <div className="text-[10px] text-muted-foreground">{label}</div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Disposition */}
-          {disposition?.decision != null && (
-            <section>
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Disposition</h4>
-              <div className="p-3 bg-muted/30 rounded-lg text-sm">
-                <div className="font-medium capitalize">{String(disposition.decision).replace(/_/g, " ")}</div>
-                {disposition.decided_at != null && (
-                  <div className="text-xs text-muted-foreground mt-0.5">{new Date(String(disposition.decided_at)).toLocaleString()}</div>
-                )}
-              </div>
-            </section>
-          )}
-
-          {/* Documents */}
-          {docSections.length > 0 && (
-            <section>
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Documents ({docSections.length})</h4>
-              <div className="space-y-2">
-                {(docSections as Record<string, unknown>[]).map((ds, i) => {
-                  const assessment = ds.assessment as Record<string, unknown> | null;
-                  const summary = ds.findings_summary as Record<string, number> | undefined;
-                  return (
-                    <div key={i} className="flex items-center gap-3 p-2.5 bg-muted/20 rounded-lg text-sm">
-                      <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <span className="font-medium truncate block">{String(ds.document_title ?? ds.document_id)}</span>
-                        <span className="text-xs text-muted-foreground capitalize">{String(ds.role ?? "").replace(/_/g, " ")}</span>
-                      </div>
-                      {assessment?.clyira_score != null && (
-                        <span className="text-xs font-mono text-muted-foreground">{String((assessment.clyira_score as number).toFixed(1))}</span>
-                      )}
-                      {summary && Object.keys(summary).length > 0 && (
-                        <div className="flex gap-1">
-                          {summary.critical > 0 && <span className="text-[10px] px-1 bg-red-100 text-red-700 rounded">{summary.critical}C</span>}
-                          {summary.high > 0 && <span className="text-[10px] px-1 bg-orange-100 text-orange-700 rounded">{summary.high}H</span>}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Disposition Panel ─────────────────────────────────────────────────────────
 
-function DispositionPanel({ dossier, onDecision, onReopen }: {
-  dossier: Dossier;
-  onDecision: () => void;
-  onReopen: () => void;
-}) {
+function DispositionPanel({ dossier, onDecision }: { dossier: Dossier; onDecision: () => void }) {
   const [decision, setDecision] = useState("");
   const [rationale, setRationale] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [showReopenModal, setShowReopenModal] = useState(false);
+  const [reopenReason, setReopenReason] = useState("");
+  const [reopening, setReopening] = useState(false);
+  const [showReopen, setShowReopen] = useState(false);
 
   const handleSubmit = async () => {
     if (!decision) { setError("Select a disposition decision"); return; }
     if (rationale.trim().length < 20) { setError("Rationale must be at least 20 characters"); return; }
     setLoading(true);
+    setError("");
     try {
       await batchDossiersApi.recordDisposition(dossier.id, { decision, rationale });
       onDecision();
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string } } };
       setError(e?.response?.data?.detail ?? "Failed to record disposition");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
+  };
+
+  const handleReopen = async () => {
+    if (reopenReason.trim().length < 100) { setError(`Minimum 100 chars (§22.5) — ${reopenReason.trim().length}/100`); return; }
+    setReopening(true);
+    try {
+      await batchDossiersApi.reopen(dossier.id, reopenReason.trim());
+      onDecision();
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { detail?: string } } };
+      setError(e?.response?.data?.detail ?? "Failed to reopen");
+    } finally { setReopening(false); }
   };
 
   if (dossier.disposition_decision) {
     const colors: Record<string, string> = {
-      release: "text-emerald-700 bg-emerald-50 border-emerald-200",
-      conditional_release: "text-teal-700 bg-teal-50 border-teal-200",
-      hold: "text-amber-700 bg-amber-50 border-amber-200",
-      reject: "text-red-700 bg-red-50 border-red-200",
+      release: "bg-emerald-50 border-emerald-200 text-emerald-800",
+      conditional_release: "bg-teal-50 border-teal-200 text-teal-800",
+      hold: "bg-amber-50 border-amber-200 text-amber-800",
+      reject: "bg-red-50 border-red-200 text-red-800",
     };
     return (
-      <>
-        {showReopenModal && (
-          <ReopenModal
-            dossierId={dossier.id}
-            onClose={() => setShowReopenModal(false)}
-            onReopened={() => { setShowReopenModal(false); onReopen(); }}
-          />
-        )}
-        <div className={`p-4 rounded-xl border ${colors[dossier.disposition_decision] ?? ""}`}>
-          <div className="flex items-center gap-2 font-semibold capitalize">
-            <Shield className="w-4 h-4" />
-            Disposition: {dossier.disposition_decision.replace("_", " ")}
-          </div>
-          {dossier.disposition_rationale && (
-            <p className="text-sm mt-1.5">{dossier.disposition_rationale}</p>
-          )}
-          {dossier.disposition_divergence && (
-            <div className="mt-2 text-xs flex items-center gap-1 text-amber-700">
-              <AlertTriangle className="w-3.5 h-3.5" />
-              Human decision diverges from AI readiness assessment — rationale logged in audit trail
-            </div>
-          )}
-          <button
-            onClick={() => setShowReopenModal(true)}
-            className="mt-3 flex items-center gap-1.5 text-xs px-3 py-1.5 border rounded-lg hover:bg-white/50 transition-colors w-full justify-center"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            Reopen Dossier
-          </button>
+      <div className={`rounded-lg border p-3 ${colors[dossier.disposition_decision] ?? ""}`}>
+        <div className="flex items-center gap-1.5 font-semibold text-sm capitalize">
+          <Shield className="w-3.5 h-3.5" />
+          {dossier.disposition_decision.replace("_", " ")}
         </div>
-      </>
+        {dossier.disposition_rationale && <p className="text-xs mt-1 opacity-80">{dossier.disposition_rationale}</p>}
+        {dossier.disposition_divergence && (
+          <div className="mt-1.5 text-[10px] flex items-center gap-1 text-amber-700">
+            <AlertTriangle className="w-3 h-3" /> Human decision diverges from AI readiness — logged
+          </div>
+        )}
+        {!showReopen ? (
+          <button onClick={() => setShowReopen(true)} className="mt-2 text-xs flex items-center gap-1 hover:underline">
+            <RotateCcw className="w-3 h-3" /> Reopen
+          </button>
+        ) : (
+          <div className="mt-2 space-y-1.5">
+            <textarea rows={3} className="w-full px-2 py-1.5 border rounded text-xs bg-white resize-none focus:outline-none"
+              placeholder="Reopen reason — min 100 chars (§22.5)…"
+              value={reopenReason} onChange={e => setReopenReason(e.target.value)} />
+            <div className={`text-[10px] ${reopenReason.trim().length >= 100 ? "text-emerald-600" : "text-muted-foreground"}`}>
+              {reopenReason.trim().length}/100
+            </div>
+            {error && <p className="text-[10px] text-destructive">{error}</p>}
+            <div className="flex gap-1.5">
+              <button onClick={() => { setShowReopen(false); setError(""); }} className="flex-1 py-1 border rounded text-xs hover:bg-white/60">Cancel</button>
+              <button onClick={handleReopen} disabled={reopening || reopenReason.trim().length < 100}
+                className="flex-1 flex items-center justify-center gap-1 py-1 bg-amber-600 text-white rounded text-xs disabled:opacity-60">
+                {reopening && <Loader2 className="w-3 h-3 animate-spin" />} Reopen
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     );
   }
 
   return (
-    <div className="bg-card border rounded-xl p-5">
-      <h3 className="text-sm font-semibold mb-3">QA Approver — Disposition Decision</h3>
-      <p className="text-xs text-muted-foreground mb-3">
-        This is a human decision. Clyira reports readiness; you decide disposition.
-      </p>
-      <div className="space-y-3">
-        <select
-          className="w-full px-3 py-2.5 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-          value={decision} onChange={e => setDecision(e.target.value)}
-        >
-          <option value="">Select disposition…</option>
-          <option value="release">Release — Batch approved for distribution</option>
-          <option value="conditional_release">Conditional Release — Approved with documented conditions</option>
-          <option value="hold">Hold — Pending investigation or additional data</option>
-          <option value="reject">Reject — Fundamental quality failure</option>
-        </select>
-        <textarea
-          className="w-full px-3 py-2.5 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
-          rows={3} placeholder="Disposition rationale (required, min 20 characters)…"
-          value={rationale} onChange={e => setRationale(e.target.value)}
-        />
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <button
-          onClick={handleSubmit} disabled={loading}
-          className="w-full flex items-center justify-center gap-2 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 transition-colors"
-        >
-          {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-          Record Disposition Decision
-        </button>
-      </div>
+    <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">This is a human decision. Clyira reports readiness; you decide disposition.</p>
+      <select className="w-full px-2.5 py-2 border rounded-lg text-xs bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+        value={decision} onChange={e => setDecision(e.target.value)}>
+        <option value="">Select disposition…</option>
+        <option value="release">Release — Approved for distribution</option>
+        <option value="conditional_release">Conditional Release — With documented conditions</option>
+        <option value="hold">Hold — Pending investigation</option>
+        <option value="reject">Reject — Quality failure</option>
+      </select>
+      <textarea rows={2} className="w-full px-2.5 py-2 border rounded-lg text-xs bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+        placeholder="Disposition rationale (min 20 chars)…"
+        value={rationale} onChange={e => setRationale(e.target.value)} />
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <button onClick={handleSubmit} disabled={loading}
+        className="w-full flex items-center justify-center gap-2 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-60">
+        {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+        Record Disposition Decision
+      </button>
     </div>
   );
 }
@@ -718,64 +430,79 @@ function DispositionPanel({ dossier, onDecision, onReopen }: {
 export default function DossierPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+
   const [dossier, setDossier] = useState<Dossier | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showAddDoc, setShowAddDoc] = useState(false);
-  const [activeTab, setActiveTab] = useState<"overview" | "documents" | "findings">("overview");
-  const [conflicts, setConflicts] = useState<Conflict[]>([]);
-  const [conflictsLoading, setConflictsLoading] = useState(false);
-  const [conflictsLoaded, setConflictsLoaded] = useState(false);
-  const [showReport, setShowReport] = useState(false);
-  const [report, setReport] = useState<Record<string, unknown> | null>(null);
-  const [reportLoading, setReportLoading] = useState(false);
+
+  // PDF viewer state
+  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const prevBlobRef = useRef<string | null>(null);
+
+  // Field review state (local — persists per session)
+  const [fieldReviews, setFieldReviews] = useState<Record<string, ReviewState>>({});
+  const [fieldComments, setFieldComments] = useState<Record<string, string>>({});
+
+  // Finding states (synced with backend)
+  const [findingStates, setFindingStates] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
       const res = await batchDossiersApi.get(id);
-      setDossier(res.data);
+      const d: Dossier = res.data;
+      setDossier(d);
+      // Init finding states from server data
+      const states: Record<string, string> = {};
+      d.documents.forEach(dd => (dd.findings ?? []).forEach(f => {
+        states[f.id] = f.verification_state ?? "gray";
+      }));
+      setFindingStates(prev => ({ ...states, ...prev }));
+      // Auto-select first document
+      if (d.documents.length > 0 && !selectedDocId) {
+        setSelectedDocId(d.documents[0].document_id);
+      }
     } catch {
       router.push("/batch-dossiers");
     } finally {
       setLoading(false);
     }
-  }, [id, router]);
+  }, [id, router, selectedDocId]);
 
   useEffect(() => { load(); }, [load]);
 
-  // Auto-load conflicts when overview tab is active
+  // Load PDF blob URL when selected document changes
   useEffect(() => {
-    if (activeTab === "overview" && !conflictsLoaded) {
-      setConflictsLoading(true);
-      batchDossiersApi.getConflicts(id)
-        .then(res => setConflicts(res.data.conflicts ?? []))
-        .catch(() => {})
-        .finally(() => { setConflictsLoading(false); setConflictsLoaded(true); });
-    }
-  }, [activeTab, conflictsLoaded, id]);
+    if (!selectedDocId) return;
+    const dd = dossier?.documents.find(d => d.document_id === selectedDocId);
+    if (!dd) return;
 
-  const handleRefreshReadiness = async () => {
-    if (!dossier) return;
+    setPdfLoading(true);
+    api.get(`/documents/${selectedDocId}/download`, { responseType: "blob" })
+      .then(resp => {
+        if (prevBlobRef.current) URL.revokeObjectURL(prevBlobRef.current);
+        const url = URL.createObjectURL(resp.data);
+        prevBlobRef.current = url;
+        setPdfBlobUrl(url);
+      })
+      .catch(() => setPdfBlobUrl(null))
+      .finally(() => setPdfLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDocId]);
+
+  // Cleanup blob URL on unmount
+  useEffect(() => () => { if (prevBlobRef.current) URL.revokeObjectURL(prevBlobRef.current); }, []);
+
+  const handleRefresh = async () => {
     setRefreshing(true);
-    try {
-      await batchDossiersApi.assessReadiness(id);
-      await load();
-    } finally {
-      setRefreshing(false);
-    }
+    try { await batchDossiersApi.assessReadiness(id); await load(); }
+    finally { setRefreshing(false); }
   };
 
-  const handleGenerateReport = async () => {
-    setReportLoading(true);
-    try {
-      const res = await batchDossiersApi.getReport(id);
-      setReport(res.data);
-      setShowReport(true);
-    } catch {
-      // silently fail — button will re-enable
-    } finally {
-      setReportLoading(false);
-    }
+  const handleFindingStateChange = (findingId: string, state: string) => {
+    setFindingStates(prev => ({ ...prev, [findingId]: state }));
   };
 
   if (loading) return (
@@ -785,19 +512,19 @@ export default function DossierPage() {
   );
   if (!dossier) return null;
 
-  const allFindings = dossier.documents.flatMap(d => d.findings ?? []);
-  const findingsByState = {
-    green: allFindings.filter(f => f.verification_state === "green").length,
-    red: allFindings.filter(f => f.verification_state === "red").length,
-    blue: allFindings.filter(f => f.verification_state === "blue").length,
-    gray: allFindings.filter(f => f.verification_state === "gray").length,
-  };
+  const selectedDoc = dossier.documents.find(d => d.document_id === selectedDocId);
+  const selectedFindings = (selectedDoc?.findings ?? []).map(f => ({
+    ...f, verification_state: findingStates[f.id] ?? f.verification_state ?? "gray",
+  }));
 
-  const readinessCfg = dossier.readiness_status ? READINESS_CONFIG[dossier.readiness_status] : null;
-  const criticalConflicts = conflicts.filter(c => c.severity === "critical");
+  const readinessCfg = dossier.readiness_status ? READINESS_CFG[dossier.readiness_status] : null;
+  const totalFindings = dossier.documents.flatMap(d => d.findings ?? []).length;
+  const reviewedFindings = Object.values(findingStates).filter(s => s === "green" || s === "red").length;
+  const allFieldsReviewed = HEADER_FIELDS.filter(f => dossier[f.key]).every(f => fieldReviews[f.key] && fieldReviews[f.key] !== "pending");
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    // Bust out of dashboard main's padding to get full height
+    <div className="-mx-5 -my-4 flex flex-col" style={{ height: "calc(100vh - 64px)" }}>
       {showAddDoc && (
         <AddDocumentModal
           dossierId={id}
@@ -805,303 +532,272 @@ export default function DossierPage() {
           onAdded={() => { setShowAddDoc(false); load(); }}
         />
       )}
-      {showReport && report && (
-        <ReportModal report={report} onClose={() => setShowReport(false)} />
-      )}
 
-      {/* Header */}
-      <div className="flex items-start gap-3 mb-6">
-        <Link href="/batch-dossiers" className="text-muted-foreground hover:text-foreground mt-1">
-          <ChevronLeft className="w-5 h-5" />
-        </Link>
-        <div className="flex-1">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-xl font-semibold">{dossier.lot_number}</h1>
-            <span className="text-sm text-muted-foreground">—</span>
-            <span className="text-sm text-muted-foreground">{dossier.product_name}</span>
-            {dossier.is_sterile && (
-              <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">Sterile</span>
-            )}
-            {dossier.shadow_mode && (
-              <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full">Shadow Mode</span>
-            )}
-            {criticalConflicts.length > 0 && (
-              <span className="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full flex items-center gap-1">
-                <GitCompare className="w-3 h-3" />
-                {criticalConflicts.length} conflict{criticalConflicts.length !== 1 ? "s" : ""}
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {dossier.record_family.replace(/_/g, " ").toUpperCase()} · {dossier.batch_purpose.replace(/_/g, " ")}
-            {dossier.manufacturing_date && ` · ${dossier.manufacturing_date}`}
-          </p>
-        </div>
-        <button
-          onClick={handleRefreshReadiness}
-          disabled={refreshing}
-          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground px-3 py-1.5 border rounded-lg hover:bg-accent transition-colors"
-        >
-          {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          Recompute
-        </button>
-        <button
-          onClick={handleGenerateReport}
-          disabled={reportLoading}
-          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground px-3 py-1.5 border rounded-lg hover:bg-accent transition-colors"
-        >
-          {reportLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-          Report
-        </button>
-        <button
-          onClick={() => setShowAddDoc(true)}
-          className="flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
-        >
-          <Plus className="w-4 h-4" /> Add Document
-        </button>
-      </div>
-
-      {/* Readiness banner */}
-      {readinessCfg && (
-        <div className={`border rounded-xl p-4 mb-5 ${readinessCfg.bg}`}>
-          <div className={`flex items-center gap-2 font-semibold text-sm ${readinessCfg.text}`}>
-            {dossier.readiness_status === "ready" ? <CheckCircle2 className="w-4 h-4" /> :
-             dossier.readiness_status === "hold" ? <AlertTriangle className="w-4 h-4" /> :
-             <AlertCircle className="w-4 h-4" />}
-            {readinessCfg.label}
-            {dossier.readiness_score != null && (
-              <span className="font-normal text-xs ml-2">Score: {dossier.readiness_score.toFixed(1)}</span>
-            )}
-          </div>
-          {dossier.readiness_detail?.summary && (
-            <p className={`text-xs mt-1 ${readinessCfg.text} opacity-80`}>{dossier.readiness_detail.summary}</p>
-          )}
-        </div>
-      )}
-
-      {/* Gate pills */}
-      <div className="flex flex-wrap gap-2 mb-5">
-        <GatePill pass={dossier.gates.evidence_complete} label="Evidence package" />
-        <GatePill pass={dossier.gates.data_integrity_ok} label="Data integrity" />
-        <GatePill pass={dossier.gates.all_findings_addressed} label="All findings addressed" />
-        <GatePill pass={dossier.gates.gray_findings_resolved} label="Gray findings resolved" />
-      </div>
-
-      {/* Two-column layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        {/* Main content — 2/3 */}
-        <div className="lg:col-span-2 space-y-5">
-
-          {/* Tabs */}
-          <div className="flex border-b">
-            {(["overview", "documents", "findings"] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors capitalize ${
-                  activeTab === tab ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {tab}
-                {tab === "findings" && allFindings.length > 0 && (
-                  <span className="ml-1.5 text-xs px-1.5 py-0.5 bg-muted rounded-full">{allFindings.length}</span>
-                )}
-              </button>
-            ))}
-          </div>
-
-          {/* Overview tab */}
-          {activeTab === "overview" && (
-            <div className="space-y-4">
-              {/* Evidence completeness */}
-              {dossier.readiness_detail && (
-                <div className="bg-card border rounded-xl p-4">
-                  <h3 className="text-sm font-semibold mb-3">Evidence Package</h3>
-                  {dossier.readiness_detail.missing_required_labels && dossier.readiness_detail.missing_required_labels.length > 0 ? (
-                    <div className="space-y-1">
-                      {dossier.readiness_detail.missing_required_labels.map(label => (
-                        <div key={label} className="flex items-center gap-2 text-sm text-red-700">
-                          <XCircle className="w-4 h-4 flex-shrink-0" /> {label} <span className="text-xs text-red-500">Missing required</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 text-sm text-emerald-700">
-                      <CheckCircle2 className="w-4 h-4" /> Required documents present
-                    </div>
-                  )}
-                  {dossier.readiness_detail.missing_conditional && Object.keys(dossier.readiness_detail.missing_conditional).length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      {Object.entries(dossier.readiness_detail.missing_conditional).map(([role, reason]) => (
-                        <div key={role} className="flex items-center gap-2 text-sm text-amber-700">
-                          <Info className="w-4 h-4 flex-shrink-0" /> {ROLE_LABELS[role] ?? role} — {reason}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+      {/* ── Header bar ── */}
+      <div className="flex-shrink-0 border-b bg-background px-6 py-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Link href="/batch-dossiers" className="text-muted-foreground hover:text-foreground">
+            <ChevronLeft className="w-5 h-5" />
+          </Link>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-base font-semibold">{dossier.lot_number}</h1>
+              <span className="text-muted-foreground">—</span>
+              <span className="text-sm text-muted-foreground truncate">{dossier.product_name}</span>
+              {dossier.is_sterile && <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full">Sterile</span>}
+              {dossier.shadow_mode && <span className="text-[10px] px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded-full">Shadow Mode</span>}
+            </div>
+            <div className="flex items-center gap-3 mt-0.5">
+              <p className="text-[11px] text-muted-foreground capitalize">
+                {dossier.record_family.replace(/_/g, " ")} · {dossier.batch_purpose.replace(/_/g, " ")}
+              </p>
+              {totalFindings > 0 && (
+                <span className="text-[11px] text-muted-foreground">
+                  {reviewedFindings}/{totalFindings} findings reviewed
+                </span>
               )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={handleRefresh} disabled={refreshing}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-2.5 py-1.5 border rounded-lg hover:bg-accent">
+              {refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              Recompute
+            </button>
+            <button onClick={() => setShowAddDoc(true)}
+              className="flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-primary/90">
+              <Plus className="w-3.5 h-3.5" /> Add Document
+            </button>
+          </div>
+        </div>
+      </div>
 
-              {/* Cross-document conflicts */}
-              <div className="bg-card border rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <GitCompare className="w-4 h-4 text-muted-foreground" />
-                  <h3 className="text-sm font-semibold">Cross-Document Conflicts</h3>
-                  {conflictsLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground ml-auto" />}
+      {/* ── Split pane ── */}
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+
+        {/* ── LEFT: PDF Viewer ── */}
+        <div className="w-[55%] flex flex-col border-r min-h-0 bg-gray-100">
+
+          {/* Document tab selector */}
+          <div className="flex-shrink-0 bg-background border-b px-4 py-2 flex items-center gap-2 overflow-x-auto">
+            {dossier.documents.length === 0 ? (
+              <span className="text-xs text-muted-foreground">No documents — add the primary batch record</span>
+            ) : (
+              dossier.documents.map(dd => (
+                <button
+                  key={dd.document_id}
+                  onClick={() => setSelectedDocId(dd.document_id)}
+                  className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    selectedDocId === dd.document_id
+                      ? "bg-primary text-primary-foreground"
+                      : "border hover:bg-accent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <FileText className="w-3 h-3" />
+                  <span className="max-w-[140px] truncate">{dd.document_title ?? ROLE_LABELS[dd.role] ?? dd.role}</span>
+                  {dd.assessment?.clyira_score != null && (
+                    <span className={`text-[10px] px-1 rounded ${
+                      dd.assessment.clyira_score >= 85 ? "bg-emerald-100 text-emerald-700"
+                      : dd.assessment.clyira_score >= 70 ? "bg-amber-100 text-amber-700"
+                      : "bg-red-100 text-red-700"
+                    }`}>
+                      {dd.assessment.clyira_score.toFixed(0)}
+                    </span>
+                  )}
+                </button>
+              ))
+            )}
+            {dossier.documents.length > 0 && (
+              <button onClick={() => setShowAddDoc(true)}
+                className="flex-shrink-0 flex items-center gap-1 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-dashed rounded-lg hover:border-solid">
+                <Plus className="w-3 h-3" /> Add
+              </button>
+            )}
+          </div>
+
+          {/* PDF render area */}
+          <div className="flex-1 min-h-0 relative">
+            {dossier.documents.length === 0 ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-8">
+                <FileText className="w-12 h-12 text-gray-300 mb-3" />
+                <p className="text-sm font-medium text-gray-500 mb-1">No document selected</p>
+                <p className="text-xs text-gray-400 mb-4">Add the primary batch record to begin review</p>
+                <button onClick={() => setShowAddDoc(true)}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+                  <Plus className="w-4 h-4" /> Add Primary Batch Record
+                </button>
+              </div>
+            ) : pdfLoading ? (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-center">
+                  <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mx-auto mb-2" />
+                  <p className="text-xs text-muted-foreground">Loading document…</p>
                 </div>
-                {conflictsLoaded && conflicts.length === 0 && (
-                  <div className="flex items-center gap-2 text-sm text-emerald-700">
-                    <CheckCircle2 className="w-4 h-4" /> No cross-document conflicts detected
-                  </div>
+              </div>
+            ) : pdfBlobUrl ? (
+              <iframe
+                src={pdfBlobUrl}
+                className="w-full h-full border-0"
+                title="Batch record document"
+              />
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-8">
+                <AlertCircle className="w-10 h-10 text-amber-400 mb-3" />
+                <p className="text-sm font-medium text-gray-600 mb-1">Could not load document</p>
+                <p className="text-xs text-gray-400">The file may not have been uploaded or is unavailable</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── RIGHT: Review Panel ── */}
+        <div className="w-[45%] flex flex-col min-h-0 bg-background">
+
+          {/* Readiness + gates strip */}
+          <div className="flex-shrink-0 border-b px-4 py-2.5 space-y-2 bg-muted/20">
+            {readinessCfg && (
+              <div className={`flex items-center gap-2 text-xs font-medium px-2.5 py-1.5 rounded-lg border ${readinessCfg.bg} ${readinessCfg.text}`}>
+                {readinessCfg.icon}
+                {readinessCfg.label}
+                {dossier.readiness_score != null && (
+                  <span className="ml-auto font-normal opacity-80">Score: {dossier.readiness_score.toFixed(1)}</span>
                 )}
-                {conflictsLoaded && conflicts.length > 0 && (
-                  <div className="space-y-2">
-                    {conflicts.map((c, i) => (
-                      <div
-                        key={i}
-                        className={`rounded-lg border p-3 text-sm ${
-                          c.severity === "critical" ? "border-red-200 bg-red-50"
-                          : c.severity === "high" ? "border-orange-200 bg-orange-50"
-                          : "border-amber-200 bg-amber-50"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${SEVERITY_COLOR[c.severity] ?? SEVERITY_COLOR.info}`}>
-                            {c.severity.toUpperCase()}
-                          </span>
-                          <span className="font-medium capitalize">{c.field.replace(/_/g, " ")}</span>
-                        </div>
-                        <p className="text-xs text-muted-foreground">{c.description}</p>
-                        {c.values_found && Object.keys(c.values_found).length > 0 && (
-                          <div className="mt-1.5 space-y-0.5">
-                            {Object.entries(c.values_found).map(([doc, val]) => (
-                              <div key={doc} className="text-xs text-muted-foreground font-mono">
-                                {doc}: <span className="text-foreground">{val}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {([
+                { pass: dossier.gates.evidence_complete,       label: "Evidence" },
+                { pass: dossier.gates.data_integrity_ok,       label: "Data integrity" },
+                { pass: dossier.gates.all_findings_addressed,  label: "Findings" },
+                { pass: dossier.gates.gray_findings_resolved,  label: "Gray resolved" },
+              ]).map(({ pass, label }) => (
+                <div key={label} className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border ${pass ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-red-50 text-red-700 border-red-200"}`}>
+                  {pass ? <CheckCircle2 className="w-2.5 h-2.5" /> : <XCircle className="w-2.5 h-2.5" />}
+                  {label}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Scrollable review content */}
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+
+            {/* ── Section 1: Batch Header Fields ── */}
+            <section>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">Batch Header Fields</h3>
+                <span className="text-[10px] text-muted-foreground">
+                  {Object.values(fieldReviews).filter(s => s !== "pending").length}/{HEADER_FIELDS.filter(f => dossier[f.key]).length} reviewed
+                  {allFieldsReviewed && " ✓"}
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {HEADER_FIELDS.map(({ key, label, critical }) => {
+                  const value = dossier[key] as string | null | undefined;
+                  if (!value && !critical) return null;
+                  return (
+                    <FieldReviewItem
+                      key={key}
+                      label={label}
+                      value={value}
+                      critical={critical}
+                      state={fieldReviews[key] ?? "pending"}
+                      onPass={() => setFieldReviews(prev => ({ ...prev, [key]: "pass" }))}
+                      onFail={() => setFieldReviews(prev => ({ ...prev, [key]: "fail" }))}
+                      comment={fieldComments[key] ?? ""}
+                      onComment={v => setFieldComments(prev => ({ ...prev, [key]: v }))}
+                    />
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* ── Section 2: Assessment Findings ── */}
+            <section>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                  Assessment Findings
+                  {selectedDoc?.document_title && (
+                    <span className="ml-1.5 text-muted-foreground normal-case font-normal">
+                      — {selectedDoc.document_title}
+                    </span>
+                  )}
+                </h3>
+                {selectedFindings.length > 0 && (
+                  <span className="text-[10px] text-muted-foreground">
+                    {selectedFindings.filter(f => ["green", "red"].includes(f.verification_state ?? "")).length}/{selectedFindings.length} reviewed
+                  </span>
                 )}
               </div>
 
-              {/* Finding summary by state */}
-              {allFindings.length > 0 && (
-                <div className="bg-card border rounded-xl p-4">
-                  <h3 className="text-sm font-semibold mb-3">Finding Summary</h3>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    {([
-                      { state: "green", label: "Verified Pass",  color: "text-emerald-700" },
-                      { state: "red",   label: "Verified Fail",  color: "text-red-700" },
-                      { state: "blue",  label: "AI-Assisted",    color: "text-blue-700" },
-                      { state: "gray",  label: "Unverified",     color: "text-gray-600" },
-                    ] as const).map(({ state, label, color }) => (
-                      <div key={state} className="text-center p-2 bg-muted/30 rounded-lg">
-                        <div className={`text-xl font-bold ${color}`}>{findingsByState[state]}</div>
-                        <div className="text-[10px] text-muted-foreground">{label}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Documents summary */}
-              <div className="bg-card border rounded-xl p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold">Documents ({dossier.documents.length})</h3>
-                  <button onClick={() => setShowAddDoc(true)} className="text-xs text-primary hover:underline flex items-center gap-1">
-                    <Plus className="w-3 h-3" /> Add
-                  </button>
-                </div>
-                {dossier.documents.length === 0 ? (
-                  <div className="text-center py-6 text-sm text-muted-foreground">
-                    No documents added yet.{" "}
-                    <button onClick={() => setShowAddDoc(true)} className="text-primary hover:underline">Add the primary batch record</button>
+              {!selectedDocId ? (
+                <p className="text-xs text-muted-foreground italic">Select a document tab to view findings</p>
+              ) : selectedFindings.length === 0 ? (
+                selectedDoc?.assessment ? (
+                  <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                    <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> No findings — all checks passed
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    {dossier.documents.map(dd => (
-                      <div key={dd.id} className="flex items-center gap-3 text-sm">
-                        <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <span className="font-medium truncate">{dd.document_title ?? dd.document_id}</span>
-                          <span className="ml-2 text-xs text-muted-foreground">({ROLE_LABELS[dd.role] ?? dd.role})</span>
-                        </div>
-                        {dd.assessment?.clyira_score != null && (
-                          <span className="text-xs text-muted-foreground">{dd.assessment.clyira_score.toFixed(1)}</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Documents tab */}
-          {activeTab === "documents" && (
-            <div className="space-y-3">
-              {dossier.documents.length === 0 ? (
-                <div className="text-center py-12 bg-card border rounded-xl text-sm text-muted-foreground">
-                  <FileText className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-                  No documents yet.{" "}
-                  <button onClick={() => setShowAddDoc(true)} className="text-primary hover:underline">Add the primary batch record</button>
-                </div>
+                  <p className="text-xs text-muted-foreground italic">No assessment run yet for this document</p>
+                )
               ) : (
-                dossier.documents.map(dd => <DocCard key={dd.id} dd={dd} dossierId={id} />)
-              )}
-            </div>
-          )}
-
-          {/* Findings tab */}
-          {activeTab === "findings" && (
-            <div className="space-y-2">
-              {allFindings.length === 0 ? (
-                <div className="text-center py-12 bg-card border rounded-xl text-sm text-muted-foreground">
-                  No findings yet — add documents and run assessments first.
+                <div className="space-y-1.5">
+                  {/* Group: fail first */}
+                  {["critical", "high", "medium", "low", "info"].flatMap(sev =>
+                    selectedFindings
+                      .filter(f => f.severity === sev)
+                      .map(f => (
+                        <FindingReviewItem
+                          key={f.id}
+                          finding={f}
+                          dossierId={id}
+                          onStateChange={handleFindingStateChange}
+                        />
+                      ))
+                  )}
                 </div>
-              ) : (
-                <>
-                  <div className="text-xs text-muted-foreground mb-2">{allFindings.length} total finding{allFindings.length !== 1 ? "s" : ""} across all documents</div>
-                  {allFindings
-                    .sort((a, b) => {
-                      const order = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-                      return (order[a.severity as keyof typeof order] ?? 5) - (order[b.severity as keyof typeof order] ?? 5);
-                    })
-                    .map(f => <FindingCard key={f.id} f={f} dossierId={id} />)
-                  }
-                </>
               )}
-            </div>
-          )}
-        </div>
+            </section>
 
-        {/* Sidebar — 1/3 */}
-        <div className="space-y-4">
-          {/* Score */}
-          {dossier.documents.some(d => d.assessment?.clyira_score != null) && (
-            <div className="bg-card border rounded-xl p-4 text-center">
-              <div className="text-xs text-muted-foreground mb-2">Composite Readiness Score</div>
-              <ScoreBadge score={dossier.readiness_score ?? undefined} band={dossier.readiness_band ?? undefined} />
-            </div>
-          )}
-
-          {/* Disposition */}
-          <DispositionPanel dossier={dossier} onDecision={load} onReopen={load} />
-
-          {/* Dossier metadata */}
-          <div className="bg-card border rounded-xl p-4 text-xs space-y-2 text-muted-foreground">
-            <div className="font-semibold text-foreground text-sm mb-1">Classification</div>
-            <div className="flex justify-between"><span>Record family</span><span className="capitalize">{dossier.record_family.replace(/_/g, " ")}</span></div>
-            <div className="flex justify-between"><span>Product type</span><span className="capitalize">{dossier.product_type.replace(/_/g, " ")}</span></div>
-            <div className="flex justify-between"><span>Sterile</span><span>{dossier.is_sterile ? "Yes" : "No"}</span></div>
-            {dossier.manufacturing_context && <div className="flex justify-between"><span>Context</span><span className="capitalize">{dossier.manufacturing_context.replace(/_/g, " ")}</span></div>}
-            <div className="flex justify-between"><span>Purpose</span><span className="capitalize">{dossier.batch_purpose.replace(/_/g, " ")}</span></div>
-            {dossier.target_markets.length > 0 && (
-              <div className="flex justify-between"><span>Markets</span><span>{dossier.target_markets.join(", ")}</span></div>
+            {/* ── Missing evidence summary ── */}
+            {dossier.readiness_detail?.missing_required_labels && dossier.readiness_detail.missing_required_labels.length > 0 && (
+              <section>
+                <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Missing Evidence</h3>
+                <div className="space-y-1">
+                  {dossier.readiness_detail.missing_required_labels.map(label => (
+                    <div key={label} className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+                      <XCircle className="w-3.5 h-3.5 flex-shrink-0" /> {label} <span className="text-[10px] opacity-70">Missing required</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
             )}
+          </div>
+
+          {/* ── Fixed footer: Disposition ── */}
+          <div className="flex-shrink-0 border-t px-4 py-4 bg-background">
+            <div className="flex items-center gap-2 mb-3">
+              <Shield className="w-3.5 h-3.5 text-muted-foreground" />
+              <h3 className="text-xs font-semibold uppercase tracking-wider">QA Disposition</h3>
+              <a
+                href="#"
+                onClick={async e => {
+                  e.preventDefault();
+                  try {
+                    const res = await batchDossiersApi.getReport(id);
+                    const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url; a.download = `dossier-${dossier.lot_number}.json`; a.click();
+                    URL.revokeObjectURL(url);
+                  } catch { /* ignore */ }
+                }}
+                className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+              >
+                <Download className="w-3 h-3" /> Export report
+              </a>
+            </div>
+            <DispositionPanel dossier={dossier} onDecision={load} />
           </div>
         </div>
       </div>

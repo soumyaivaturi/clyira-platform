@@ -749,6 +749,32 @@ async def list_dossier_findings(
     }
 
 
+@router.patch("/{dossier_id}/findings/{finding_id}/review")
+async def review_finding(
+    dossier_id: str,
+    finding_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update a finding's verification state during batch record review."""
+    dossier = await db.get(BatchDossier, dossier_id)
+    if not dossier or dossier.company_id != current_user.company_id:
+        raise HTTPException(status_code=404, detail="Dossier not found")
+
+    finding = await db.get(Finding, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+
+    new_state = body.get("verification_state")
+    if new_state not in ("green", "red", "gray", "blue"):
+        raise HTTPException(status_code=400, detail="verification_state must be green, red, gray, or blue")
+
+    finding.verification_state = new_state
+    await db.commit()
+    return {"id": finding_id, "verification_state": new_state}
+
+
 @router.post("/{dossier_id}/feedback-correction")
 async def submit_feedback_correction(
     dossier_id: str,

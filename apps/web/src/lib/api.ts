@@ -474,7 +474,12 @@ export const batchDossiersApi = {
     api.post(`/batch-dossiers/${id}/reopen`, { reason }),
   getConflicts: (id: string) => api.get(`/batch-dossiers/${id}/conflicts`),
   getReport: (id: string) => api.get(`/batch-dossiers/${id}/report`),
+  reviewFinding: (dossierId: string, findingId: string, verificationState: string) =>
+    api.patch(`/batch-dossiers/${dossierId}/findings/${findingId}/review`, { verification_state: verificationState }),
 };
+
+export const documentsDownloadUrl = (documentId: string): string =>
+  `/api/v1/documents/${documentId}/download`;
 
 export const productProfilesApi = {
   list: () => api.get("/product-profiles"),
