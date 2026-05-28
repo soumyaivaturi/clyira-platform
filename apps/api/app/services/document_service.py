@@ -64,17 +64,21 @@ class DocumentService:
             )
 
         # Run IDP extraction (Phase 3) — provides structured page/table/field data
+        # IDPEngine auto-routes: docling for native PDFs/DOCX, paddleocr for scans
         idp_sections: dict = {}
-        if file_type == "pdf":
+        idp_flat_text: str = ""
+        if file_type in ("pdf", "docx", "doc", "html", "htm", "pptx", "jpg", "jpeg", "png", "tiff", "tif"):
             try:
                 from app.services.idp_engine import IDPEngine
-                idp_out = IDPEngine().extract_to_dict(file_content, filename)
-                idp_sections = idp_out
+                _idp_engine = IDPEngine()  # provider="auto" by default
+                _idp_output = _idp_engine.extract(file_content, filename)
+                idp_flat_text = IDPEngine.full_text(_idp_output)
+                idp_sections = IDPEngine.output_to_dict(_idp_output)
             except Exception as idp_err:
                 logger.warning(f"IDP extraction failed for {filename}: {idp_err}")
 
-        # Extract text from bytes in memory (before any storage write)
-        extracted_text = await self._extract_text_from_bytes(file_content, file_type)
+        # Extract text — prefer IDPEngine flat text, fall back to legacy pdfplumber path
+        extracted_text = idp_flat_text if idp_flat_text.strip() else await self._extract_text_from_bytes(file_content, file_type)
         # Merge IDP sections with rule-based section identification
         sections_from_text = self._identify_sections(extracted_text)
         extracted_sections = {**sections_from_text, "_idp": idp_sections} if idp_sections else sections_from_text
@@ -139,8 +143,17 @@ class DocumentService:
 
         file_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else "unknown"
 
-        # Extract text from bytes in memory
-        extracted_text = await self._extract_text_from_bytes(file_content, file_type)
+        # Extract text — IDPEngine auto-routes; fall back to legacy path on failure
+        extracted_text = ""
+        if file_type in ("pdf", "docx", "doc", "html", "htm", "pptx", "jpg", "jpeg", "png", "tiff", "tif"):
+            try:
+                from app.services.idp_engine import IDPEngine
+                _ref_output = IDPEngine().extract(file_content, filename)
+                extracted_text = IDPEngine.full_text(_ref_output)
+            except Exception as _idp_err:
+                logger.warning(f"IDP extraction failed for reference {filename}: {_idp_err}")
+        if not extracted_text.strip():
+            extracted_text = await self._extract_text_from_bytes(file_content, file_type)
 
         # Save file to storage (Supabase in prod, local in dev)
         file_path = self._save_file(file_content, filename, doc.company_id, subfolder="references")
