@@ -462,5 +462,34 @@ export const batchDossiersApi = {
     field_criticality?: string; correction_rationale?: string;
   }) => api.post(`/batch-dossiers/${id}/feedback-correction`, data),
   stats: () => api.get("/batch-dossiers/stats/summary"),
+  scanDocument: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return api.post("/batch-dossiers/scan-document", fd, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
+};
+
+export const productProfilesApi = {
+  list: () => api.get("/product-profiles"),
+  create: (data: {
+    profile_name: string; product_code?: string; product_name?: string;
+    dosage_form?: string; manufacturing_site?: string;
+    record_family: string; product_type: string; is_sterile: boolean;
+    manufacturing_context: string; batch_purpose: string; target_markets: string[];
+  }) => api.post("/product-profiles", data),
+  get: (id: string) => api.get(`/product-profiles/${id}`),
+  update: (id: string, data: Record<string, unknown>) => api.patch(`/product-profiles/${id}`, data),
+  delete: (id: string) => api.delete(`/product-profiles/${id}`),
+  analyzeTemplate: (id: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return api.post(`/product-profiles/${id}/analyze-template`, fd, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
+  addSpecDocument: (id: string, document_id: string) =>
+    api.post(`/product-profiles/${id}/add-spec-document`, { document_id }),
 };
 

@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.routers import auth, documents, assessments, companies, readiness, inspections
 from app.routers import assistant, export, audit, notifications, api_keys, signatures, evidence
-from app.routers import batch_dossiers, sponsor_programs
+from app.routers import batch_dossiers, sponsor_programs, product_profiles
 
 
 @asynccontextmanager
@@ -244,6 +244,7 @@ app.include_router(signatures.router, prefix="/api/v1/documents", tags=["Electro
 app.include_router(evidence.router, prefix="/api/v1/evidence", tags=["Evidence Fabric"])
 app.include_router(batch_dossiers.router, prefix="/api/v1/batch-dossiers", tags=["Batch & Lot Record Review"])
 app.include_router(sponsor_programs.router, prefix="/api/v1/sponsor-programs", tags=["CDMO Sponsor Programs"])
+app.include_router(product_profiles.router, prefix="/api/v1/product-profiles", tags=["Product Profiles"])
 
 
 async def _run_enforcement_seed(source: str, years: int) -> None:

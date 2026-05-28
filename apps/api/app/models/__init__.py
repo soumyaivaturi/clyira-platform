@@ -26,6 +26,7 @@ from app.models.password_history import PasswordHistory
 from app.models.document_signature import DocumentSignature
 from app.models.batch_dossier import BatchDossier, BatchDossierDocument, EvidencePackageTemplate, FeedbackCorrection
 from app.models.sponsor_program import SponsorProgram
+from app.models.product_profile import ProductProfile
 
 __all__ = [
     "Base",
@@ -65,4 +66,5 @@ __all__ = [
     "EvidencePackageTemplate",
     "FeedbackCorrection",
     "SponsorProgram",
+    "ProductProfile",
 ]

@@ -6,7 +6,7 @@ disposition decisions, and evidence completeness checks.
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,60 @@ from app.services.evidence_completeness_service import EvidenceCompletenessServi
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# ── Document scanning (field extraction for form pre-fill) ───────────────────
+
+@router.post("/scan-document")
+async def scan_document_for_fields(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Extract BPR header fields from an uploaded file without creating a document record.
+    Returns extracted values + confidence scores for form pre-fill.
+    The file is NOT persisted — call the normal document upload endpoint separately.
+    """
+    from app.services.bpr_extraction_service import BPRExtractionService
+    from app.services.document_service import DocumentService
+
+    content = await file.read()
+    filename = file.filename or "upload"
+    file_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else "unknown"
+
+    # Reuse DocumentService._extract_text_from_bytes (no DB needed, pass a dummy instance)
+    class _FakeSvc:
+        db = None
+    svc = DocumentService.__new__(DocumentService)
+
+    extracted_text = await svc._extract_text_from_bytes(content, file_type)
+    fields = BPRExtractionService().extract(extracted_text)
+
+    return {
+        "fields": {
+            "lot_number": fields.lot_number.value if fields.lot_number else None,
+            "product_name": fields.product_name.value if fields.product_name else None,
+            "product_code": fields.product_code.value if fields.product_code else None,
+            "dosage_form": fields.dosage_form.value if fields.dosage_form else None,
+            "batch_size": fields.batch_size.value if fields.batch_size else None,
+            "manufacturing_site": fields.manufacturing_site.value if fields.manufacturing_site else None,
+            "manufacturing_date": fields.manufacturing_date.value if fields.manufacturing_date else None,
+            "target_release_date": fields.target_release_date.value if fields.target_release_date else None,
+        },
+        "confidence": {
+            "lot_number": fields.lot_number.confidence if fields.lot_number else None,
+            "product_name": fields.product_name.confidence if fields.product_name else None,
+            "product_code": fields.product_code.confidence if fields.product_code else None,
+            "dosage_form": fields.dosage_form.confidence if fields.dosage_form else None,
+            "batch_size": fields.batch_size.confidence if fields.batch_size else None,
+            "manufacturing_site": fields.manufacturing_site.confidence if fields.manufacturing_site else None,
+            "manufacturing_date": fields.manufacturing_date.confidence if fields.manufacturing_date else None,
+            "target_release_date": fields.target_release_date.confidence if fields.target_release_date else None,
+        },
+        "filename": filename,
+        "file_type": file_type,
+        "text_length": len(extracted_text),
+    }
 
 
 # ── Serialisers ──────────────────────────────────────────────────────────────
