@@ -68,18 +68,12 @@ _BPR_VISION_PROMPT = (
 )
 
 
-async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> dict:
+async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
     """Extract BPR fields from a scanned/screenshot PDF using Gemini Vision.
-
-    Faster and more accurate than Tesseract for low-res or screenshot PDFs.
-    Scans the first 3 pages only (header info is always on page 1).
+    Returns (fields_dict, error_string). error_string is None on success.
     """
     import base64, json, httpx
     from app.core.config import settings
-
-    if not settings.GEMINI_API_KEY:
-        logger.info("Gemini API key not set — skipping vision scan")
-        return {}
 
     try:
         import fitz
@@ -88,14 +82,15 @@ async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> dict:
         image_parts = []
         for i in range(pages_to_scan):
             page = doc[i]
-            # 144 DPI is enough for Gemini Vision — faster than 200 DPI
-            pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+            pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))  # 144 DPI
             img_b64 = base64.b64encode(pix.tobytes("jpeg")).decode()
             image_parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
         doc.close()
+        logger.info(f"Vision: rendered {pages_to_scan} pages for Gemini")
     except Exception as e:
-        logger.warning(f"Vision scan: PDF→image conversion failed: {e}")
-        return {}
+        msg = f"PDF→image failed: {e}"
+        logger.warning(f"Vision scan: {msg}")
+        return {}, msg
 
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -108,17 +103,21 @@ async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> dict:
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(url, json=payload)
-            resp.raise_for_status()
+            if resp.status_code != 200:
+                msg = f"Gemini HTTP {resp.status_code}: {resp.text[:200]}"
+                logger.warning(f"Vision scan: {msg}")
+                return {}, msg
             raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
             data = json.loads(raw)
             result = {k: str(v).strip() if v not in (None, "", "null") else None
                       for k, v in data.items() if k in _BPR_FIELDS}
             logger.info(f"Gemini Vision extracted: {result}")
-            return result
+            return result, None
     except Exception as e:
-        logger.warning(f"Gemini Vision BPR extraction failed: {e}")
-        return {}
+        msg = f"Gemini call failed: {e}"
+        logger.warning(f"Vision scan: {msg}")
+        return {}, msg
 
 
 async def _llm_extract_bpr_fields(text: str) -> dict:
@@ -183,13 +182,13 @@ async def scan_document_for_fields(
         except Exception as e:
             logger.warning(f"python-docx failed: {e}")
 
-    # Step 1b: pdfplumber for native/digital PDFs (fast, <1s — skipped for scanned PDFs)
+    # Step 1b: pdfplumber for native/digital PDFs — first 3 pages only (header is always page 1)
     if not extracted_text.strip() and file_type == "pdf":
         try:
             import pdfplumber
             pages = []
             with pdfplumber.open(io.BytesIO(content)) as pdf:
-                for page in pdf.pages:
+                for page in pdf.pages[:3]:  # cap at 3 pages — enough for any header
                     t = page.extract_text() or ""
                     for table in page.extract_tables():
                         rows = [" | ".join(str(c or "").strip() for c in row) for row in table if any(c for c in row)]
@@ -203,22 +202,28 @@ async def scan_document_for_fields(
 
     # Step 1d: Gemini Vision — for scanned/screenshot PDFs where no text could be extracted.
     # Returns structured fields directly (skips regex + LLM text path).
+    vision_error = None
     if not extracted_text.strip() and file_type == "pdf":
-        vision_fields = await _vision_scan_bpr_fields(content)
-        if vision_fields:
-            fields_dict = {k: vision_fields.get(k) for k in _BPR_FIELDS}
-            confidence_dict = {k: (0.82 if vision_fields.get(k) else None) for k in _BPR_FIELDS}
-            fields_found = sum(1 for v in fields_dict.values() if v)
-            logger.info(f"BPR scan via vision: file={filename!r} fields_found={fields_found}")
-            return {
-                "fields": fields_dict,
-                "confidence": confidence_dict,
-                "filename": filename,
-                "file_type": file_type,
-                "text_length": 0,
-                "extraction_method": "vision",
-                "fields_found": fields_found,
-            }
+        from app.core.config import settings
+        if not settings.GEMINI_API_KEY:
+            vision_error = "GEMINI_API_KEY not set"
+            logger.warning("Vision scan skipped: GEMINI_API_KEY not set on this deployment")
+        else:
+            vision_fields, vision_error = await _vision_scan_bpr_fields(content)
+            if vision_fields:
+                fields_dict = {k: vision_fields.get(k) for k in _BPR_FIELDS}
+                confidence_dict = {k: (0.82 if vision_fields.get(k) else None) for k in _BPR_FIELDS}
+                fields_found = sum(1 for v in fields_dict.values() if v)
+                logger.info(f"BPR scan via vision: file={filename!r} fields_found={fields_found}")
+                return {
+                    "fields": fields_dict,
+                    "confidence": confidence_dict,
+                    "filename": filename,
+                    "file_type": file_type,
+                    "text_length": 0,
+                    "extraction_method": "vision",
+                    "fields_found": fields_found,
+                }
 
     # Step 2: Regex extraction
     fields = BPRExtractionService().extract(extracted_text)
@@ -258,7 +263,7 @@ async def scan_document_for_fields(
     fields_found = sum(1 for v in fields_dict.values() if v)
     logger.info(
         f"BPR scan complete: file={filename!r} text_len={len(extracted_text)} "
-        f"method={extraction_method} fields_found={fields_found}"
+        f"method={extraction_method} fields_found={fields_found} vision_error={vision_error!r}"
     )
     return {
         "fields": fields_dict,
@@ -268,6 +273,7 @@ async def scan_document_for_fields(
         "text_length": len(extracted_text),
         "extraction_method": extraction_method,
         "fields_found": fields_found,
+        "debug": vision_error,  # shows why vision was skipped/failed
     }
 
 
