@@ -300,6 +300,8 @@ function CommentBubble({
 
 // ── Section row ───────────────────────────────────────────────────────────────
 
+const COMMENTS_INITIAL = 4;
+
 function SectionRow({
   section,
   expandedFinding,
@@ -309,9 +311,12 @@ function SectionRow({
   expandedFinding: string | null;
   onToggleFinding: (id: string) => void;
 }) {
+  const [showAll, setShowAll] = useState(false);
   const sev = sectionSeverity(section);
   const cfg = SEV_CONFIG[sev as keyof typeof SEV_CONFIG];
   const hasFindings = section.findings.length > 0;
+  const overflow = section.findings.length - COMMENTS_INITIAL;
+  const visibleFindings = showAll ? section.findings : section.findings.slice(0, COMMENTS_INITIAL);
 
   const borderColor = hasFindings && cfg
     ? cfg.border.replace("border-l-", "border-l-4 border-l-")
@@ -321,14 +326,9 @@ function SectionRow({
     <div className={cn("flex gap-0 min-h-[2rem]", hasFindings && "bg-card rounded-lg overflow-hidden border border-border/60 shadow-sm mb-2")}>
       {/* Document text pane */}
       <div className={cn("flex-1 min-w-0 border-l-4 px-4 py-3", hasFindings ? borderColor : "border-l-transparent px-4 py-1.5")}>
-        {/* Section heading */}
-        <h3 className={cn(
-          "font-semibold mb-1",
-          hasFindings ? "text-sm" : "text-sm text-muted-foreground"
-        )}>
+        <h3 className={cn("font-semibold mb-1", hasFindings ? "text-sm" : "text-sm text-muted-foreground")}>
           {section.title}
         </h3>
-        {/* Body text — highlight if findings present */}
         <div className={cn("text-xs leading-relaxed whitespace-pre-wrap font-mono", hasFindings ? "text-foreground" : "text-muted-foreground")}>
           {section.body.trim() || (
             <span className={cn("italic px-1 rounded", cfg?.textHighlight ?? "")}>
@@ -341,7 +341,7 @@ function SectionRow({
       {/* Margin comment column */}
       {hasFindings && (
         <div className="w-64 shrink-0 border-l border-border/40 bg-muted/20 px-2 py-2 space-y-1.5">
-          {section.findings.map((f, i) => (
+          {visibleFindings.map((f, i) => (
             <CommentBubble
               key={f.id}
               finding={f}
@@ -350,6 +350,22 @@ function SectionRow({
               onToggle={() => onToggleFinding(f.id)}
             />
           ))}
+          {overflow > 0 && !showAll && (
+            <button
+              onClick={() => setShowAll(true)}
+              className="w-full text-[10px] font-medium text-muted-foreground hover:text-foreground border border-dashed border-border/60 rounded-md py-1.5 transition-colors hover:bg-muted/40"
+            >
+              + {overflow} more finding{overflow !== 1 ? "s" : ""}
+            </button>
+          )}
+          {showAll && overflow > 0 && (
+            <button
+              onClick={() => setShowAll(false)}
+              className="w-full text-[10px] font-medium text-muted-foreground hover:text-foreground border border-dashed border-border/60 rounded-md py-1.5 transition-colors hover:bg-muted/40"
+            >
+              Show less
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -375,7 +391,10 @@ export function DocumentReviewPane({ documentText, fileType, findings }: Props) 
       <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
         <AlertCircle className="w-10 h-10 mb-3 opacity-30" />
         <p className="font-medium">No document text available</p>
-        <p className="text-sm mt-1">The document may not have been processed yet.</p>
+        <p className="text-sm mt-1 max-w-sm">
+          This document has no extracted text — it may be a placeholder or skeleton created by the AI creator.
+          Upload a real PDF or DOCX to see the annotated review.
+        </p>
       </div>
     );
   }
