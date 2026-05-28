@@ -14,7 +14,6 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.sponsor_program import SponsorProgram
 from app.models.user import User
-from app.models.base import generate_uuid
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -41,14 +40,14 @@ class SponsorProgramUpdate(BaseModel):
 
 def _sponsor_out(sp: SponsorProgram) -> dict:
     return {
-        "id": str(sp.id),
-        "company_id": str(sp.company_id),
+        "id": sp.id,
+        "company_id": sp.company_id,
         "sponsor_name": sp.sponsor_name,
         "sponsor_code": sp.sponsor_code,
         "dtap_overlay": sp.dtap_overlay,
         "cpp_ipc_ranges": sp.cpp_ipc_ranges,
         "quality_agreement_reference": sp.quality_agreement_reference,
-        "evidence_template_id": str(sp.evidence_template_id) if sp.evidence_template_id else None,
+        "evidence_template_id": sp.evidence_template_id,
         "active": sp.active,
         "created_at": str(sp.created_at),
         "updated_at": str(sp.updated_at),
@@ -78,7 +77,6 @@ async def create_sponsor_program(
     current_user: User = Depends(get_current_user),
 ):
     """Create a new sponsor program for CDMO multi-sponsor tenancy."""
-    # Check for duplicate sponsor_code within company
     existing = await db.execute(
         select(SponsorProgram)
         .where(SponsorProgram.company_id == current_user.company_id)
@@ -87,16 +85,14 @@ async def create_sponsor_program(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail=f"Sponsor code '{body.sponsor_code}' already exists")
 
-    import uuid
     sp = SponsorProgram(
-        id=uuid.uuid4(),
         company_id=current_user.company_id,
         sponsor_name=body.sponsor_name,
         sponsor_code=body.sponsor_code,
         dtap_overlay=body.dtap_overlay,
         cpp_ipc_ranges=body.cpp_ipc_ranges,
         quality_agreement_reference=body.quality_agreement_reference,
-        evidence_template_id=uuid.UUID(body.evidence_template_id) if body.evidence_template_id else None,
+        evidence_template_id=body.evidence_template_id,
         active=True,
     )
     db.add(sp)
@@ -112,14 +108,8 @@ async def get_sponsor_program(
     current_user: User = Depends(get_current_user),
 ):
     """Get a sponsor program by ID."""
-    import uuid
-    try:
-        uid = uuid.UUID(program_id)
-    except ValueError:
-        raise HTTPException(status_code=422, detail="Invalid program_id format")
-
-    sp = await db.get(SponsorProgram, uid)
-    if not sp or str(sp.company_id) != str(current_user.company_id):
+    sp = await db.get(SponsorProgram, program_id)
+    if not sp or sp.company_id != current_user.company_id:
         raise HTTPException(status_code=404, detail="Sponsor program not found")
     return _sponsor_out(sp)
 
@@ -132,19 +122,11 @@ async def update_sponsor_program(
     current_user: User = Depends(get_current_user),
 ):
     """Update sponsor program fields."""
-    import uuid
-    try:
-        uid = uuid.UUID(program_id)
-    except ValueError:
-        raise HTTPException(status_code=422, detail="Invalid program_id format")
-
-    sp = await db.get(SponsorProgram, uid)
-    if not sp or str(sp.company_id) != str(current_user.company_id):
+    sp = await db.get(SponsorProgram, program_id)
+    if not sp or sp.company_id != current_user.company_id:
         raise HTTPException(status_code=404, detail="Sponsor program not found")
 
     for field, value in body.model_dump(exclude_unset=True).items():
-        if field == "evidence_template_id" and value:
-            value = uuid.UUID(value)
         setattr(sp, field, value)
 
     await db.commit()
@@ -159,25 +141,16 @@ async def delete_sponsor_program(
     current_user: User = Depends(get_current_user),
 ):
     """Deactivate (soft-delete) a sponsor program."""
-    import uuid
-    try:
-        uid = uuid.UUID(program_id)
-    except ValueError:
-        raise HTTPException(status_code=422, detail="Invalid program_id format")
-
-    sp = await db.get(SponsorProgram, uid)
-    if not sp or str(sp.company_id) != str(current_user.company_id):
+    sp = await db.get(SponsorProgram, program_id)
+    if not sp or sp.company_id != current_user.company_id:
         raise HTTPException(status_code=404, detail="Sponsor program not found")
 
-    # Check for linked dossiers before hard delete
+    # If dossiers are linked, soft-deactivate to preserve referential integrity
     from app.models.batch_dossier import BatchDossier
     linked = await db.execute(
-        select(BatchDossier)
-        .where(BatchDossier.sponsor_program_id == program_id)
-        .limit(1)
+        select(BatchDossier).where(BatchDossier.sponsor_program_id == program_id).limit(1)
     )
     if linked.scalar_one_or_none():
-        # Soft-deactivate instead of hard delete to preserve referential integrity
         sp.active = False
         await db.commit()
         return
@@ -193,14 +166,8 @@ async def list_sponsor_dossiers(
     current_user: User = Depends(get_current_user),
 ):
     """List all batch dossiers linked to this sponsor program."""
-    import uuid
-    try:
-        uid = uuid.UUID(program_id)
-    except ValueError:
-        raise HTTPException(status_code=422, detail="Invalid program_id format")
-
-    sp = await db.get(SponsorProgram, uid)
-    if not sp or str(sp.company_id) != str(current_user.company_id):
+    sp = await db.get(SponsorProgram, program_id)
+    if not sp or sp.company_id != current_user.company_id:
         raise HTTPException(status_code=404, detail="Sponsor program not found")
 
     from app.models.batch_dossier import BatchDossier
