@@ -25,6 +25,7 @@ from app.models.api_key import APIKey
 from app.models.password_history import PasswordHistory
 from app.models.document_signature import DocumentSignature
 from app.models.batch_dossier import BatchDossier, BatchDossierDocument, EvidencePackageTemplate, FeedbackCorrection
+from app.models.sponsor_program import SponsorProgram
 
 __all__ = [
     "Base",
@@ -63,4 +64,5 @@ __all__ = [
     "BatchDossierDocument",
     "EvidencePackageTemplate",
     "FeedbackCorrection",
+    "SponsorProgram",
 ]

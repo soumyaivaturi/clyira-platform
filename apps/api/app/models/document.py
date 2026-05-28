@@ -43,6 +43,9 @@ class Document(Base, TimestampMixin):
     # Status
     status = Column(String(50), default="uploaded")  # uploaded, processing, ready, assessed, archived
 
+    # Duplicate detection — SHA-256 of raw file bytes (§22.3)
+    content_hash = Column(String(64), nullable=True, index=True)
+
     # Score (latest)
     latest_score = Column(Float)
     latest_assessment_id = Column(String)

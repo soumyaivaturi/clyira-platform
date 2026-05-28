@@ -527,6 +527,15 @@ Return ONLY the JSON array with no preamble or explanation.
                 suggestion_draft=item.get("suggestion_draft", ""),
                 confidence_score=float(item.get("confidence_score", 0.7)),
                 validated=False,
+                verification_state="blue",
+                explanation_trace={
+                    "method": "llm_semantic",
+                    "engine": "llm_engine",
+                    "level": str(raw_level),
+                    "outcome": "finding",
+                    "confidence": float(item.get("confidence_score", 0.7)),
+                    "model": None,  # populated by assessment_service.provenance
+                },
             ))
         return findings
 

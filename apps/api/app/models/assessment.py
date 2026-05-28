@@ -55,6 +55,12 @@ class Assessment(Base, TimestampMixin):
     # Tamper-evident hash of record content (Part 11 §11.10(e)) — set when status → completed
     content_hash = Column(String(64), nullable=True)
 
+    # Phase 2: partial assessment recovery checkpoint (§22.7)
+    last_completed_level = Column(String(20), nullable=True)  # last fully-completed level
+
+    # Phase 3: assessment provenance record (§16.3) — for GAMP 5 change control
+    provenance = Column(JSONB, nullable=True)  # dtap_profile_version, packs applied, model, etc.
+
     # Relationships
     document = relationship("Document", back_populates="assessments")
     company = relationship("Company", back_populates="assessments")
@@ -111,6 +117,10 @@ class Finding(Base, TimestampMixin):
     field_criticality = Column(String(10), nullable=True)   # critical, high, medium, low
     source_page = Column(Integer, nullable=True)
     human_verification_required = Column(Boolean, default=False, nullable=True)
+
+    # Phase 3 IDP / explainability fields
+    extraction_confidence = Column(Float, nullable=True)    # IDP extraction confidence (0-1)
+    explanation_trace = Column(JSONB, nullable=True)        # Structured reasoning trace
 
     # Relationships
     assessment = relationship("Assessment", back_populates="findings")

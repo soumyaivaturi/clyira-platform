@@ -11,6 +11,7 @@ from app.dtap.profiles.deviation import DEVIATION_DTAP
 from app.dtap.profiles.lir import LIR_DTAP
 from app.dtap.profiles.validation import VALIDATION_DTAP
 from app.dtap.profiles.mbr import MBR_DTAP
+from app.dtap.profiles.qc_test import QC_TEST_DTAP
 
 
 class DTAPRegistry:
@@ -28,6 +29,7 @@ class DTAPRegistry:
         cls.register(LIR_DTAP)
         cls.register(VALIDATION_DTAP)
         cls.register(MBR_DTAP)
+        cls.register(QC_TEST_DTAP)
 
     @classmethod
     def register(cls, profile: DTAPProfile):

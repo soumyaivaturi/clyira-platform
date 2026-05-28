@@ -32,17 +32,52 @@ class DocumentService:
     ) -> Document:
         """
         Process an uploaded document:
-        1. Save file to storage
+        1. Compute content hash for duplicate detection (§22.3)
         2. Extract text content
         3. Classify document type
         4. Assign DTAP
-        5. Store in database
+        5. Store in database with hash
         """
+        import hashlib
+        from fastapi import HTTPException
+
         file_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else "unknown"
+
+        # Compute SHA-256 of raw bytes for dedup check (§22.3)
+        content_hash = hashlib.sha256(file_content).hexdigest()
+        existing = await self.db.execute(
+            select(Document)
+            .where(Document.company_id == company_id)
+            .where(Document.content_hash == content_hash)
+            .limit(1)
+        )
+        existing_doc = existing.scalar_one_or_none()
+        if existing_doc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "duplicate_document",
+                    "message": "This file has already been uploaded.",
+                    "existing_document_id": existing_doc.id,
+                    "existing_document_title": existing_doc.title,
+                },
+            )
+
+        # Run IDP extraction (Phase 3) — provides structured page/table/field data
+        idp_sections: dict = {}
+        if file_type == "pdf":
+            try:
+                from app.services.idp_engine import IDPEngine
+                idp_out = IDPEngine().extract_to_dict(file_content, filename)
+                idp_sections = idp_out
+            except Exception as idp_err:
+                logger.warning(f"IDP extraction failed for {filename}: {idp_err}")
 
         # Extract text from bytes in memory (before any storage write)
         extracted_text = await self._extract_text_from_bytes(file_content, file_type)
-        extracted_sections = self._identify_sections(extracted_text)
+        # Merge IDP sections with rule-based section identification
+        sections_from_text = self._identify_sections(extracted_text)
+        extracted_sections = {**sections_from_text, "_idp": idp_sections} if idp_sections else sections_from_text
 
         # Save file to storage (Supabase in prod, local in dev)
         file_path = self._save_file(file_content, filename, company_id)
@@ -72,6 +107,7 @@ class DocumentService:
             file_path=file_path,
             file_type=file_type,
             file_size_bytes=len(file_content),
+            content_hash=content_hash,
             extracted_text=extracted_text,
             extracted_sections=extracted_sections,
             status="ready",
@@ -276,6 +312,20 @@ class DocumentService:
             return "CAPA"
         elif "atm" in filename_lower or "analytical test method" in text_lower or "test method" in text_lower:
             return "ATM"
+        elif (
+            any(kw in filename_lower for kw in ("coa", "cof", "certificate_of_analysis", "qc_test", "qc_record", "lab_report"))
+            or "certificate of analysis" in text_lower
+            or "certificate of conformance" in text_lower
+            or bool(re.search(r'\bcoa\b', text_lower))
+            or (
+                "test results" in text_lower
+                and any(kw in text_lower for kw in (
+                    "specification", "acceptance criteria", "analyst", "system suitability",
+                    "assay", "related substances", "dissolution", "microbial limits",
+                ))
+            )
+        ):
+            return "QC_TEST"
         elif "deviation" in filename_lower or "deviation report" in text_lower:
             return "Deviation"
         elif (

@@ -107,8 +107,11 @@ class RuleEngine:
             findings.extend(llm_findings)
 
         # Universal scanners — run once per assessment for all document types
-        findings.extend(self._scan_vague_language(context))
-        findings.extend(self._scan_should_not_shall(context))
+        scanner_findings = self._scan_vague_language(context) + self._scan_should_not_shall(context)
+        for f in scanner_findings:
+            if not f.verification_state:
+                f.verification_state = "red"
+        findings.extend(scanner_findings)
 
         return findings
 
@@ -122,7 +125,39 @@ class RuleEngine:
             if check_fn:
                 result = check_fn(context)
                 if result:
-                    findings.extend(result if isinstance(result, list) else [result])
+                    results = result if isinstance(result, list) else [result]
+                    for r in results:
+                        if not r.verification_state:
+                            r.verification_state = "red"
+                        if r.explanation_trace is None:
+                            r.explanation_trace = {
+                                "method": "deterministic",
+                                "engine": "rule_engine",
+                                "check": check_name,
+                                "level": level,
+                                "outcome": "fail",
+                                "confidence": 1.0,
+                            }
+                    findings.extend(results)
+                else:
+                    findings.append(FindingResult(
+                        level=level,
+                        severity="info",
+                        category="rule_pass",
+                        title=check_name.replace("_", " ").title(),
+                        description="Deterministic rule check passed — criterion met.",
+                        verification_state="green",
+                        confidence_score=1.0,
+                        validated=True,
+                        explanation_trace={
+                            "method": "deterministic",
+                            "engine": "rule_engine",
+                            "check": check_name,
+                            "level": level,
+                            "outcome": "pass",
+                            "confidence": 1.0,
+                        },
+                    ))
             else:
                 unimplemented.append(check_name)
 
@@ -135,7 +170,11 @@ class RuleEngine:
             return []
         try:
             engine = LLMEngine()
-            return await engine.run_checks_batched(unimplemented_by_level, context)
+            llm_findings = await engine.run_checks_batched(unimplemented_by_level, context)
+            for f in llm_findings:
+                if not f.verification_state:
+                    f.verification_state = "blue"
+            return llm_findings
         except Exception as e:
             logger.warning(f"Batched LLM fallback failed: {e}")
             return []
@@ -6527,9 +6566,13 @@ class RuleEngine:
     def _check_l2_qa_reviewer_signature_present(self, ctx: AssessmentContext) -> list[FindingResult]:
         """21 CFR 211.192: QA/QC unit must review and approve before release."""
         text_lower = ctx.document_text.lower()
+        # Match "QA review", "QA approved", "QA Director" in an approval block, or "reviewed by.*QA", "approved by.*QA"
         has_qa_review = bool(re.search(
             r'(?:quality\s*(?:assurance|control|unit)|qa|qc|qp)\s*'
-            r'(?:review|approval|approved|sign|signature|disposition|released)',
+            r'(?:review|approval|approved|sign|signature|disposition|released|director|specialist|manager)',
+            text_lower
+        )) or bool(re.search(
+            r'(?:reviewed|approved|authorised|authorized)\s+by[^\n]{0,60}(?:qa|qc|quality)',
             text_lower
         ))
         if not has_qa_review:

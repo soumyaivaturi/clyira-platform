@@ -3,10 +3,11 @@ Assessment Service — Orchestrates assessment workflow.
 Bridges routers → engines with database persistence.
 """
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from app.core.config import settings
 from app.models.document import Document, DocumentReference
@@ -77,6 +78,9 @@ class AssessmentService:
             logger.error(f"Background assessment {assessment_id}: missing record(s)")
             return
 
+        # Determine if we're resuming from a checkpoint
+        checkpoint = assessment.last_completed_level if assessment.status == "failed" else None
+
         assessment.status = "running"
         assessment.current_level = None
         await self.db.commit()
@@ -85,6 +89,31 @@ class AssessmentService:
 
         _db = self.db
         _assessment = assessment
+        _assessment_id = assessment_id
+
+        # Load seed findings from checkpoint phases already stored in DB
+        seed_findings: list = []
+        if checkpoint:
+            from app.engines.types import FindingResult as FR
+            existing_result = await self.db.execute(
+                select(Finding).where(Finding.assessment_id == assessment_id)
+            )
+            existing_db_findings = existing_result.scalars().all()
+            seed_findings = [
+                FR(
+                    level=f.level, severity=f.severity, category=f.category or "",
+                    title=f.title, description=f.description, evidence=f.evidence or "",
+                    location=f.location or "", regulatory_citation=f.regulatory_citation or "",
+                    verification_state=f.verification_state or "",
+                    field_criticality=f.field_criticality or "",
+                    source_page=f.source_page, confidence_score=f.confidence_score or 0.0,
+                    validated=f.validated or False,
+                    extraction_confidence=f.extraction_confidence,
+                    explanation_trace=f.explanation_trace,
+                )
+                for f in existing_db_findings
+            ]
+            logger.info(f"Resuming assessment {assessment_id} from checkpoint '{checkpoint}' with {len(seed_findings)} existing findings")
 
         async def _progress(level: str) -> None:
             _assessment.current_level = level
@@ -93,12 +122,41 @@ class AssessmentService:
             except Exception:
                 pass
 
+        async def _phase_done(phase: str, new_findings: list) -> None:
+            """Flush newly completed phase findings to DB and update checkpoint."""
+            try:
+                await self._store_findings(_assessment_id, new_findings)
+                _assessment.last_completed_level = phase
+                await _db.commit()
+                logger.info(f"Checkpoint saved: phase={phase}, {len(new_findings)} findings flushed")
+            except Exception as e:
+                logger.warning(f"Checkpoint flush failed for phase {phase}: {e}")
+
         try:
-            results = await self.orchestrator.run_assessment(context, progress_callback=_progress)
-            await self._store_findings(assessment.id, results["findings"])
+            results = await self.orchestrator.run_assessment(
+                context,
+                progress_callback=_progress,
+                checkpoint=checkpoint,
+                seed_findings=seed_findings if checkpoint else None,
+                phase_done_callback=_phase_done,
+            )
+            # On a resumed run, seed_findings are already in DB — only store the new ones
+            # (seed_findings were already flushed incrementally via _phase_done)
+            if not checkpoint:
+                await self._store_findings(assessment.id, results["findings"])
+            else:
+                # Remaining phases after checkpoint were already flushed via _phase_done;
+                # only validation/scoring/remediation adds no new DB findings — re-store all
+                # to capture final suggestion_draft/next_step_text from remediation pass
+                await self.db.execute(
+                    delete(Finding).where(Finding.assessment_id == assessment_id)
+                )
+                await self.db.flush()
+                await self._store_findings(assessment.id, results["findings"])
 
             assessment.status = "completed"
             assessment.current_level = None
+            assessment.last_completed_level = None  # clear checkpoint on successful completion
             assessment.clyira_score = results["score"]
             assessment.adjusted_score = results["score"]  # starts equal; updates as findings are resolved
             assessment.score_band = results["score_band"]
@@ -113,7 +171,22 @@ class AssessmentService:
             assessment.data_integrity_hold = results.get("data_integrity_hold", False)
             assessment.suspended_reason = results.get("suspended_reason")
             from app.engines.llm_engine import _active_model
-            assessment.model_version = _active_model()
+            active_model = _active_model()
+            assessment.model_version = active_model
+
+            # Assessment provenance record (§16.3 / GAMP 5 change control)
+            profile = context.dtap_profile
+            assessment.provenance = {
+                "dtap_id": profile.dtap_id if profile else None,
+                "dtap_version": getattr(profile, "version", None) if profile else None,
+                "document_category": context.document_category,
+                "llm_model": active_model,
+                "idp_provider": "pdfplumber",
+                "levels_run": results["levels_run"],
+                "regulatory_frameworks": context.regulatory_frameworks,
+                "resumed_from_checkpoint": checkpoint,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }
 
             document.latest_score = results["score"]
             document.latest_assessment_id = assessment.id
@@ -340,6 +413,8 @@ class AssessmentService:
                 field_criticality=finding.field_criticality or None,
                 source_page=finding.source_page,
                 human_verification_required=finding.human_verification_required or False,
+                extraction_confidence=finding.extraction_confidence,
+                explanation_trace=finding.explanation_trace,
             )
             self.db.add(db_finding)
 

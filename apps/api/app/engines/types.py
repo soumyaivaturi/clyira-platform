@@ -57,3 +57,6 @@ class FindingResult:
     field_criticality: str = ""   # critical, high, medium, low
     source_page: Optional[int] = None
     human_verification_required: bool = False
+    # Phase 3 IDP / explainability fields
+    extraction_confidence: Optional[float] = None
+    explanation_trace: Optional[dict] = None

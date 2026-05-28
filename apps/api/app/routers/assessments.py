@@ -543,3 +543,50 @@ async def get_live_score(
         "adjusted_score": new_score,
         "initial_score": assessment.clyira_score,
     }
+
+
+@router.post("/{assessment_id}/retry", response_model=dict, status_code=status.HTTP_202_ACCEPTED)
+async def retry_failed_assessment(
+    assessment_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Retry a failed assessment, resuming from its last completed checkpoint.
+    If last_completed_level is set, completed phases are skipped and their findings
+    are reused — only failed/remaining phases are re-run.
+    """
+    result = await db.execute(
+        select(Assessment).where(
+            Assessment.id == assessment_id,
+            Assessment.company_id == current_user.company_id,
+        )
+    )
+    assessment = result.scalar_one_or_none()
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    if assessment.status not in ("failed",):
+        raise HTTPException(status_code=400, detail="Only failed assessments can be retried")
+
+    checkpoint = assessment.last_completed_level
+
+    background_tasks.add_task(
+        _run_assessment_task,
+        assessment_id=assessment_id,
+        document_id=assessment.document_id,
+        company_id=assessment.company_id,
+        include_references=assessment.include_references or True,
+        regulatory_frameworks=None,
+    )
+
+    return {
+        "assessment_id": assessment_id,
+        "status": "queued",
+        "resuming_from_checkpoint": checkpoint,
+        "message": (
+            f"Retrying from checkpoint '{checkpoint}' — completed phases will be skipped."
+            if checkpoint else
+            "Retrying from scratch — no checkpoint was saved."
+        ),
+    }

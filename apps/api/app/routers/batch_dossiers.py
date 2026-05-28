@@ -118,6 +118,8 @@ def _finding_out(f: Finding) -> dict:
         "field_criticality": getattr(f, "field_criticality", None),
         "source_page": getattr(f, "source_page", None),
         "human_verification_required": getattr(f, "human_verification_required", False),
+        "extraction_confidence": getattr(f, "extraction_confidence", None),
+        "explanation_trace": getattr(f, "explanation_trace", None),
     }
 
 
@@ -524,3 +526,204 @@ async def dossier_stats(
         "by_status": status_counts,
         "by_readiness": readiness_counts,
     }
+
+
+@router.post("/{dossier_id}/reopen")
+async def reopen_dossier(
+    dossier_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Reopen a dispositioned dossier (§22.5).
+    Requires a documented reason of at least 100 characters.
+    """
+    dossier = await db.get(BatchDossier, dossier_id)
+    if not dossier or dossier.company_id != current_user.company_id:
+        raise HTTPException(status_code=404, detail="Dossier not found")
+
+    reason = (body.get("reason") or "").strip()
+    if len(reason) < 100:
+        raise HTTPException(
+            status_code=400,
+            detail="Reopen reason must be at least 100 characters to meet §22.5 documentation requirements.",
+        )
+
+    svc = BatchDispositionService(db)
+    result = await svc.reopen_dossier(
+        dossier_id=dossier_id,
+        reason=reason,
+        reopened_by=current_user.id,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@router.get("/{dossier_id}/conflicts")
+async def detect_conflicts(
+    dossier_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Cross-document conflict detection (§22.2).
+    Returns lot number / date inconsistencies found across all documents in the dossier.
+    """
+    dossier = await db.get(BatchDossier, dossier_id)
+    if not dossier or dossier.company_id != current_user.company_id:
+        raise HTTPException(status_code=404, detail="Dossier not found")
+
+    svc = BatchDispositionService(db)
+    conflicts = await svc.detect_cross_document_conflicts(dossier_id)
+    return {
+        "dossier_id": dossier_id,
+        "conflict_count": len(conflicts),
+        "has_critical_conflicts": any(c.get("severity") == "critical" for c in conflicts),
+        "conflicts": conflicts,
+    }
+
+
+@router.get("/{dossier_id}/report")
+async def generate_review_report(
+    dossier_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Generate an audit-ready review report for the dossier.
+    Returns structured JSON suitable for rendering as a GMP review record.
+    """
+    from fastapi.responses import JSONResponse
+
+    dossier = await db.get(BatchDossier, dossier_id)
+    if not dossier or dossier.company_id != current_user.company_id:
+        raise HTTPException(status_code=404, detail="Dossier not found")
+
+    docs_result = await db.execute(
+        select(BatchDossierDocument).where(BatchDossierDocument.dossier_id == dossier_id)
+    )
+    dossier_docs = docs_result.scalars().all()
+
+    # Build document summaries with findings
+    document_sections = []
+    all_findings_flat = []
+    for dd in dossier_docs:
+        doc = await db.get(Document, dd.document_id)
+        doc_section: dict = {
+            "document_id": dd.document_id,
+            "document_title": doc.title if doc else dd.document_id,
+            "document_category": doc.document_category if doc else "",
+            "role": dd.role,
+            "assessment": None,
+            "findings_summary": {},
+            "open_findings": [],
+        }
+
+        assessment_result = await db.execute(
+            select(Assessment)
+            .where(Assessment.document_id == dd.document_id)
+            .where(Assessment.status == "completed")
+            .order_by(Assessment.created_at.desc())
+            .limit(1)
+        )
+        assessment = assessment_result.scalar_one_or_none()
+        if assessment:
+            doc_section["assessment"] = {
+                "clyira_score": assessment.clyira_score,
+                "score_band": assessment.score_band,
+                "data_integrity_hold": assessment.data_integrity_hold,
+                "completed_at": assessment.completed_at,
+            }
+
+            findings_result = await db.execute(
+                select(Finding).where(Finding.assessment_id == assessment.id)
+            )
+            findings = findings_result.scalars().all()
+
+            counts: dict = {}
+            open_f = []
+            for f in findings:
+                counts[f.severity] = counts.get(f.severity, 0) + 1
+                if f.status in ("open", "disputed", "acknowledged"):
+                    open_f.append({
+                        "id": f.id,
+                        "level": f.level,
+                        "severity": f.severity,
+                        "title": f.title,
+                        "status": f.status,
+                        "verification_state": f.verification_state,
+                        "regulatory_citation": f.regulatory_citation,
+                    })
+                    all_findings_flat.append(f)
+
+            doc_section["findings_summary"] = counts
+            doc_section["open_findings"] = open_f
+
+        document_sections.append(doc_section)
+
+    svc = EvidenceCompletenessService()
+    ev_check = svc.check(dossier, dossier_docs)
+
+    now = datetime.now(timezone.utc).isoformat()
+    report = {
+        "report_type": "batch_dossier_review",
+        "generated_at": now,
+        "generated_by": current_user.id,
+        "dossier": {
+            "id": dossier.id,
+            "lot_number": dossier.lot_number,
+            "product_name": dossier.product_name,
+            "product_code": dossier.product_code,
+            "dosage_form": dossier.dosage_form,
+            "batch_size": dossier.batch_size,
+            "manufacturing_site": dossier.manufacturing_site,
+            "manufacturing_date": dossier.manufacturing_date,
+            "target_release_date": dossier.target_release_date,
+            "is_sterile": dossier.is_sterile,
+            "manufacturing_context": dossier.manufacturing_context,
+            "product_type": dossier.product_type,
+            "target_markets": dossier.target_markets or [],
+        },
+        "readiness": {
+            "status": dossier.readiness_status,
+            "score": dossier.readiness_score,
+            "band": dossier.readiness_band,
+            "gates": {
+                "evidence_complete": dossier.gate_evidence_complete,
+                "data_integrity_ok": not dossier.gate_data_integrity,
+                "all_findings_addressed": dossier.gate_all_findings_addressed,
+                "gray_findings_resolved": dossier.gate_gray_findings_resolved,
+            },
+        },
+        "evidence_completeness": ev_check,
+        "disposition": {
+            "decision": dossier.disposition_decision,
+            "rationale": dossier.disposition_rationale,
+            "decided_by": dossier.released_by,
+            "decided_at": dossier.released_at,
+            "divergence_flagged": dossier.disposition_divergence,
+            "conditional_conditions": dossier.conditional_release_conditions,
+            "e_signature": {
+                "signer_id": getattr(dossier, "disposition_signer_id", None),
+                "signed_at": getattr(dossier, "disposition_signed_at", None),
+                "meaning": getattr(dossier, "disposition_signature_meaning", None),
+            },
+        },
+        "reopen_history": {
+            "reopen_count": getattr(dossier, "reopen_count", 0),
+            "last_reopened_by": getattr(dossier, "reopened_by", None),
+            "last_reopened_at": getattr(dossier, "reopened_at", None),
+            "last_reopen_reason": getattr(dossier, "reopen_reason", None),
+        },
+        "document_sections": document_sections,
+        "finding_totals": {
+            "total_open": len(all_findings_flat),
+            "critical_open": sum(1 for f in all_findings_flat if f.severity == "critical"),
+            "high_open": sum(1 for f in all_findings_flat if f.severity == "high"),
+            "medium_open": sum(1 for f in all_findings_flat if f.severity == "medium"),
+            "low_open": sum(1 for f in all_findings_flat if f.severity == "low"),
+        },
+    }
+    return report

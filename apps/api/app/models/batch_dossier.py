@@ -20,6 +20,9 @@ class BatchDossier(Base, TimestampMixin):
     company_id = Column(String, ForeignKey("companies.id"), nullable=False)
     created_by = Column(String, ForeignKey("users.id"), nullable=False)
 
+    # CDMO multi-sponsor (Phase 2)
+    sponsor_program_id = Column(String, ForeignKey("sponsor_programs.id"), nullable=True)
+
     # Lot identification
     lot_number = Column(String(100), nullable=False)
     product_name = Column(String(255), nullable=False)
@@ -69,6 +72,22 @@ class BatchDossier(Base, TimestampMixin):
     shadow_mode = Column(Boolean, default=False)
     review_stage = Column(String(30), nullable=True)  # cdmo_internal, sponsor_review, complete
 
+    # Campaign manufacturing — links sequential dossiers for same product/line (§22.6)
+    campaign_id = Column(String, nullable=True)
+
+    # Part 11 e-signature metadata — captured at disposition sign-off (§22.11)
+    disposition_signer_id = Column(String, ForeignKey("users.id"), nullable=True)
+    disposition_signed_at = Column(String, nullable=True)
+    disposition_signature_meaning = Column(Text, nullable=True)  # "I have reviewed..."
+    disposition_second_signer_id = Column(String, ForeignKey("users.id"), nullable=True)
+    disposition_second_signed_at = Column(String, nullable=True)
+
+    # Post-disposition reopening (§22.5)
+    reopened_by = Column(String, ForeignKey("users.id"), nullable=True)
+    reopened_at = Column(String, nullable=True)
+    reopen_reason = Column(Text, nullable=True)
+    reopen_count = Column(Integer, default=0)
+
     # Audit
     released_by = Column(String, ForeignKey("users.id"), nullable=True)
     released_at = Column(String, nullable=True)
@@ -77,6 +96,7 @@ class BatchDossier(Base, TimestampMixin):
     documents = relationship("BatchDossierDocument", back_populates="dossier", cascade="all, delete-orphan")
     company = relationship("Company")
     creator = relationship("User", foreign_keys=[created_by])
+    sponsor_program = relationship("SponsorProgram", back_populates="dossiers", foreign_keys=[sponsor_program_id])
 
 
 class BatchDossierDocument(Base, TimestampMixin):
