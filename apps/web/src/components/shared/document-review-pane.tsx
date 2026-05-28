@@ -492,13 +492,19 @@ function SectionRow({
   return (
     <div className={cn("flex gap-0 min-h-[2rem]", hasFindings && "bg-card rounded-lg overflow-hidden border border-border/60 shadow-sm mb-2")}>
       {/* Document text */}
-      <div className={cn("flex-1 min-w-0 border-l-4 px-4 py-3", hasFindings ? borderColor : "border-l-transparent px-4 py-1.5")}>
-        <h3 className={cn("font-semibold mb-1", hasFindings ? "text-sm" : "text-sm text-muted-foreground")}>
+      <div className={cn("flex-1 min-w-0 border-l-4 px-5 py-4", hasFindings ? borderColor : "border-l-transparent px-5 py-2")}>
+        <h3 className={cn(
+          "font-bold mb-2",
+          hasFindings ? "text-sm text-foreground" : "text-sm text-muted-foreground"
+        )}>
           {section.title}
         </h3>
-        <div className={cn("text-xs leading-relaxed whitespace-pre-wrap font-mono", hasFindings ? "text-foreground" : "text-muted-foreground")}>
+        <div className={cn(
+          "text-sm leading-7 whitespace-pre-wrap",
+          hasFindings ? "text-foreground" : "text-muted-foreground"
+        )}>
           {section.body.trim() || (
-            <span className={cn("italic px-1 rounded", cfg?.textHighlight ?? "")}>
+            <span className={cn("text-xs italic px-1 rounded", cfg?.textHighlight ?? "")}>
               ⚠ This section was not found in the document
             </span>
           )}
