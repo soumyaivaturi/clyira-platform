@@ -31,7 +31,8 @@ interface DossierDoc {
 interface Dossier {
   id: string; lot_number: string; product_name: string; dosage_form?: string;
   record_family: string; product_type: string; is_sterile: boolean; batch_purpose: string;
-  manufacturing_date?: string; target_release_date?: string; target_markets: string[];
+  manufacturing_context?: string; manufacturing_date?: string; target_release_date?: string;
+  target_markets: string[];
   status: string; readiness_status?: string; readiness_score?: number; readiness_band?: string;
   disposition_decision?: string; disposition_rationale?: string; disposition_divergence?: boolean;
   gates: Gate; shadow_mode: boolean; documents: DossierDoc[];
@@ -660,7 +661,7 @@ export default function DossierPage() {
             <div className="flex justify-between"><span>Record family</span><span className="capitalize">{dossier.record_family.replace(/_/g, " ")}</span></div>
             <div className="flex justify-between"><span>Product type</span><span className="capitalize">{dossier.product_type.replace(/_/g, " ")}</span></div>
             <div className="flex justify-between"><span>Sterile</span><span>{dossier.is_sterile ? "Yes" : "No"}</span></div>
-            <div className="flex justify-between"><span>Context</span><span className="capitalize">{dossier.manufacturing_context.replace(/_/g, " ")}</span></div>
+            {dossier.manufacturing_context && <div className="flex justify-between"><span>Context</span><span className="capitalize">{dossier.manufacturing_context.replace(/_/g, " ")}</span></div>}
             <div className="flex justify-between"><span>Purpose</span><span className="capitalize">{dossier.batch_purpose.replace(/_/g, " ")}</span></div>
             {dossier.target_markets.length > 0 && (
               <div className="flex justify-between"><span>Markets</span><span>{dossier.target_markets.join(", ")}</span></div>
