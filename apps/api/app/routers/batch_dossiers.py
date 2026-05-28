@@ -53,18 +53,24 @@ _BPR_LLM_SYSTEM = (
 
 
 _BPR_VISION_PROMPT = (
-    "This is a pharmaceutical batch record (MBR/BPR), possibly from a CDMO like Catalent. "
-    "Extract the header fields visible in the document. "
-    "Field mapping: 'Batch Record' or 'Record Number' → lot_number; "
-    "'Item Description' or 'Customer Protocol' → product_name; "
-    "'Item Number' or 'Project Number' → product_code; "
-    "'Catalent Site' or any site/facility field → manufacturing_site; "
-    "'Planned Output Quantity' or 'Batch Size' → batch_size; "
-    "'Expiry Date' → target_release_date; 'Effective Date' or 'Start Date' → manufacturing_date. "
-    "Return ONLY a JSON object with these exact keys (null if not found): "
-    "lot_number, product_name, product_code, dosage_form, batch_size, "
-    "manufacturing_site, manufacturing_date (YYYY-MM-DD), target_release_date (YYYY-MM-DD). "
-    "No explanation, no markdown — raw JSON only."
+    "This is a pharmaceutical batch record (MBR/BPR) — possibly from Catalent or another CDMO. "
+    "Read the document carefully and extract header fields. "
+    "Field mapping hints: 'Batch Record'/'Record Number' → LOT_NUMBER; "
+    "'Item Description'/'Customer Protocol' → PRODUCT_NAME; "
+    "'Item Number'/'Project Number' → PRODUCT_CODE; "
+    "'Catalent Site'/'Facility'/'Site' → MANUFACTURING_SITE; "
+    "'Planned Output Quantity'/'Batch Size' → BATCH_SIZE; "
+    "'Expiry Date' → TARGET_RELEASE_DATE; 'Effective Date'/'Start Date' → MANUFACTURING_DATE. "
+    "Reply ONLY with lines in this exact format (omit fields you cannot read, use plain ASCII text):\n"
+    "LOT_NUMBER: <value>\n"
+    "PRODUCT_NAME: <value>\n"
+    "PRODUCT_CODE: <value>\n"
+    "DOSAGE_FORM: <value>\n"
+    "BATCH_SIZE: <value>\n"
+    "MANUFACTURING_SITE: <value>\n"
+    "MANUFACTURING_DATE: <YYYY-MM-DD>\n"
+    "TARGET_RELEASE_DATE: <YYYY-MM-DD>\n"
+    "No extra text, no JSON, no markdown."
 )
 
 
@@ -72,7 +78,7 @@ async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
     """Extract BPR fields from a scanned/screenshot PDF using Gemini Vision.
     Returns (fields_dict, error_string). error_string is None on success.
     """
-    import base64, json, httpx
+    import base64, httpx, re
     from app.core.config import settings
 
     try:
@@ -101,7 +107,6 @@ async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024},
     }
     try:
-        import re
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code != 200:
@@ -110,17 +115,27 @@ async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
                 return {}, msg
             raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             logger.info(f"Gemini raw response (first 300): {raw[:300]}")
-            # Strip markdown fences
-            raw = raw.strip()
-            raw = re.sub(r'^```(?:json)?\s*', '', raw)
-            raw = re.sub(r'\s*```$', '', raw).strip()
-            # Extract first {...} block (handles extra prose before/after)
-            m = re.search(r'\{[^{}]*\}', raw, re.DOTALL)
-            if not m:
-                return {}, f"No JSON object in Gemini response: {raw[:100]}"
-            data = json.loads(m.group())
-            result = {k: str(v).strip() if v not in (None, "", "null") else None
-                      for k, v in data.items() if k in _BPR_FIELDS}
+            # Parse KEY: VALUE lines — one per field, ASCII only, no JSON
+            _KEY_MAP = {
+                "LOT_NUMBER": "lot_number",
+                "PRODUCT_NAME": "product_name",
+                "PRODUCT_CODE": "product_code",
+                "DOSAGE_FORM": "dosage_form",
+                "BATCH_SIZE": "batch_size",
+                "MANUFACTURING_SITE": "manufacturing_site",
+                "MANUFACTURING_DATE": "manufacturing_date",
+                "TARGET_RELEASE_DATE": "target_release_date",
+            }
+            _SKIP_VALUES = {"<value>", "<yyyy-mm-dd>", "null", "n/a", "none", "unknown", ""}
+            result = {}
+            for line in raw.splitlines():
+                if ":" not in line:
+                    continue
+                key, _, val = line.partition(":")
+                key = key.strip().upper()
+                val = val.strip()
+                if key in _KEY_MAP and val.lower() not in _SKIP_VALUES:
+                    result[_KEY_MAP[key]] = val
             logger.info(f"Gemini Vision extracted: {result}")
             return result, None
     except Exception as e:
