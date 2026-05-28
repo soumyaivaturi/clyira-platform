@@ -52,19 +52,87 @@ _BPR_LLM_SYSTEM = (
 )
 
 
+_BPR_VISION_PROMPT = (
+    "This is a pharmaceutical batch record (MBR/BPR), possibly from a CDMO like Catalent. "
+    "Extract the header fields visible in the document. "
+    "Field mapping: 'Batch Record' or 'Record Number' → lot_number; "
+    "'Item Description' or 'Customer Protocol' → product_name; "
+    "'Item Number' or 'Project Number' → product_code; "
+    "'Catalent Site' or any site/facility field → manufacturing_site; "
+    "'Planned Output Quantity' or 'Batch Size' → batch_size; "
+    "'Expiry Date' → target_release_date; 'Effective Date' or 'Start Date' → manufacturing_date. "
+    "Return ONLY a JSON object with these exact keys (null if not found): "
+    "lot_number, product_name, product_code, dosage_form, batch_size, "
+    "manufacturing_site, manufacturing_date (YYYY-MM-DD), target_release_date (YYYY-MM-DD). "
+    "No explanation, no markdown — raw JSON only."
+)
+
+
+async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> dict:
+    """Extract BPR fields from a scanned/screenshot PDF using Gemini Vision.
+
+    Faster and more accurate than Tesseract for low-res or screenshot PDFs.
+    Scans the first 3 pages only (header info is always on page 1).
+    """
+    import base64, json, httpx
+    from app.core.config import settings
+
+    if not settings.GEMINI_API_KEY:
+        logger.info("Gemini API key not set — skipping vision scan")
+        return {}
+
+    try:
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        pages_to_scan = min(3, len(doc))
+        image_parts = []
+        for i in range(pages_to_scan):
+            page = doc[i]
+            # 144 DPI is enough for Gemini Vision — faster than 200 DPI
+            pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+            img_b64 = base64.b64encode(pix.tobytes("jpeg")).decode()
+            image_parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
+        doc.close()
+    except Exception as e:
+        logger.warning(f"Vision scan: PDF→image conversion failed: {e}")
+        return {}
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{settings.GEMINI_MODEL}:generateContent?key={settings.GEMINI_API_KEY}"
+    )
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": _BPR_VISION_PROMPT}] + image_parts}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 512},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            data = json.loads(raw)
+            result = {k: str(v).strip() if v not in (None, "", "null") else None
+                      for k, v in data.items() if k in _BPR_FIELDS}
+            logger.info(f"Gemini Vision extracted: {result}")
+            return result
+    except Exception as e:
+        logger.warning(f"Gemini Vision BPR extraction failed: {e}")
+        return {}
+
+
 async def _llm_extract_bpr_fields(text: str) -> dict:
-    """LLM fallback for BPR field extraction when regex finds nothing."""
+    """LLM fallback for BPR field extraction when regex finds nothing (text already extracted)."""
     import json
     from app.core.config import settings
     from app.engines.llm_engine import _call_groq, _call_gemini
 
-    snippet = text[:4000]  # keep token cost low
+    snippet = text[:4000]
     try:
         if settings.GROQ_API_KEY:
             raw = await _call_groq(_BPR_LLM_SYSTEM, f"Extract fields from this batch record:\n\n{snippet}")
         else:
             raw = await _call_gemini(_BPR_LLM_SYSTEM, f"Extract fields from this batch record:\n\n{snippet}")
-        # Strip markdown fences if the model wrapped the JSON
         raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         data = json.loads(raw)
         return {k: str(v).strip() if v not in (None, "", "null") else None for k, v in data.items()
@@ -138,6 +206,25 @@ async def scan_document_for_fields(
             logger.info(f"pdfplumber extracted {len(extracted_text)} chars from {filename!r}")
         except Exception as e:
             logger.warning(f"pdfplumber fallback failed: {e}")
+
+    # Step 1d: Gemini Vision — for scanned/screenshot PDFs where no text could be extracted.
+    # Returns structured fields directly (skips regex + LLM text path).
+    if not extracted_text.strip() and file_type == "pdf":
+        vision_fields = await _vision_scan_bpr_fields(content)
+        if vision_fields:
+            fields_dict = {k: vision_fields.get(k) for k in _BPR_FIELDS}
+            confidence_dict = {k: (0.82 if vision_fields.get(k) else None) for k in _BPR_FIELDS}
+            fields_found = sum(1 for v in fields_dict.values() if v)
+            logger.info(f"BPR scan via vision: file={filename!r} fields_found={fields_found}")
+            return {
+                "fields": fields_dict,
+                "confidence": confidence_dict,
+                "filename": filename,
+                "file_type": file_type,
+                "text_length": 0,
+                "extraction_method": "vision",
+                "fields_found": fields_found,
+            }
 
     # Step 2: Regex extraction
     fields = BPRExtractionService().extract(extracted_text)
