@@ -54,14 +54,15 @@ _BPR_LLM_SYSTEM = (
 
 _BPR_VISION_PROMPT = (
     "This is a pharmaceutical batch record (MBR/BPR) — possibly from Catalent or another CDMO. "
-    "Read the document carefully and extract header fields. "
-    "Field mapping hints: 'Batch Record'/'Record Number' → LOT_NUMBER; "
-    "'Item Description'/'Customer Protocol' → PRODUCT_NAME; "
-    "'Item Number'/'Project Number' → PRODUCT_CODE; "
-    "'Catalent Site'/'Facility'/'Site' → MANUFACTURING_SITE; "
-    "'Planned Output Quantity'/'Batch Size' → BATCH_SIZE; "
-    "'Expiry Date' → TARGET_RELEASE_DATE; 'Effective Date'/'Start Date' → MANUFACTURING_DATE. "
-    "Reply ONLY with lines in this exact format (omit fields you cannot read, use plain ASCII text):\n"
+    "Read the LABELED TEXT FIELDS only. Do NOT read barcodes, QR codes, GS1 codes, or any long strings of digits without dashes. "
+    "Pharma lot/batch numbers look like '37040001-XBR-8-1' or 'BPR-2024-001A' — alphanumeric with dashes. "
+    "Field mapping hints: 'Batch Record:'/'Record Number:' → LOT_NUMBER; "
+    "'Item Description'/'Customer Protocol'/'Customer:' → PRODUCT_NAME; "
+    "'Item Number'/'Project Number:' → PRODUCT_CODE; "
+    "'Catalent Site:'/'Facility:'/'Site:' → MANUFACTURING_SITE; "
+    "'Planned Output Quantity'/'Batch Size:' → BATCH_SIZE; "
+    "'Expiry Date:' → TARGET_RELEASE_DATE; 'Effective Date:'/'Start Date:' → MANUFACTURING_DATE. "
+    "Reply ONLY with lines in this exact format (omit any field you cannot clearly read):\n"
     "LOT_NUMBER: <value>\n"
     "PRODUCT_NAME: <value>\n"
     "PRODUCT_CODE: <value>\n"
@@ -88,7 +89,7 @@ async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
         image_parts = []
         for i in range(pages_to_scan):
             page = doc[i]
-            pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))  # 144 DPI
+            pix = page.get_pixmap(matrix=fitz.Matrix(3.0, 3.0))  # 216 DPI — better for screenshot PDFs
             img_b64 = base64.b64encode(pix.tobytes("jpeg")).decode()
             image_parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
         doc.close()
@@ -134,8 +135,13 @@ async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
                 key, _, val = line.partition(":")
                 key = key.strip().upper()
                 val = val.strip()
-                if key in _KEY_MAP and val.lower() not in _SKIP_VALUES:
-                    result[_KEY_MAP[key]] = val
+                if key not in _KEY_MAP or val.lower() in _SKIP_VALUES:
+                    continue
+                # Reject lot numbers that are pure digits >10 chars — almost certainly a misread barcode
+                if key == "LOT_NUMBER" and re.fullmatch(r'\d{10,}', val):
+                    logger.info(f"Vision: rejected probable barcode as lot_number: {val[:20]}")
+                    continue
+                result[_KEY_MAP[key]] = val
             logger.info(f"Gemini Vision extracted: {result}")
             return result, None
     except Exception as e:
