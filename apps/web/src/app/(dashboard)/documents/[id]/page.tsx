@@ -8,9 +8,10 @@ import {
   CheckCircle2, ChevronDown, ChevronUp, BookOpen, Zap,
   Upload, Plus, X, FileUp, CheckSquare, Square, ShieldCheck,
   Download, MessageCircle, Send, History, Lock, CheckCheck,
-  ThumbsUp, Clock, Flag, PenLine,
+  ThumbsUp, Clock, Flag, PenLine, LayoutList, FileSearch,
 } from "lucide-react";
 import { documentsApi, assessmentsApi, assistantApi, documentHistoryApi, signaturesApi } from "@/lib/api";
+import { DocumentReviewPane } from "@/components/shared/document-review-pane";
 import { SignatureModal } from "@/components/shared/signature-modal";
 import { ScoreRing, ScoreBadge } from "@/components/shared/score-display";
 import { SeverityBadge, LevelBadge, DocStatusBadge, FindingStatusBadge } from "@/components/shared/badges";
@@ -808,12 +809,26 @@ export default function DocumentDetailPage() {
   const [selectedFrameworks, setSelectedFrameworks] = useState<string[]>(ALL_FRAMEWORK_CODES);
   const [signatures, setSignatures] = useState<Signature[]>([]);
   const [showSignModal, setShowSignModal] = useState(false);
+  const [viewMode, setViewMode] = useState<"list" | "review">("list");
+  const [documentText, setDocumentText] = useState("");
+  const [loadingText, setLoadingText] = useState(false);
 
   const loadSignatures = async () => {
     try {
       const res = await signaturesApi.list(id);
       setSignatures(res.data);
     } catch { /* non-critical */ }
+  };
+
+  const switchToReview = async () => {
+    setViewMode("review");
+    if (documentText) return;
+    setLoadingText(true);
+    try {
+      const res = await documentsApi.getText(id);
+      setDocumentText(res.data.text || "");
+    } catch { /* non-critical — pane shows "no text" state */ }
+    finally { setLoadingText(false); }
   };
 
   const loadDoc = async () => {
@@ -1144,18 +1159,62 @@ export default function DocumentDetailPage() {
                 {assessment.processing_time_seconds ? ` · ${assessment.processing_time_seconds.toFixed(1)}s` : ""}
               </p>
             </div>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {["all", "critical", "high", "medium", "low"].map(s => (
-                <button key={s} onClick={() => setSeverityFilter(s)}
-                  className={cn("px-3 py-1 rounded-full text-xs font-medium border transition-colors capitalize",
-                    severityFilter === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-accent border-border")}>
-                  {s === "all" ? `All (${findings.length})` : `${s.charAt(0).toUpperCase() + s.slice(1)} (${findings.filter(f => f.severity === s).length})`}
+            <div className="flex items-center gap-3 flex-wrap">
+              {/* List / Review toggle */}
+              <div className="flex items-center rounded-lg border bg-muted/30 p-0.5 gap-0.5">
+                <button
+                  onClick={() => setViewMode("list")}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                    viewMode === "list"
+                      ? "bg-card shadow-sm text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <LayoutList className="w-3.5 h-3.5" />
+                  List
                 </button>
-              ))}
+                <button
+                  onClick={switchToReview}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                    viewMode === "review"
+                      ? "bg-card shadow-sm text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {loadingText
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <FileSearch className="w-3.5 h-3.5" />
+                  }
+                  Review
+                </button>
+              </div>
+
+              {/* Severity filter — only in list mode */}
+              {viewMode === "list" && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {["all", "critical", "high", "medium", "low"].map(s => (
+                    <button key={s} onClick={() => setSeverityFilter(s)}
+                      className={cn("px-3 py-1 rounded-full text-xs font-medium border transition-colors capitalize",
+                        severityFilter === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-accent border-border")}>
+                      {s === "all" ? `All (${findings.length})` : `${s.charAt(0).toUpperCase() + s.slice(1)} (${findings.filter(f => f.severity === s).length})`}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
-          {sortedFindings.length === 0 ? (
+          {viewMode === "review" ? (
+            <div className="bg-card border rounded-xl p-4">
+              <DocumentReviewPane
+                documentText={documentText}
+                fileType={doc.file_type}
+                findings={findings}
+              />
+            </div>
+          ) : sortedFindings.length === 0 ? (
             <div className="bg-green-50 border border-green-200 rounded-xl px-6 py-8 text-center">
               <CheckCircle2 className="w-10 h-10 text-green-500 mx-auto mb-2" />
               <p className="font-semibold text-green-800">

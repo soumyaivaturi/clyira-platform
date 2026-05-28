@@ -285,6 +285,28 @@ async def get_document(
     return doc_out
 
 
+@router.get("/{document_id}/text")
+async def get_document_text(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.company_id == current_user.company_id,
+        )
+    )
+    document = result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    return {
+        "document_id": document_id,
+        "file_type": document.file_type,
+        "text": document.extracted_text or "",
+    }
+
+
 @router.post("/{document_id}/references", status_code=status.HTTP_201_CREATED)
 async def add_references(
     document_id: str,
