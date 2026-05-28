@@ -30,15 +30,14 @@ pdfplumber==0.11.0
 pymupdf>=1.24.0           # PDF → image conversion for OCR providers (fitz)
 
 # IDP Stack — free, no cloud API required
-# Primary for native PDFs / DOCX / HTML (IBM open-source document parser)
-docling>=2.0.0
-# Primary for scanned PDFs and images (Alibaba PaddleOCR v4 + PP-Structure)
-paddlepaddle
-paddleocr>=2.9.0
-# Fallback OCR for clean printed scans (requires: brew install tesseract / apt-get install tesseract-ocr)
+# Tesseract OCR wrapper — binary installed via Dockerfile (tesseract-ocr apt package)
 pytesseract>=0.3.10
-# Experimental handwriting extraction — TrOCR (optional; ~500 MB model download on first run)
-# Uncomment to enable: transformers>=4.40.0 and torch
+# Heavy packages below are for local dev only — DO NOT uncomment on Render (image too large):
+# docling>=2.0.0            # ~500 MB models — local dev only
+# paddlepaddle              # ~1.5 GB — local dev only
+# paddleocr>=2.9.0          # local dev only
+# transformers>=4.40.0      # TrOCR — local dev only
+# torch                     # TrOCR — local dev only
 
 # File handling & Storage
 aiofiles==24.1.0
