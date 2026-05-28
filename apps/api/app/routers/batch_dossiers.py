@@ -84,18 +84,39 @@ async def scan_document_for_fields(
     filename = file.filename or "upload"
     file_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else "unknown"
 
-    # Step 1: Extract text via IDPEngine auto-routing (handles native PDFs, scans, DOCX)
+    import io
+
+    # Step 1a: IDPEngine auto-routing (docling for native PDF/DOCX, paddleocr for scans)
     extracted_text = ""
     try:
         idp_output = IDPEngine().extract(content, filename)
         extracted_text = IDPEngine.full_text(idp_output)
+        logger.info(f"IDPEngine extracted {len(extracted_text)} chars from {filename!r}")
     except Exception as e:
-        logger.warning(f"IDPEngine failed for scan, falling back to pdfplumber: {e}")
+        logger.warning(f"IDPEngine failed for scan: {e}")
 
-    # Fallback: pdfplumber for plain PDFs if IDPEngine returned nothing
+    # Step 1b: DOCX fallback via python-docx (always installed, no extra deps)
+    if not extracted_text.strip() and file_type in ("docx", "doc"):
+        try:
+            from docx import Document as DocxDocument
+            doc = DocxDocument(io.BytesIO(content))
+            parts = []
+            for p in doc.paragraphs:
+                if p.text.strip():
+                    parts.append(p.text)
+            for table in doc.tables:
+                for row in table.rows:
+                    cells = [c.text.strip() for c in row.cells if c.text.strip()]
+                    if cells:
+                        parts.append(" | ".join(cells))
+            extracted_text = "\n".join(parts)
+            logger.info(f"python-docx extracted {len(extracted_text)} chars from {filename!r}")
+        except Exception as e:
+            logger.warning(f"python-docx fallback failed: {e}")
+
+    # Step 1c: pdfplumber fallback for native PDFs
     if not extracted_text.strip() and file_type == "pdf":
         try:
-            import io
             import pdfplumber
             pages = []
             with pdfplumber.open(io.BytesIO(content)) as pdf:
@@ -107,6 +128,7 @@ async def scan_document_for_fields(
                     if t.strip():
                         pages.append(t)
             extracted_text = "\n".join(pages)
+            logger.info(f"pdfplumber extracted {len(extracted_text)} chars from {filename!r}")
         except Exception as e:
             logger.warning(f"pdfplumber fallback failed: {e}")
 
@@ -133,10 +155,10 @@ async def scan_document_for_fields(
         "target_release_date": fields.target_release_date.confidence if fields.target_release_date else None,
     }
 
-    # Step 3: LLM fallback — fires when regex found nothing but text exists
+    # Step 3: LLM fallback — fires when regex found nothing but text exists (≥50 chars)
     regex_hit_count = sum(1 for v in fields_dict.values() if v)
     extraction_method = "regex"
-    if regex_hit_count == 0 and len(extracted_text) > 100:
+    if regex_hit_count == 0 and len(extracted_text) >= 50:
         llm_fields = await _llm_extract_bpr_fields(extracted_text)
         if llm_fields:
             for k, v in llm_fields.items():
@@ -145,6 +167,11 @@ async def scan_document_for_fields(
                     confidence_dict[k] = 0.75  # LLM extractions default to 0.75 confidence
             extraction_method = "llm"
 
+    fields_found = sum(1 for v in fields_dict.values() if v)
+    logger.info(
+        f"BPR scan complete: file={filename!r} text_len={len(extracted_text)} "
+        f"method={extraction_method} fields_found={fields_found}"
+    )
     return {
         "fields": fields_dict,
         "confidence": confidence_dict,
@@ -152,6 +179,7 @@ async def scan_document_for_fields(
         "file_type": file_type,
         "text_length": len(extracted_text),
         "extraction_method": extraction_method,
+        "fields_found": fields_found,
     }
 
 

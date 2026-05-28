@@ -175,7 +175,9 @@ export default function NewDossierPage() {
     setScanDone(false);
     try {
       const res = await batchDossiersApi.scanDocument(file);
-      const { fields, confidence } = res.data as ScanResult;
+      const { fields, confidence, text_length, extraction_method } = res.data as ScanResult & {
+        text_length: number; extraction_method: string;
+      };
       const updates: Partial<typeof form> = {};
       const newScanned = new Set<string>();
 
@@ -186,7 +188,7 @@ export default function NewDossierPage() {
 
       for (const key of LOT_FIELDS) {
         const val = fields[key];
-        if (val && confidence[key] && confidence[key]! >= 0.7) {
+        if (val && confidence[key] && confidence[key]! >= 0.6) {
           (updates as Record<string, unknown>)[key] = val;
           newScanned.add(key);
         }
@@ -195,7 +197,12 @@ export default function NewDossierPage() {
       setForm((prev) => ({ ...prev, ...updates }));
       setScannedFields(newScanned);
       setScanDone(true);
-      if (newScanned.size === 0) setScanError("No fields detected. Fill in manually.");
+      if (newScanned.size === 0) {
+        const hint = text_length === 0
+          ? "No text extracted — file may be a scanned image. Fill in manually."
+          : `No fields matched (${text_length} chars extracted via ${extraction_method}). Fill in manually.`;
+        setScanError(hint);
+      }
     } catch {
       setScanError("Scan failed. You can still fill in fields manually.");
     } finally {
