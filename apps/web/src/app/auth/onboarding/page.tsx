@@ -232,7 +232,7 @@ export default function OnboardingPage() {
         {/* Header */}
         <div className="text-center mb-8">
           <div className="flex justify-center mb-4">
-            <ClyiraLogo className="w-56 h-auto" />
+            <ClyiraLogo className="w-72 h-auto" />
           </div>
           <h1 className="text-xl font-semibold">Configure your regulatory workspace</h1>
           <p className="text-sm text-muted-foreground mt-1">

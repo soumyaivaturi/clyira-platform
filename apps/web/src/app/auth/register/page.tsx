@@ -80,7 +80,7 @@ export default function RegisterPage() {
     <div className="min-h-screen bg-white flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="flex justify-center mb-8">
-          <ClyiraLogo className="w-56 h-auto" />
+          <ClyiraLogo className="w-72 h-auto" />
         </div>
 
         <div className="bg-card border rounded-xl p-8 shadow-sm">
