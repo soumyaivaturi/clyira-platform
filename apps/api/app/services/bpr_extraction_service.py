@@ -53,17 +53,36 @@ class ExtractedBPRFields:
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
-# Separators: colon, equals, pipe (pdfplumber table output uses " | ")
-_SEP = r'\s*(?:[:=]|\s\|\s)\s*'
+# Separators: colon, equals, pipe (pdfplumber table output uses " | "), or just whitespace after label
+_SEP = r'\s*(?:[:=]|\s\|\s|:\s*)\s*'
+
+# Date value: ISO, DD/MM/YYYY, YYYY/MM/DD, "25-Dec-2024", "March 15, 2025"
+_DATE_VAL = (
+    r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}'          # YYYY-MM-DD or YYYY/MM/DD
+    r'|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}'         # DD/MM/YYYY or MM/DD/YY
+    r'|\d{1,2}-[A-Za-z]{3}-\d{4}'             # DD-Mon-YYYY  ← Catalent format
+    r'|[A-Za-z]+\s+\d{1,2},?\s+\d{4})'        # "March 15, 2025"
+)
 
 # Lot / batch number
 _LOT_PATTERNS = [
+    # Standard: "Batch No:", "Lot Number:", "Batch #:"
     (re.compile(
         r'(?:batch|lot)\s*(?:no|number|#|id|num)\.?' + _SEP + r'([A-Z0-9][\w\-./]{2,30})',
         re.IGNORECASE), 0.95, "lot/batch label + value"),
+    # Catalent SupplyFlex: "Batch Record:  37040001-XBR-8-1"
+    (re.compile(
+        r'Batch\s+Record' + _SEP + r'([A-Z0-9][\w\-./]{2,40})',
+        re.IGNORECASE), 0.95, "Catalent batch record label"),
+    # Catalent "Record Number:"
+    (re.compile(
+        r'Record\s+Number' + _SEP + r'([A-Z0-9][\w\-./]{2,40})',
+        re.IGNORECASE), 0.88, "record number label"),
+    # Shorthand "Lot:" / "Batch:"
     (re.compile(
         r'(?:lot|batch)' + _SEP + r'([A-Z0-9][\w\-./]{2,30})',
-        re.IGNORECASE), 0.85, "lot/batch shorthand"),
+        re.IGNORECASE), 0.82, "lot/batch shorthand"),
+    # BPN/BNO/LNO abbreviated
     (re.compile(
         r'(?:^|\n)(?:BPN|BNO|LNO)' + _SEP + r'([A-Z0-9][\w\-./]{2,30})',
         re.IGNORECASE | re.MULTILINE), 0.80, "abbreviated lot label"),
@@ -71,19 +90,46 @@ _LOT_PATTERNS = [
 
 # Product name
 _PRODUCT_PATTERNS = [
+    # Standard labels
     (re.compile(
         r'(?:product\s*name|drug\s*product|finished\s*product|article)' + _SEP + r'(.+?)(?:\n|$)',
         re.IGNORECASE), 0.90, "product name label"),
+    # Catalent table: "Item Description" in output materials table
+    (re.compile(
+        r'Item\s+Description' + _SEP + r'([A-Z0-9][A-Z0-9 \-/]{5,80})',
+        re.IGNORECASE), 0.88, "Catalent item description"),
+    # "Customer Protocol:" — sponsor product reference
+    (re.compile(
+        r'Customer\s+Protocol' + _SEP + r'([A-Z0-9][\w\-./]{2,40})',
+        re.IGNORECASE), 0.75, "customer protocol label"),
+    # Generic "Product:"
     (re.compile(
         r'(?:^|\n)Product' + _SEP + r'(.+?)(?:\n|$)',
-        re.IGNORECASE | re.MULTILINE), 0.85, "product label"),
+        re.IGNORECASE | re.MULTILINE), 0.82, "product label"),
+    # "Customer:" as fallback (CDMO context)
+    (re.compile(
+        r'Customer' + _SEP + r'([A-Z][A-Z\s&]{3,60}?)(?:\n|$)',
+        re.IGNORECASE), 0.65, "customer/sponsor label"),
 ]
 
 # Product / item code
 _CODE_PATTERNS = [
+    # Standard
     (re.compile(
-        r'(?:product\s*code|item\s*(?:no|number|code)|material\s*(?:no|number)|part\s*(?:no|number))' + _SEP + r'([A-Z0-9][\w\-./]{1,30})',
+        r'(?:product\s*code|material\s*(?:no|number)|part\s*(?:no|number))' + _SEP + r'([A-Z0-9][\w\-./]{1,30})',
         re.IGNORECASE), 0.88, "product code label"),
+    # Catalent: "Item Number:" in output materials table
+    (re.compile(
+        r'Item\s+Number' + _SEP + r'(\d{4,10})',
+        re.IGNORECASE), 0.88, "Catalent item number"),
+    # Catalent: "Project Number:"
+    (re.compile(
+        r'Project\s+Number' + _SEP + r'([A-Z0-9][\w\-./]{2,30})',
+        re.IGNORECASE), 0.85, "Catalent project number"),
+    # "Item No.:" generic
+    (re.compile(
+        r'Item\s*(?:no|#)' + _SEP + r'([A-Z0-9][\w\-./]{1,30})',
+        re.IGNORECASE), 0.82, "item no label"),
 ]
 
 # Dosage form
@@ -91,20 +137,39 @@ _FORM_PATTERNS = [
     (re.compile(
         r'(?:dosage\s*form|form|presentation|formulation)' + _SEP + r'(.+?)(?:\n|$)',
         re.IGNORECASE), 0.85, "dosage form label"),
+    # Inferred from item description: "450MG TB" → Tablet, "CAP" → Capsule, "INJ" → Injection
+    (re.compile(
+        r'\b(tablet|capsule|injection|solution|suspension|cream|ointment|patch|inhaler|suppository)\b',
+        re.IGNORECASE), 0.60, "dosage form from description"),
 ]
 
 # Batch / lot size
 _SIZE_PATTERNS = [
+    # Standard
     (re.compile(
         r'(?:batch\s*size|lot\s*size|theoretical\s*(?:yield|quantity)|batch\s*quantity)' + _SEP + r'([\d,]+\s*(?:units?|tablets?|capsules?|vials?|mL|L|kg|g|pcs|doses?)?)',
         re.IGNORECASE), 0.88, "batch size label"),
+    # Catalent: "Planned Output Quantity" in table
+    (re.compile(
+        r'Planned\s+Output\s+Quantity' + _SEP + r'([\d,]+)',
+        re.IGNORECASE), 0.88, "Catalent planned output quantity"),
+    # "Planned Quantity:" / "Output Quantity:"
+    (re.compile(
+        r'(?:planned|output)\s+quantity' + _SEP + r'([\d,]+\s*(?:units?|tablets?|capsules?|vials?)?)',
+        re.IGNORECASE), 0.82, "planned/output quantity"),
 ]
 
 # Manufacturing site
 _SITE_PATTERNS = [
+    # Standard
     (re.compile(
         r'(?:manufacturing\s*site|mfg\s*site|manufacture[rd]\s*(?:at|by)|site\s*(?:name|code|address))' + _SEP + r'(.+?)(?:\n|$)',
         re.IGNORECASE), 0.88, "manufacturing site label"),
+    # Catalent: "Catalent Site:  Philadelphia"
+    (re.compile(
+        r'Catalent\s+Site' + _SEP + r'(.+?)(?:\n|$)',
+        re.IGNORECASE), 0.92, "Catalent site label"),
+    # Generic facility/plant
     (re.compile(
         r'(?:facility|plant|location)' + _SEP + r'(.+?)(?:\n|$)',
         re.IGNORECASE), 0.75, "facility label"),
@@ -113,8 +178,12 @@ _SITE_PATTERNS = [
 # Manufacturing date
 _DATE_PATTERNS = [
     (re.compile(
-        r'(?:manufacturing\s*date|mfg\.?\s*date|date\s*of\s*manufacture|manufacture\s*date|start\s*date)' + _SEP + r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|[A-Za-z]+\s+\d{1,2},?\s+\d{4})',
+        r'(?:manufacturing\s*date|mfg\.?\s*date|date\s*of\s*manufacture|manufacture\s*date|start\s*date|production\s*date)' + _SEP + _DATE_VAL,
         re.IGNORECASE), 0.90, "manufacturing date label"),
+    # Catalent "Effective Date:" on batch record cover
+    (re.compile(
+        r'Effective\s+Date' + _SEP + _DATE_VAL,
+        re.IGNORECASE), 0.80, "effective date label"),
     (re.compile(
         r'(?:mfg|manufactured)' + _SEP + r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})',
         re.IGNORECASE), 0.80, "mfg date shorthand"),
@@ -123,8 +192,16 @@ _DATE_PATTERNS = [
 # Target release date
 _RELEASE_DATE_PATTERNS = [
     (re.compile(
-        r'(?:target\s*release\s*date|release\s*date|exp(?:iry|iration)?\s*date|use\s*by\s*date)' + _SEP + r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
-        re.IGNORECASE), 0.85, "release/expiry date label"),
+        r'(?:target\s*release\s*date|release\s*date|use\s*by\s*date)' + _SEP + _DATE_VAL,
+        re.IGNORECASE), 0.88, "release date label"),
+    # Catalent: "Expiry Date:" in output materials table
+    (re.compile(
+        r'Expiry\s+Date' + _SEP + _DATE_VAL,
+        re.IGNORECASE), 0.88, "Catalent expiry date"),
+    # Generic exp/expiration
+    (re.compile(
+        r'exp(?:iry|iration)?\s*date' + _SEP + _DATE_VAL,
+        re.IGNORECASE), 0.85, "expiry date label"),
 ]
 
 
@@ -142,24 +219,29 @@ def _match_first(text: str, patterns) -> Optional[ExtractedBPRField]:
 def _normalise_date(raw: str) -> str:
     """Attempt to normalise date to YYYY-MM-DD for the date input field."""
     raw = raw.strip()
+    months = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
+              "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
     # Already ISO
     if re.match(r'^\d{4}-\d{2}-\d{2}$', raw):
         return raw
-    # DD/MM/YYYY or MM/DD/YYYY → try YYYY-MM-DD (assume YYYY last)
-    m = re.match(r'^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})$', raw)
-    if m:
-        # Heuristic: if first number > 12, it's DD/MM
-        a, b, year = m.group(1), m.group(2), m.group(3)
-        if int(a) > 12:
-            return f"{year}-{b.zfill(2)}-{a.zfill(2)}"
-        return f"{year}-{a.zfill(2)}-{b.zfill(2)}"
     # YYYY/MM/DD
     m = re.match(r'^(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})$', raw)
     if m:
         return f"{m.group(1)}-{m.group(2).zfill(2)}-{m.group(3).zfill(2)}"
+    # DD-Mon-YYYY  ← Catalent format e.g. "25-Dec-2024", "20-Feb-2028"
+    m = re.match(r'^(\d{1,2})-([A-Za-z]{3})-(\d{4})$', raw)
+    if m:
+        mon = months.get(m.group(2).lower())
+        if mon:
+            return f"{m.group(3)}-{str(mon).zfill(2)}-{m.group(1).zfill(2)}"
+    # DD/MM/YYYY or MM/DD/YYYY (heuristic: if first number > 12 it's DD/MM)
+    m = re.match(r'^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})$', raw)
+    if m:
+        a, b, year = m.group(1), m.group(2), m.group(3)
+        if int(a) > 12:
+            return f"{year}-{b.zfill(2)}-{a.zfill(2)}"
+        return f"{year}-{a.zfill(2)}-{b.zfill(2)}"
     # "March 15, 2025" or "15 March 2025"
-    months = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
-              "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
     m = re.match(r'^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$', raw)
     if m:
         mon = months.get(m.group(1).lower()[:3])

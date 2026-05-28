@@ -37,7 +37,14 @@ _BPR_FIELDS = ["lot_number", "product_name", "product_code", "dosage_form",
                "batch_size", "manufacturing_site", "manufacturing_date", "target_release_date"]
 
 _BPR_LLM_SYSTEM = (
-    "You are a pharmaceutical document parser. Extract batch record header fields from the text. "
+    "You are a pharmaceutical document parser specialising in batch records from CDMOs and manufacturers "
+    "(Catalent, Lonza, Patheon, etc.). Extract header fields from the text. "
+    "Field mapping hints: 'Batch Record' or 'Record Number' → lot_number; "
+    "'Customer Protocol' or 'Item Description' → product_name; "
+    "'Item Number' or 'Project Number' → product_code; "
+    "'Catalent Site' or 'Facility' → manufacturing_site; "
+    "'Planned Output Quantity' → batch_size; "
+    "'Expiry Date' → target_release_date; 'Effective Date' or 'Start Date' → manufacturing_date. "
     "Return ONLY a JSON object with these exact keys (use null if not found): "
     "lot_number, product_name, product_code, dosage_form, batch_size, "
     "manufacturing_site, manufacturing_date (YYYY-MM-DD), target_release_date (YYYY-MM-DD). "
