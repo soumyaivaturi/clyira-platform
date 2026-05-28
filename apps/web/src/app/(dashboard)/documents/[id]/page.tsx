@@ -1062,89 +1062,69 @@ export default function DocumentDetailPage() {
         <div className="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-4 py-3">{error}</div>
       )}
 
-      {/* Data Integrity Hold Banner */}
+      {/* Data Integrity Hold Banner — compact single line */}
       {assessment?.data_integrity_hold && (
-        <div className="flex items-start gap-3 bg-red-50 border border-red-300 rounded-xl px-5 py-3.5">
-          <Lock className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="font-semibold text-red-800 text-sm">Data Integrity Hold</p>
-            <p className="text-xs text-red-700 mt-0.5">
-              {assessment.suspended_reason || "Critical ALCOA+/Data Integrity finding detected. Score capped at 50 until resolved."}
-            </p>
-          </div>
+        <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+          <Lock className="w-3.5 h-3.5 text-red-600 shrink-0" />
+          <p className="text-xs font-semibold text-red-800">Data Integrity Hold</p>
+          <span className="text-red-300">·</span>
+          <p className="text-xs text-red-700 truncate">
+            {assessment.suspended_reason || "Critical ALCOA+/Data Integrity finding detected. Score capped at 50 until resolved."}
+          </p>
         </div>
       )}
 
-      {/* Score + meta cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-card border rounded-xl p-5 flex items-center gap-5">
-          <ScoreRing score={adjustedScore ?? doc.latest_score} size="md" />
+      {/* Score + meta — compact single row */}
+      <div className="bg-card border rounded-lg px-4 py-2.5 flex items-center gap-6 flex-wrap">
+        {/* Score */}
+        <div className="flex items-center gap-3 shrink-0">
+          <ScoreRing score={adjustedScore ?? doc.latest_score} size="sm" />
           <div>
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Clyira Score</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Score</p>
             {assessment && adjustedScore != null && adjustedScore !== assessment.clyira_score && (
-              <p className="text-[10px] text-green-600 font-medium">
-                ↑ {adjustedScore.toFixed(1)} (adjusted) · was {assessment.clyira_score?.toFixed(1)}
-              </p>
+              <p className="text-[10px] text-green-600 font-medium">↑ adj from {assessment.clyira_score?.toFixed(1)}</p>
             )}
             {assessment && (
-              <>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {assessment.levels_run?.length ?? 0} levels assessed
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {timeAgo(assessment.created_at)}
-                </p>
-              </>
+              <p className="text-[10px] text-muted-foreground">{assessment.levels_run?.length ?? 0} levels · {timeAgo(assessment.created_at)}</p>
             )}
-            {!assessment && <p className="text-xs text-muted-foreground mt-1">Not yet assessed</p>}
           </div>
         </div>
 
+        <div className="h-8 w-px bg-border shrink-0" />
+
+        {/* Findings summary */}
         {assessment ? (
-          <div className="bg-card border rounded-xl p-5">
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-3">Findings Summary</p>
-            <div className="grid grid-cols-5 gap-1 text-center">
-              {[
-                { label: "Crit", count: assessment.findings_critical, sev: "critical" },
-                { label: "High", count: assessment.findings_high, sev: "high" },
-                { label: "Med", count: assessment.findings_medium, sev: "medium" },
-                { label: "Low", count: assessment.findings_low, sev: "low" },
-                { label: "Info", count: assessment.findings_info, sev: "info" },
-              ].map(({ label, count, sev }) => {
-                const cfg = getSeverityConfig(sev);
-                return (
-                  <div key={sev} className={cn("rounded-lg py-2 px-1", count > 0 ? cfg.bg : "bg-muted/30")}>
-                    <p className={cn("text-lg font-bold tabular-nums", count > 0 ? cfg.color : "text-muted-foreground/40")}>{count}</p>
-                    <p className={cn("text-[10px] font-medium", count > 0 ? cfg.color : "text-muted-foreground/40")}>{label}</p>
-                  </div>
-                );
-              })}
-            </div>
+          <div className="flex items-center gap-1.5">
+            {[
+              { label: "Crit", count: assessment.findings_critical, sev: "critical" },
+              { label: "High", count: assessment.findings_high, sev: "high" },
+              { label: "Med", count: assessment.findings_medium, sev: "medium" },
+              { label: "Low", count: assessment.findings_low, sev: "low" },
+              { label: "Info", count: assessment.findings_info, sev: "info" },
+            ].map(({ label, count, sev }) => {
+              const cfg = getSeverityConfig(sev);
+              return (
+                <div key={sev} className={cn("rounded px-2 py-1 text-center min-w-[36px]", count > 0 ? cfg.bg : "bg-muted/30")}>
+                  <p className={cn("text-sm font-bold tabular-nums leading-none", count > 0 ? cfg.color : "text-muted-foreground/30")}>{count}</p>
+                  <p className={cn("text-[9px] font-medium mt-0.5", count > 0 ? cfg.color : "text-muted-foreground/30")}>{label}</p>
+                </div>
+              );
+            })}
           </div>
         ) : (
-          <div className="bg-card border rounded-xl p-5 flex flex-col items-center justify-center text-center">
-            <Play className="w-8 h-8 text-muted-foreground/30 mb-2" />
-            <p className="text-sm font-medium">No assessment yet</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Run the L1–L11 engine to get findings</p>
-          </div>
+          <p className="text-xs text-muted-foreground">Not yet assessed</p>
         )}
 
-        <div className="bg-card border rounded-xl p-5">
-          <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-3">File Info</p>
-          <div className="space-y-1.5">
-            {[
-              ["Type", doc.file_type?.toUpperCase() ?? "—"],
-              ["Size", formatFileSize(doc.file_size_bytes)],
-              ["Uploaded", formatDate(doc.created_at)],
-              ["References", `${doc.references?.length ?? 0} attached`],
-              ...(assessment?.enforcement_matches ? [["Enforcement", `${assessment.enforcement_matches} match${assessment.enforcement_matches !== 1 ? "es" : ""}`]] : []),
-            ].map(([k, v]) => (
-              <div key={k} className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">{k}</span>
-                <span className="text-xs font-medium">{v}</span>
-              </div>
-            ))}
-          </div>
+        <div className="h-8 w-px bg-border shrink-0" />
+
+        {/* File info inline */}
+        <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+          <span><span className="font-medium text-foreground">{doc.file_type?.toUpperCase() ?? "—"}</span> · {formatFileSize(doc.file_size_bytes)}</span>
+          <span>Uploaded {formatDate(doc.created_at)}</span>
+          <span>{doc.references?.length ?? 0} references</span>
+          {assessment?.enforcement_matches ? (
+            <span className="font-medium text-orange-600">{assessment.enforcement_matches} enforcement match{assessment.enforcement_matches !== 1 ? "es" : ""}</span>
+          ) : null}
         </div>
       </div>
 
