@@ -91,11 +91,8 @@ function PreviewNav() {
     }`}>
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
 
-        <Link href="/preview" className="flex items-center gap-2.5">
-          <ClyiraLogo className="w-9 h-9" />
-          <span className="font-extrabold text-xl tracking-tight text-gray-900">
-            CLYIRA<span style={{ color: "#7654c9", fontSize: "1.4em", lineHeight: 1 }}>.</span>AI
-          </span>
+        <Link href="/preview">
+          <ClyiraLogo className="h-8 w-auto" />
         </Link>
 
         <div className="hidden md:flex items-center gap-7 text-sm font-medium text-gray-500">
@@ -350,8 +347,7 @@ export default function PreviewPage() {
                 <div className="flex h-72 sm:h-80">
                   <div className="hidden sm:flex w-44 border-r border-white/10 bg-black/20 flex-col p-3 gap-1">
                     <div className="flex items-center gap-2 px-2 py-2 mb-2">
-                      <ClyiraLogo className="w-6 h-6" />
-                      <span className="text-xs font-bold text-white tracking-wide">CLYIRA.AI</span>
+                      <ClyiraLogo className="h-5 w-auto" style={{ mixBlendMode: "normal", filter: "brightness(0) invert(1)" }} />
                     </div>
                     {["Dashboard", "Documents", "Audit Readiness", "Inspections"].map((item, i) => (
                       <div key={item} className={`px-2 py-1.5 rounded text-xs font-medium ${i === 0 ? "bg-clyira-600/20 text-clyira-400" : "text-gray-600"}`}>
@@ -861,11 +857,8 @@ export default function PreviewPage() {
         <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
             <div className="col-span-2 md:col-span-1">
-              <Link href="/preview" className="flex items-center gap-2.5 mb-4">
-                <ClyiraLogo className="w-8 h-8" />
-                <span className="font-bold text-white tracking-tight">
-                  CLYIRA<span style={{ color: "#7654c9", fontSize: "1.4em", lineHeight: 1 }}>.</span>AI
-                </span>
+              <Link href="/preview" className="inline-block mb-4">
+                <ClyiraLogo className="h-8 w-auto" style={{ mixBlendMode: "normal", filter: "brightness(0) invert(1)" }} />
               </Link>
               <p className="text-sm text-gray-600 leading-relaxed">
                 AI-powered quality intelligence for pharmaceutical, biotech, and medical device companies.

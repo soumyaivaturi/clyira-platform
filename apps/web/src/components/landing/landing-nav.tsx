@@ -84,11 +84,8 @@ export function LandingNav() {
     }`}>
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
 
-        <Link href="/" className="flex items-center gap-2.5">
-          <ClyiraLogo className="w-9 h-9" />
-          <span className="font-extrabold text-xl tracking-tight text-gray-900">
-            CLYIRA<span style={{ color: "#7654c9", fontSize: "1.4em", lineHeight: 1 }}>.</span>AI
-          </span>
+        <Link href="/">
+          <ClyiraLogo className="h-8 w-auto" />
         </Link>
 
         <div className="hidden md:flex items-center gap-7 text-sm font-medium text-gray-500">
