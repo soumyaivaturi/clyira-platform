@@ -53,74 +53,77 @@ class ExtractedBPRFields:
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
+# Separators: colon, equals, pipe (pdfplumber table output uses " | ")
+_SEP = r'\s*(?:[:=]|\s\|\s)\s*'
+
 # Lot / batch number
 _LOT_PATTERNS = [
     (re.compile(
-        r'(?:batch|lot)\s*(?:no|number|#|id|num)\.?\s*[:=]\s*([A-Z0-9][\w\-./]{2,30})',
+        r'(?:batch|lot)\s*(?:no|number|#|id|num)\.?' + _SEP + r'([A-Z0-9][\w\-./]{2,30})',
         re.IGNORECASE), 0.95, "lot/batch label + value"),
     (re.compile(
-        r'(?:lot|batch)\s*[:=]\s*([A-Z0-9][\w\-./]{2,30})',
+        r'(?:lot|batch)' + _SEP + r'([A-Z0-9][\w\-./]{2,30})',
         re.IGNORECASE), 0.85, "lot/batch shorthand"),
     (re.compile(
-        r'(?:^|\n)(?:BPN|BNO|LNO)\s*[:=]\s*([A-Z0-9][\w\-./]{2,30})',
+        r'(?:^|\n)(?:BPN|BNO|LNO)' + _SEP + r'([A-Z0-9][\w\-./]{2,30})',
         re.IGNORECASE | re.MULTILINE), 0.80, "abbreviated lot label"),
 ]
 
 # Product name
 _PRODUCT_PATTERNS = [
     (re.compile(
-        r'(?:product\s*name|drug\s*product|finished\s*product|article)\s*[:=]\s*(.+?)(?:\n|$)',
+        r'(?:product\s*name|drug\s*product|finished\s*product|article)' + _SEP + r'(.+?)(?:\n|$)',
         re.IGNORECASE), 0.90, "product name label"),
     (re.compile(
-        r'(?:^|\n)Product\s*[:=]\s*(.+?)(?:\n|$)',
+        r'(?:^|\n)Product' + _SEP + r'(.+?)(?:\n|$)',
         re.IGNORECASE | re.MULTILINE), 0.85, "product label"),
 ]
 
 # Product / item code
 _CODE_PATTERNS = [
     (re.compile(
-        r'(?:product\s*code|item\s*(?:no|number|code)|material\s*(?:no|number)|part\s*(?:no|number))\s*[:=]\s*([A-Z0-9][\w\-./]{1,30})',
+        r'(?:product\s*code|item\s*(?:no|number|code)|material\s*(?:no|number)|part\s*(?:no|number))' + _SEP + r'([A-Z0-9][\w\-./]{1,30})',
         re.IGNORECASE), 0.88, "product code label"),
 ]
 
 # Dosage form
 _FORM_PATTERNS = [
     (re.compile(
-        r'(?:dosage\s*form|form|presentation|formulation)\s*[:=]\s*(.+?)(?:\n|$)',
+        r'(?:dosage\s*form|form|presentation|formulation)' + _SEP + r'(.+?)(?:\n|$)',
         re.IGNORECASE), 0.85, "dosage form label"),
 ]
 
 # Batch / lot size
 _SIZE_PATTERNS = [
     (re.compile(
-        r'(?:batch\s*size|lot\s*size|theoretical\s*(?:yield|quantity)|batch\s*quantity)\s*[:=]\s*([\d,]+\s*(?:units?|tablets?|capsules?|vials?|mL|L|kg|g|pcs|doses?)?)',
+        r'(?:batch\s*size|lot\s*size|theoretical\s*(?:yield|quantity)|batch\s*quantity)' + _SEP + r'([\d,]+\s*(?:units?|tablets?|capsules?|vials?|mL|L|kg|g|pcs|doses?)?)',
         re.IGNORECASE), 0.88, "batch size label"),
 ]
 
 # Manufacturing site
 _SITE_PATTERNS = [
     (re.compile(
-        r'(?:manufacturing\s*site|mfg\s*site|manufacture[rd]\s*(?:at|by)|site\s*(?:name|code|address))\s*[:=]\s*(.+?)(?:\n|$)',
+        r'(?:manufacturing\s*site|mfg\s*site|manufacture[rd]\s*(?:at|by)|site\s*(?:name|code|address))' + _SEP + r'(.+?)(?:\n|$)',
         re.IGNORECASE), 0.88, "manufacturing site label"),
     (re.compile(
-        r'(?:facility|plant|location)\s*[:=]\s*(.+?)(?:\n|$)',
+        r'(?:facility|plant|location)' + _SEP + r'(.+?)(?:\n|$)',
         re.IGNORECASE), 0.75, "facility label"),
 ]
 
 # Manufacturing date
 _DATE_PATTERNS = [
     (re.compile(
-        r'(?:manufacturing\s*date|mfg\.?\s*date|date\s*of\s*manufacture|manufacture\s*date|start\s*date)\s*[:=]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|[A-Za-z]+\s+\d{1,2},?\s+\d{4})',
+        r'(?:manufacturing\s*date|mfg\.?\s*date|date\s*of\s*manufacture|manufacture\s*date|start\s*date)' + _SEP + r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|[A-Za-z]+\s+\d{1,2},?\s+\d{4})',
         re.IGNORECASE), 0.90, "manufacturing date label"),
     (re.compile(
-        r'(?:mfg|manufactured)\s*[:=]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})',
+        r'(?:mfg|manufactured)' + _SEP + r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})',
         re.IGNORECASE), 0.80, "mfg date shorthand"),
 ]
 
 # Target release date
 _RELEASE_DATE_PATTERNS = [
     (re.compile(
-        r'(?:target\s*release\s*date|release\s*date|exp(?:iry|iration)?\s*date|use\s*by\s*date)\s*[:=]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
+        r'(?:target\s*release\s*date|release\s*date|exp(?:iry|iration)?\s*date|use\s*by\s*date)' + _SEP + r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
         re.IGNORECASE), 0.85, "release/expiry date label"),
 ]
 

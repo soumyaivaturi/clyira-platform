@@ -33,6 +33,40 @@ router = APIRouter()
 
 # ── Document scanning (field extraction for form pre-fill) ───────────────────
 
+_BPR_FIELDS = ["lot_number", "product_name", "product_code", "dosage_form",
+               "batch_size", "manufacturing_site", "manufacturing_date", "target_release_date"]
+
+_BPR_LLM_SYSTEM = (
+    "You are a pharmaceutical document parser. Extract batch record header fields from the text. "
+    "Return ONLY a JSON object with these exact keys (use null if not found): "
+    "lot_number, product_name, product_code, dosage_form, batch_size, "
+    "manufacturing_site, manufacturing_date (YYYY-MM-DD), target_release_date (YYYY-MM-DD). "
+    "No explanation, no markdown — just the JSON object."
+)
+
+
+async def _llm_extract_bpr_fields(text: str) -> dict:
+    """LLM fallback for BPR field extraction when regex finds nothing."""
+    import json
+    from app.core.config import settings
+    from app.engines.llm_engine import _call_groq, _call_gemini
+
+    snippet = text[:4000]  # keep token cost low
+    try:
+        if settings.GROQ_API_KEY:
+            raw = await _call_groq(_BPR_LLM_SYSTEM, f"Extract fields from this batch record:\n\n{snippet}")
+        else:
+            raw = await _call_gemini(_BPR_LLM_SYSTEM, f"Extract fields from this batch record:\n\n{snippet}")
+        # Strip markdown fences if the model wrapped the JSON
+        raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        data = json.loads(raw)
+        return {k: str(v).strip() if v not in (None, "", "null") else None for k, v in data.items()
+                if k in _BPR_FIELDS}
+    except Exception as e:
+        logger.warning(f"LLM BPR extraction failed: {e}")
+        return {}
+
+
 @router.post("/scan-document")
 async def scan_document_for_fields(
     file: UploadFile = File(...),
@@ -40,48 +74,84 @@ async def scan_document_for_fields(
 ):
     """
     Extract BPR header fields from an uploaded file without creating a document record.
-    Returns extracted values + confidence scores for form pre-fill.
+    Extraction chain: IDPEngine (auto-routed) → regex patterns → LLM fallback.
     The file is NOT persisted — call the normal document upload endpoint separately.
     """
     from app.services.bpr_extraction_service import BPRExtractionService
-    from app.services.document_service import DocumentService
+    from app.services.idp_engine import IDPEngine
 
     content = await file.read()
     filename = file.filename or "upload"
     file_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else "unknown"
 
-    # Reuse DocumentService._extract_text_from_bytes (no DB needed, pass a dummy instance)
-    class _FakeSvc:
-        db = None
-    svc = DocumentService.__new__(DocumentService)
+    # Step 1: Extract text via IDPEngine auto-routing (handles native PDFs, scans, DOCX)
+    extracted_text = ""
+    try:
+        idp_output = IDPEngine().extract(content, filename)
+        extracted_text = IDPEngine.full_text(idp_output)
+    except Exception as e:
+        logger.warning(f"IDPEngine failed for scan, falling back to pdfplumber: {e}")
 
-    extracted_text = await svc._extract_text_from_bytes(content, file_type)
+    # Fallback: pdfplumber for plain PDFs if IDPEngine returned nothing
+    if not extracted_text.strip() and file_type == "pdf":
+        try:
+            import io
+            import pdfplumber
+            pages = []
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text() or ""
+                    for table in page.extract_tables():
+                        rows = [" | ".join(str(c or "").strip() for c in row) for row in table if any(c for c in row)]
+                        t += "\n" + "\n".join(rows)
+                    if t.strip():
+                        pages.append(t)
+            extracted_text = "\n".join(pages)
+        except Exception as e:
+            logger.warning(f"pdfplumber fallback failed: {e}")
+
+    # Step 2: Regex extraction
     fields = BPRExtractionService().extract(extracted_text)
+    fields_dict = {
+        "lot_number": fields.lot_number.value if fields.lot_number else None,
+        "product_name": fields.product_name.value if fields.product_name else None,
+        "product_code": fields.product_code.value if fields.product_code else None,
+        "dosage_form": fields.dosage_form.value if fields.dosage_form else None,
+        "batch_size": fields.batch_size.value if fields.batch_size else None,
+        "manufacturing_site": fields.manufacturing_site.value if fields.manufacturing_site else None,
+        "manufacturing_date": fields.manufacturing_date.value if fields.manufacturing_date else None,
+        "target_release_date": fields.target_release_date.value if fields.target_release_date else None,
+    }
+    confidence_dict = {
+        "lot_number": fields.lot_number.confidence if fields.lot_number else None,
+        "product_name": fields.product_name.confidence if fields.product_name else None,
+        "product_code": fields.product_code.confidence if fields.product_code else None,
+        "dosage_form": fields.dosage_form.confidence if fields.dosage_form else None,
+        "batch_size": fields.batch_size.confidence if fields.batch_size else None,
+        "manufacturing_site": fields.manufacturing_site.confidence if fields.manufacturing_site else None,
+        "manufacturing_date": fields.manufacturing_date.confidence if fields.manufacturing_date else None,
+        "target_release_date": fields.target_release_date.confidence if fields.target_release_date else None,
+    }
+
+    # Step 3: LLM fallback — fires when regex found nothing but text exists
+    regex_hit_count = sum(1 for v in fields_dict.values() if v)
+    extraction_method = "regex"
+    if regex_hit_count == 0 and len(extracted_text) > 100:
+        llm_fields = await _llm_extract_bpr_fields(extracted_text)
+        if llm_fields:
+            for k, v in llm_fields.items():
+                if v and fields_dict.get(k) is None:
+                    fields_dict[k] = v
+                    confidence_dict[k] = 0.75  # LLM extractions default to 0.75 confidence
+            extraction_method = "llm"
 
     return {
-        "fields": {
-            "lot_number": fields.lot_number.value if fields.lot_number else None,
-            "product_name": fields.product_name.value if fields.product_name else None,
-            "product_code": fields.product_code.value if fields.product_code else None,
-            "dosage_form": fields.dosage_form.value if fields.dosage_form else None,
-            "batch_size": fields.batch_size.value if fields.batch_size else None,
-            "manufacturing_site": fields.manufacturing_site.value if fields.manufacturing_site else None,
-            "manufacturing_date": fields.manufacturing_date.value if fields.manufacturing_date else None,
-            "target_release_date": fields.target_release_date.value if fields.target_release_date else None,
-        },
-        "confidence": {
-            "lot_number": fields.lot_number.confidence if fields.lot_number else None,
-            "product_name": fields.product_name.confidence if fields.product_name else None,
-            "product_code": fields.product_code.confidence if fields.product_code else None,
-            "dosage_form": fields.dosage_form.confidence if fields.dosage_form else None,
-            "batch_size": fields.batch_size.confidence if fields.batch_size else None,
-            "manufacturing_site": fields.manufacturing_site.confidence if fields.manufacturing_site else None,
-            "manufacturing_date": fields.manufacturing_date.confidence if fields.manufacturing_date else None,
-            "target_release_date": fields.target_release_date.confidence if fields.target_release_date else None,
-        },
+        "fields": fields_dict,
+        "confidence": confidence_dict,
         "filename": filename,
         "file_type": file_type,
         "text_length": len(extracted_text),
+        "extraction_method": extraction_method,
     }
 
 
