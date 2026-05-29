@@ -3,7 +3,9 @@ set -e
 
 # Apply schema migrations directly — avoids alembic bootstrapping complexity
 # on DBs that were created via SQLAlchemy create_all() with no alembic history.
-# All statements use IF NOT EXISTS / IF EXISTS so this is fully idempotent.
+# Each statement runs in its own transaction so failures are non-fatal (e.g.
+# ALTER TABLE on a fresh DB where tables don't exist yet — main.py create_all
+# will handle those tables at startup).
 python3 - <<'PYEOF'
 import asyncio, os, re, sys
 from sqlalchemy import text
@@ -30,7 +32,8 @@ MIGRATIONS = [
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS after_state JSONB",
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS session_id VARCHAR(64)",
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS entry_hash VARCHAR(64)",
-    # Stamp alembic_version so future alembic upgrade head only runs truly new migrations
+    # Stamp alembic_version at current head so alembic upgrade head is a no-op
+    # on databases that were created via SQLAlchemy create_all() (all tables present).
     """
     DO $$
     BEGIN
@@ -39,7 +42,7 @@ MIGRATIONS = [
             CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
         );
         IF NOT EXISTS (SELECT 1 FROM alembic_version) THEN
-            INSERT INTO alembic_version (version_num) VALUES ('20260525_0001');
+            INSERT INTO alembic_version (version_num) VALUES ('20260528_0001');
         END IF;
     END $$
     """,
@@ -47,9 +50,14 @@ MIGRATIONS = [
 
 async def main():
     engine = create_async_engine(url)
-    async with engine.begin() as conn:
-        for stmt in MIGRATIONS:
-            await conn.execute(text(stmt))
+    # Each statement in its own transaction — a failed ALTER (e.g. table doesn't
+    # exist yet on a fresh DB) is logged as a warning but does not abort startup.
+    for stmt in MIGRATIONS:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(stmt))
+        except Exception as e:
+            print(f"  Warning (non-fatal): {e!r}", flush=True)
     await engine.dispose()
     print("Schema migration complete")
 

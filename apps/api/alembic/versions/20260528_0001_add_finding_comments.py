@@ -1,7 +1,7 @@
 """add finding_comments table
 
 Revision ID: 20260528_0001
-Revises: 20260527_0001
+Revises: 20260527_0003
 Create Date: 2026-05-28
 """
 from alembic import op
@@ -14,23 +14,28 @@ depends_on = None
 
 
 def upgrade():
-    op.create_table(
-        "finding_comments",
-        sa.Column("id", sa.String(), nullable=False),
-        sa.Column("finding_id", sa.String(), sa.ForeignKey("findings.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("assessment_id", sa.String(), sa.ForeignKey("assessments.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("user_name", sa.String(200), nullable=True),
-        sa.Column("user_role", sa.String(50), nullable=True),
-        sa.Column("text", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("ix_finding_comments_finding_id", "finding_comments", ["finding_id"])
-    op.create_index("ix_finding_comments_assessment_id", "finding_comments", ["assessment_id"])
+    # IF NOT EXISTS — safe when create_all() in main.py pre-creates the table before this runs
+    op.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS finding_comments (
+            id           VARCHAR NOT NULL PRIMARY KEY,
+            finding_id   VARCHAR NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+            assessment_id VARCHAR NOT NULL REFERENCES assessments(id) ON DELETE CASCADE,
+            user_id      VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            user_name    VARCHAR(200),
+            user_role    VARCHAR(50),
+            text         TEXT NOT NULL,
+            created_at   TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """))
+    op.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_finding_comments_finding_id ON finding_comments(finding_id)"
+    ))
+    op.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_finding_comments_assessment_id ON finding_comments(assessment_id)"
+    ))
 
 
 def downgrade():
-    op.drop_index("ix_finding_comments_assessment_id", "finding_comments")
-    op.drop_index("ix_finding_comments_finding_id", "finding_comments")
-    op.drop_table("finding_comments")
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_finding_comments_assessment_id"))
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_finding_comments_finding_id"))
+    op.execute(sa.text("DROP TABLE IF EXISTS finding_comments"))
