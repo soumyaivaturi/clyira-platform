@@ -159,6 +159,14 @@ function sectionSeverity(section: Section): string {
 
 // ── Finding Detail Modal ──────────────────────────────────────────────────────
 
+interface FindingCommentEntry {
+  id: string;
+  user_name: string;
+  user_role: string;
+  text: string;
+  created_at: string;
+}
+
 function FindingDetailModal({
   finding,
   assessmentId,
@@ -172,50 +180,88 @@ function FindingDetailModal({
 }) {
   const cfg = SEV_CONFIG[finding.severity as keyof typeof SEV_CONFIG] ?? SEV_CONFIG.info;
   const Icon = cfg.icon;
-  const [mode, setMode] = useState<"accept" | "deny" | "comment" | null>(null);
-  const [text, setText] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState<string | null>(null);
 
+  // Review actions state
+  const [actionMode, setActionMode] = useState<"accept" | "deny" | null>(null);
+  const [disputeText, setDisputeText] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionDone, setActionDone] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
+
+  // Comment thread state
+  const [comments, setComments] = useState<FindingCommentEntry[]>([]);
+  const [commentText, setCommentText] = useState("");
+  const [commentLoading, setCommentLoading] = useState(false);
+  const [commentError, setCommentError] = useState("");
+  const commentsEndRef = useRef<HTMLDivElement>(null);
+
+  // Load + poll comments
+  const loadComments = useCallback(async () => {
+    if (!assessmentId) return;
+    try {
+      const res = await assessmentsApi.getComments(assessmentId, finding.id);
+      setComments(res.data.comments ?? []);
+    } catch { /* non-critical */ }
+  }, [assessmentId, finding.id]);
+
+  useEffect(() => {
+    loadComments();
+    const interval = setInterval(loadComments, 5000);
+    return () => clearInterval(interval);
+  }, [loadComments]);
+
+  // Scroll to bottom on new comments
+  useEffect(() => {
+    commentsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [comments.length]);
+
+  // Escape to close
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const submit = async () => {
-    if (!assessmentId) return;
-    setLoading(true);
+  const submitAction = async () => {
+    if (!assessmentId || !actionMode) return;
+    setActionLoading(true); setActionError("");
     try {
-      const status = mode === "accept" ? "resolved" : mode === "deny" ? "disputed" : "acknowledged";
-      const responseText = mode === "comment" ? text : "";
-      const disputeReason = mode === "deny" ? text : "";
-      await assessmentsApi.actionFinding(assessmentId, finding.id, status, responseText, disputeReason);
-      setDone(status);
+      const status = actionMode === "accept" ? "resolved" : "disputed";
+      const disputeReason = actionMode === "deny" ? disputeText : "";
+      await assessmentsApi.actionFinding(assessmentId, finding.id, status, "", disputeReason);
+      setActionDone(status);
       onActionDone?.(finding.id, status);
-    } catch { /* non-critical */ }
-    finally { setLoading(false); }
+    } catch (e: any) {
+      setActionError(e?.response?.data?.detail ?? "Action failed. Please try again.");
+    } finally { setActionLoading(false); }
   };
 
-  const needsText = mode === "deny" || mode === "comment";
-  const canSubmit = mode === "accept" || (needsText && text.trim().length > 0);
+  const sendComment = async () => {
+    if (!assessmentId || !commentText.trim()) return;
+    setCommentLoading(true); setCommentError("");
+    try {
+      const res = await assessmentsApi.addComment(assessmentId, finding.id, commentText.trim());
+      setComments((prev) => [...prev, res.data]);
+      setCommentText("");
+    } catch (e: any) {
+      setCommentError(e?.response?.data?.detail ?? "Failed to send comment.");
+    } finally { setCommentLoading(false); }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="bg-card border rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden"
+        className="bg-card border rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className={cn("flex items-start gap-3 px-5 py-4 border-b border-l-4", cfg.border, cfg.bg)}>
+        <div className={cn("flex items-start gap-3 px-5 py-3.5 border-b border-l-4 shrink-0", cfg.border, cfg.bg)}>
           <Icon className={cn("w-4 h-4 mt-0.5 shrink-0", cfg.iconColor)} />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap mb-1">
+            <div className="flex items-center gap-2 flex-wrap mb-0.5">
               <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide", cfg.badge)}>{finding.severity}</span>
               <span className="text-[10px] font-mono text-muted-foreground">{finding.level}</span>
-              {finding.enforcement_match && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">⚡ Enforcement</span>
-              )}
+              {finding.enforcement_match && <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">⚡ Enforcement</span>}
               {finding.status && finding.status !== "open" && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground capitalize font-medium">{finding.status}</span>
               )}
@@ -227,142 +273,172 @@ function FindingDetailModal({
           </button>
         </div>
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="flex flex-col md:flex-row min-h-0">
-            {/* Finding details */}
-            <div className="flex-1 px-5 py-4 space-y-4 overflow-y-auto">
-              <div>
-                <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">Description</p>
-                <p className="text-sm leading-relaxed">{finding.description}</p>
-              </div>
+        {/* Body — 3 columns */}
+        <div className="flex-1 flex overflow-hidden min-h-0">
 
-              {finding.evidence && (
-                <div>
-                  <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">Evidence</p>
-                  <p className="text-sm italic text-muted-foreground leading-relaxed border-l-2 border-muted pl-3">"{finding.evidence}"</p>
-                </div>
-              )}
-
-              {(finding.location || finding.regulatory_citation) && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {finding.location && (
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">Location</p>
-                      <p className="text-xs bg-muted rounded px-2 py-1.5">{finding.location}</p>
-                    </div>
-                  )}
-                  {finding.regulatory_citation && (
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">
-                        Regulatory Citation{finding.citation_type ? ` · ${finding.citation_type}` : ""}
-                      </p>
-                      <p className="text-xs font-mono bg-clyira-50 text-clyira-800 border border-clyira-100 rounded px-2 py-1.5 leading-relaxed flex items-center gap-1.5">
-                        <BookOpen className="w-3 h-3 shrink-0" />
-                        {finding.regulatory_citation}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {finding.enforcement_match && finding.enforcement_context && (
-                <div className="rounded-lg bg-purple-50 border border-purple-200 p-3">
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <Zap className="w-3.5 h-3.5 text-purple-600" />
-                    <p className="text-[10px] font-semibold text-purple-700 uppercase tracking-wide">Enforcement Intelligence</p>
-                  </div>
-                  <p className="text-xs text-purple-800 leading-relaxed">{finding.enforcement_context}</p>
-                </div>
-              )}
-
-              {finding.suggestion_draft && (
-                <div className="rounded-lg bg-green-50 border border-green-200 p-3">
-                  <p className="text-[10px] font-semibold text-green-700 uppercase tracking-wide mb-1.5">Suggested Fix</p>
-                  <p className="text-sm text-green-900 leading-relaxed whitespace-pre-wrap">{finding.suggestion_draft}</p>
-                </div>
-              )}
+          {/* Finding detail */}
+          <div className="flex-1 px-5 py-4 space-y-4 overflow-y-auto border-r">
+            <div>
+              <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">Description</p>
+              <p className="text-sm leading-relaxed">{finding.description}</p>
             </div>
-
-            {/* Actions panel */}
-            {assessmentId && (
-              <div className="md:w-56 shrink-0 border-t md:border-t-0 md:border-l px-4 py-4 space-y-3 bg-muted/20">
-                <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground">Review Actions</p>
-
-                {done ? (
-                  <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-center">
-                    <CheckCircle2 className="w-5 h-5 text-green-600 mx-auto mb-1" />
-                    <p className="text-xs font-semibold text-green-800 capitalize">{done}</p>
-                    <p className="text-[10px] text-green-700 mt-0.5">Action recorded</p>
+            {finding.evidence && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">Evidence</p>
+                <p className="text-sm italic text-muted-foreground leading-relaxed border-l-2 border-muted pl-3">"{finding.evidence}"</p>
+              </div>
+            )}
+            {(finding.location || finding.regulatory_citation) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {finding.location && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">Location</p>
+                    <p className="text-xs bg-muted rounded px-2 py-1.5">{finding.location}</p>
                   </div>
-                ) : (
-                  <>
-                    {/* Accept */}
-                    <button
-                      onClick={() => { setMode("accept"); }}
-                      className={cn(
-                        "w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-all",
-                        mode === "accept"
-                          ? "bg-green-600 text-white border-green-600"
-                          : "border-green-300 text-green-700 hover:bg-green-50"
-                      )}
-                    >
-                      <Check className="w-3.5 h-3.5" /> Accept Finding
-                    </button>
-
-                    {/* Deny */}
-                    <button
-                      onClick={() => setMode(mode === "deny" ? null : "deny")}
-                      className={cn(
-                        "w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-all",
-                        mode === "deny"
-                          ? "bg-red-600 text-white border-red-600"
-                          : "border-red-300 text-red-700 hover:bg-red-50"
-                      )}
-                    >
-                      <Ban className="w-3.5 h-3.5" /> Dispute Finding
-                    </button>
-
-                    {/* Comment */}
-                    <button
-                      onClick={() => setMode(mode === "comment" ? null : "comment")}
-                      className={cn(
-                        "w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-all",
-                        mode === "comment"
-                          ? "bg-blue-600 text-white border-blue-600"
-                          : "border-blue-300 text-blue-700 hover:bg-blue-50"
-                      )}
-                    >
-                      <MessageSquare className="w-3.5 h-3.5" /> Add Comment
-                    </button>
-
-                    {/* Text input for deny/comment */}
-                    {needsText && (
-                      <textarea
-                        autoFocus
-                        value={text}
-                        onChange={(e) => setText(e.target.value)}
-                        placeholder={mode === "deny" ? "Reason for dispute…" : "Your comment…"}
-                        className="w-full text-xs border rounded-lg px-2.5 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[72px] resize-none"
-                      />
-                    )}
-
-                    {/* Submit */}
-                    {mode && (
-                      <button
-                        onClick={submit}
-                        disabled={!canSubmit || loading}
-                        className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
-                      >
-                        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                        {mode === "accept" ? "Confirm Accept" : mode === "deny" ? "Submit Dispute" : "Send Comment"}
-                      </button>
-                    )}
-                  </>
+                )}
+                {finding.regulatory_citation && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">
+                      Citation{finding.citation_type ? ` · ${finding.citation_type}` : ""}
+                    </p>
+                    <p className="text-xs font-mono bg-clyira-50 text-clyira-800 border border-clyira-100 rounded px-2 py-1.5 flex items-center gap-1.5">
+                      <BookOpen className="w-3 h-3 shrink-0" />{finding.regulatory_citation}
+                    </p>
+                  </div>
                 )}
               </div>
             )}
+            {finding.enforcement_context && (
+              <div className="rounded-lg bg-purple-50 border border-purple-200 p-3">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <Zap className="w-3.5 h-3.5 text-purple-600" />
+                  <p className="text-[10px] font-semibold text-purple-700 uppercase tracking-wide">Enforcement Intelligence</p>
+                </div>
+                <p className="text-xs text-purple-800 leading-relaxed">{finding.enforcement_context}</p>
+              </div>
+            )}
+            {finding.suggestion_draft && (
+              <div className="rounded-lg bg-green-50 border border-green-200 p-3">
+                <p className="text-[10px] font-semibold text-green-700 uppercase tracking-wide mb-1.5">Suggested Fix</p>
+                <p className="text-sm text-green-900 leading-relaxed whitespace-pre-wrap">{finding.suggestion_draft}</p>
+              </div>
+            )}
           </div>
+
+          {/* Comment thread */}
+          <div className="w-72 shrink-0 flex flex-col border-r bg-muted/10">
+            <div className="px-3 py-2.5 border-b">
+              <p className="text-xs font-semibold flex items-center gap-1.5">
+                <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" />
+                Comments
+                {comments.length > 0 && (
+                  <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-medium">{comments.length}</span>
+                )}
+              </p>
+            </div>
+
+            {/* Thread */}
+            <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+              {comments.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground text-center py-6">No comments yet. Be the first to comment.</p>
+              ) : (
+                comments.map((c) => (
+                  <div key={c.id} className="space-y-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                        <span className="text-[9px] font-bold text-primary">{(c.user_name || "?")[0].toUpperCase()}</span>
+                      </div>
+                      <span className="text-[10px] font-semibold">{c.user_name || "Unknown"}</span>
+                      <span className="text-[9px] text-muted-foreground capitalize">{c.user_role}</span>
+                      <span className="text-[9px] text-muted-foreground ml-auto">{new Date(c.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                    </div>
+                    <div className="ml-6.5 bg-card border rounded-lg px-2.5 py-2">
+                      <p className="text-xs leading-relaxed">{c.text}</p>
+                    </div>
+                  </div>
+                ))
+              )}
+              <div ref={commentsEndRef} />
+            </div>
+
+            {/* Comment input */}
+            <div className="px-3 py-2.5 border-t space-y-2">
+              {commentError && <p className="text-[10px] text-destructive">{commentError}</p>}
+              <div className="flex gap-1.5">
+                <textarea
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendComment(); } }}
+                  placeholder="Add a comment… (Enter to send)"
+                  rows={2}
+                  className="flex-1 text-xs border rounded-lg px-2.5 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+                />
+                <button
+                  onClick={sendComment}
+                  disabled={!commentText.trim() || commentLoading}
+                  className="px-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors shrink-0"
+                >
+                  {commentLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Review actions */}
+          {assessmentId && (
+            <div className="w-48 shrink-0 px-4 py-4 space-y-3 bg-muted/20">
+              <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground">Review Actions</p>
+
+              {actionDone ? (
+                <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-center">
+                  <CheckCircle2 className="w-5 h-5 text-green-600 mx-auto mb-1" />
+                  <p className="text-xs font-semibold text-green-800 capitalize">{actionDone}</p>
+                  <p className="text-[10px] text-green-700 mt-0.5">Recorded</p>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setActionMode(actionMode === "accept" ? null : "accept")}
+                    className={cn("w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium transition-all",
+                      actionMode === "accept" ? "bg-green-600 text-white border-green-600" : "border-green-300 text-green-700 hover:bg-green-50")}
+                  >
+                    <Check className="w-3.5 h-3.5" /> Accept Finding
+                  </button>
+
+                  <button
+                    onClick={() => setActionMode(actionMode === "deny" ? null : "deny")}
+                    className={cn("w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium transition-all",
+                      actionMode === "deny" ? "bg-red-600 text-white border-red-600" : "border-red-300 text-red-700 hover:bg-red-50")}
+                  >
+                    <Ban className="w-3.5 h-3.5" /> Dispute
+                  </button>
+
+                  {actionMode === "deny" && (
+                    <textarea
+                      autoFocus
+                      value={disputeText}
+                      onChange={(e) => setDisputeText(e.target.value)}
+                      placeholder="Reason for dispute…"
+                      className="w-full text-xs border rounded-lg px-2.5 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[64px] resize-none"
+                    />
+                  )}
+
+                  {actionError && <p className="text-[10px] text-destructive">{actionError}</p>}
+
+                  {actionMode && (
+                    <button
+                      onClick={submitAction}
+                      disabled={actionLoading || (actionMode === "deny" && !disputeText.trim())}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50"
+                    >
+                      {actionLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      {actionMode === "accept" ? "Confirm Accept" : "Submit Dispute"}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -604,7 +680,7 @@ export function DocumentReviewPane({ documentText, fileType, findings, documentI
           finding={modalFinding}
           assessmentId={assessmentId}
           onClose={() => setModalFinding(null)}
-          onActionDone={() => setModalFinding(null)}
+          onActionDone={(findingId, status) => { /* bubble status up if needed */ }}
         />
       )}
 

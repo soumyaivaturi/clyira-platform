@@ -102,6 +102,10 @@ export const assessmentsApi = {
       response_text: response_text || "",
       dispute_reason: dispute_reason || "",
     }),
+  getComments: (assessmentId: string, findingId: string) =>
+    api.get(`/assessments/${assessmentId}/findings/${findingId}/comments`),
+  addComment: (assessmentId: string, findingId: string, text: string) =>
+    api.post(`/assessments/${assessmentId}/findings/${findingId}/comments`, { text }),
   getLiveScore: (id: string) => api.get(`/assessments/${id}/live-score`),
   getReport: (id: string) => api.get(`/assessments/${id}/report`),
   recent: (limit = 8) => api.get("/assessments/recent", { params: { limit } }),

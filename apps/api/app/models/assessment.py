@@ -1,7 +1,8 @@
 """Assessment and Finding models"""
-from sqlalchemy import Column, String, Text, Integer, Float, ForeignKey, Boolean, event
+from sqlalchemy import Column, String, Text, Integer, Float, ForeignKey, Boolean, event, DateTime
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
+from datetime import datetime
 
 from app.models.base import Base, TimestampMixin, generate_uuid
 
@@ -111,6 +112,23 @@ class Finding(Base, TimestampMixin):
     # Anti-hallucination gate
     validated = Column(Boolean, default=False)  # Passed verification check
     confidence_score = Column(Float)  # Model confidence in finding
+
+    comments = relationship("FindingComment", back_populates="finding", lazy="dynamic", cascade="all, delete-orphan")
+
+
+class FindingComment(Base):
+    __tablename__ = "finding_comments"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    finding_id = Column(String, ForeignKey("findings.id"), nullable=False)
+    assessment_id = Column(String, ForeignKey("assessments.id"), nullable=False)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    user_name = Column(String(200))
+    user_role = Column(String(50))
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    finding = relationship("Finding", back_populates="comments")
 
     # Phase 1 MBR / 4-state verification fields
     verification_state = Column(String(10), nullable=True)  # green, red, blue, gray

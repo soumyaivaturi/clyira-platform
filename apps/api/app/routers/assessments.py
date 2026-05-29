@@ -418,6 +418,78 @@ async def action_finding(
     }
 
 
+@router.post("/{assessment_id}/findings/{finding_id}/comments", status_code=201)
+async def add_finding_comment(
+    assessment_id: str,
+    finding_id: str,
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.assessment import Finding, FindingComment
+    finding = await db.get(Finding, finding_id)
+    if not finding or finding.assessment_id != assessment_id:
+        raise HTTPException(status_code=404, detail="Finding not found")
+
+    text = (payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="Comment text required")
+
+    comment = FindingComment(
+        finding_id=finding_id,
+        assessment_id=assessment_id,
+        user_id=current_user.id,
+        user_name=current_user.full_name,
+        user_role=current_user.role,
+        text=text,
+    )
+    db.add(comment)
+    await db.commit()
+    await db.refresh(comment)
+    return {
+        "id": comment.id,
+        "finding_id": comment.finding_id,
+        "user_name": comment.user_name,
+        "user_role": comment.user_role,
+        "text": comment.text,
+        "created_at": comment.created_at.isoformat(),
+    }
+
+
+@router.get("/{assessment_id}/findings/{finding_id}/comments")
+async def get_finding_comments(
+    assessment_id: str,
+    finding_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.assessment import Finding, FindingComment
+    from sqlalchemy import select, asc
+    finding = await db.get(Finding, finding_id)
+    if not finding or finding.assessment_id != assessment_id:
+        raise HTTPException(status_code=404, detail="Finding not found")
+
+    result = await db.execute(
+        select(FindingComment)
+        .where(FindingComment.finding_id == finding_id)
+        .order_by(asc(FindingComment.created_at))
+    )
+    comments = result.scalars().all()
+    return {
+        "finding_id": finding_id,
+        "comments": [
+            {
+                "id": c.id,
+                "user_name": c.user_name,
+                "user_role": c.user_role,
+                "text": c.text,
+                "created_at": c.created_at.isoformat(),
+            }
+            for c in comments
+        ],
+    }
+
+
 @router.get("/{assessment_id}/report")
 async def get_report(
     assessment_id: str,
