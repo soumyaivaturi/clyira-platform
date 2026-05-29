@@ -7,7 +7,7 @@ import {
   Upload, Sparkles, CheckCircle2, AlertCircle, BookOpen, X,
 } from "lucide-react";
 import Link from "next/link";
-import { batchDossiersApi, productProfilesApi } from "@/lib/api";
+import { batchDossiersApi, productProfilesApi, documentsApi } from "@/lib/api";
 
 // ── Options ───────────────────────────────────────────────────────────────────
 
@@ -141,7 +141,10 @@ export default function NewDossierPage() {
   const [selectedProfile, setSelectedProfile] = useState<string>("");
   const [profileApplied, setProfileApplied] = useState(false);
 
+  const [scannedFile, setScannedFile] = useState<File | null>(null);
+
   const [loading, setLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -194,6 +197,7 @@ export default function NewDossierPage() {
         }
       }
 
+      setScannedFile(file);
       setForm((prev) => ({ ...prev, ...updates }));
       setScannedFields(newScanned);
       setScanDone(true);
@@ -240,6 +244,7 @@ export default function NewDossierPage() {
     if (!form.product_name.trim()) { setError("Product name is required"); return; }
 
     setLoading(true);
+    setLoadingStep("Creating dossier…");
     setError("");
     try {
       const res = await batchDossiersApi.create({
@@ -251,13 +256,34 @@ export default function NewDossierPage() {
         manufacturing_date: form.manufacturing_date || undefined,
         target_release_date: form.target_release_date || undefined,
       });
-      router.push(`/batch-dossiers/${res.data.id}`);
+      const dossierId: string = res.data.id;
+
+      // Auto-attach the scanned file as the primary BPR document
+      if (scannedFile) {
+        try {
+          setLoadingStep("Uploading batch record…");
+          const fd = new FormData();
+          fd.append("file", scannedFile);
+          fd.append("title", `BPR — ${form.lot_number}`);
+          fd.append("document_category", "batch_record");
+          const docRes = await documentsApi.upload(fd);
+          const docId: string = docRes.data.id;
+
+          setLoadingStep("Linking to dossier…");
+          await batchDossiersApi.addDocument(dossierId, { document_id: docId, role: "primary_bpr" });
+        } catch {
+          // Non-fatal — dossier exists, user can attach manually
+        }
+      }
+
+      router.push(`/batch-dossiers/${dossierId}`);
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: unknown } } };
       const detail = e?.response?.data?.detail;
       setError(typeof detail === "string" ? detail : "Failed to create dossier");
     } finally {
       setLoading(false);
+      setLoadingStep("");
     }
   };
 
@@ -569,7 +595,7 @@ export default function NewDossierPage() {
             className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground py-2.5 rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 transition-colors"
           >
             {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-            Create Dossier
+            {loading ? loadingStep || "Creating…" : "Create Dossier"}
             {!loading && <ChevronRight className="w-4 h-4" />}
           </button>
         </div>

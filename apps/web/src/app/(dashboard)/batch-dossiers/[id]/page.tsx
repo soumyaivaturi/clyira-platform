@@ -254,8 +254,17 @@ function FindingReviewItem({
 function AddDocumentModal({ dossierId, onClose, onAdded }: {
   dossierId: string; onClose: () => void; onAdded: () => void;
 }) {
+  const [mode, setMode] = useState<"upload" | "library">("upload");
+
+  // Library mode
   const [docs, setDocs] = useState<DocOption[]>([]);
   const [selectedDoc, setSelectedDoc] = useState("");
+
+  // Upload mode
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadStep, setUploadStep] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [role, setRole] = useState("primary_bpr");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
@@ -266,15 +275,31 @@ function AddDocumentModal({ dossierId, onClose, onAdded }: {
   }, []);
 
   const handleAdd = async () => {
-    if (!selectedDoc) { setError("Select a document"); return; }
     setLoading(true);
+    setError("");
     try {
-      await batchDossiersApi.addDocument(dossierId, { document_id: selectedDoc, role, notes: notes || undefined });
+      let docId = selectedDoc;
+
+      if (mode === "upload") {
+        if (!uploadFile) { setError("Select a file to upload"); setLoading(false); return; }
+        setUploadStep("Uploading file…");
+        const fd = new FormData();
+        fd.append("file", uploadFile);
+        fd.append("title", uploadFile.name.replace(/\.[^.]+$/, ""));
+        fd.append("document_category", "batch_record");
+        const docRes = await documentsApi.upload(fd);
+        docId = docRes.data.id;
+        setUploadStep("Linking to dossier…");
+      } else {
+        if (!docId) { setError("Select a document"); setLoading(false); return; }
+      }
+
+      await batchDossiersApi.addDocument(dossierId, { document_id: docId, role, notes: notes || undefined });
       onAdded();
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string } } };
       setError(e?.response?.data?.detail ?? "Failed to add document");
-    } finally { setLoading(false); }
+    } finally { setLoading(false); setUploadStep(""); }
   };
 
   return (
@@ -284,15 +309,52 @@ function AddDocumentModal({ dossierId, onClose, onAdded }: {
           <h3 className="text-base font-semibold">Add Document to Dossier</h3>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-accent text-muted-foreground"><X className="w-4 h-4" /></button>
         </div>
+
+        {/* Mode toggle */}
+        <div className="flex border rounded-lg overflow-hidden mb-4">
+          {(["upload", "library"] as const).map(m => (
+            <button key={m} onClick={() => setMode(m)}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}>
+              {m === "upload" ? "Upload File" : "Select from Library"}
+            </button>
+          ))}
+        </div>
+
         <div className="space-y-3">
-          <div>
-            <label className="text-sm font-medium block mb-1.5">Document</label>
-            <select className="w-full px-3 py-2.5 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-              value={selectedDoc} onChange={e => setSelectedDoc(e.target.value)}>
-              <option value="">Select a document…</option>
-              {docs.map(d => <option key={d.id} value={d.id}>{d.title} ({d.document_category})</option>)}
-            </select>
-          </div>
+          {mode === "upload" ? (
+            <div>
+              <input ref={fileInputRef} type="file" accept=".pdf,.docx,.doc,.xlsx,.xls" className="hidden"
+                onChange={e => setUploadFile(e.target.files?.[0] ?? null)} />
+              <button type="button" onClick={() => fileInputRef.current?.click()}
+                className={`w-full border-2 border-dashed rounded-lg px-4 py-6 text-center transition-colors ${uploadFile ? "border-primary/40 bg-primary/5" : "border-border hover:border-muted-foreground/40"}`}>
+                {uploadFile ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <FileText className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-medium truncate max-w-[220px]">{uploadFile.name}</span>
+                    <button type="button" onClick={e => { e.stopPropagation(); setUploadFile(null); }}
+                      className="p-0.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-foreground">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <Plus className="w-5 h-5 mx-auto mb-1 text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">Click to upload PDF, DOCX, or Excel</p>
+                  </div>
+                )}
+              </button>
+            </div>
+          ) : (
+            <div>
+              <label className="text-sm font-medium block mb-1.5">Document</label>
+              <select className="w-full px-3 py-2.5 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                value={selectedDoc} onChange={e => setSelectedDoc(e.target.value)}>
+                <option value="">Select a document…</option>
+                {docs.map(d => <option key={d.id} value={d.id}>{d.title} ({d.document_category})</option>)}
+              </select>
+            </div>
+          )}
+
           <div>
             <label className="text-sm font-medium block mb-1.5">Role in dossier</label>
             <select className="w-full px-3 py-2.5 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -311,7 +373,8 @@ function AddDocumentModal({ dossierId, onClose, onAdded }: {
           <button onClick={onClose} className="flex-1 py-2 border rounded-lg text-sm hover:bg-accent">Cancel</button>
           <button onClick={handleAdd} disabled={loading}
             className="flex-1 flex items-center justify-center gap-2 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
-            {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Add Document
+            {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            {loading ? (uploadStep || "Adding…") : "Add Document"}
           </button>
         </div>
       </div>
