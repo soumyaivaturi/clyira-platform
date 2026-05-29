@@ -2377,8 +2377,7 @@ class RuleEngine:
 
     def _check_l2_version_control(self, ctx: AssessmentContext) -> list[FindingResult]:
         """ATM must have version control block (delegates to universal check)."""
-        result = self._check_l2_version_control_block(ctx)
-        return [result] if result else []
+        return self._check_l2_version_control_block(ctx)
 
     def _check_l4_alcoa_recording_instructions(self, ctx: AssessmentContext) -> list[FindingResult]:
         """Method must specify data recording instructions — delegates to universal rule."""
