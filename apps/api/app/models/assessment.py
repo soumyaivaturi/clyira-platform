@@ -65,7 +65,7 @@ class Assessment(Base, TimestampMixin):
     # Relationships
     document = relationship("Document", back_populates="assessments")
     company = relationship("Company", back_populates="assessments")
-    findings = relationship("Finding", back_populates="assessment")
+    findings = relationship("Finding")
 
 
 class Finding(Base, TimestampMixin):
@@ -137,8 +137,6 @@ class FindingComment(Base):
     extraction_confidence = Column(Float, nullable=True)    # IDP extraction confidence (0-1)
     explanation_trace = Column(JSONB, nullable=True)        # Structured reasoning trace
 
-    # Relationships
-    assessment = relationship("Assessment", back_populates="findings")
 
 
 @event.listens_for(Assessment, "before_update")
