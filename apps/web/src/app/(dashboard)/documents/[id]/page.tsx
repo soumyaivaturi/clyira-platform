@@ -9,14 +9,18 @@ import {
   Upload, Plus, X, FileUp, CheckSquare, Square, ShieldCheck,
   Download, MessageCircle, Send, History, Lock, CheckCheck,
   ThumbsUp, Clock, Flag, PenLine, LayoutList, FileSearch,
+  Eye, Settings2, AlertCircle, Minus, Link2, Edit3,
+  Package, ClipboardList, FlaskConical, BarChart2,
 } from "lucide-react";
 import { documentsApi, assessmentsApi, assistantApi, documentHistoryApi, signaturesApi } from "@/lib/api";
 import { DocumentReviewPane } from "@/components/shared/document-review-pane";
 import { SignatureModal } from "@/components/shared/signature-modal";
-import { ScoreRing, ScoreBadge } from "@/components/shared/score-display";
+import { ScoreRing } from "@/components/shared/score-display";
 import { SeverityBadge, LevelBadge, DocStatusBadge, FindingStatusBadge } from "@/components/shared/badges";
 import { formatDate, formatFileSize, getSeverityConfig, timeAgo } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 interface Document {
   id: string; title: string; document_number?: string; version?: string;
@@ -59,6 +63,8 @@ interface Signature {
   document_version?: string; entry_hash?: string;
 }
 
+type Tab = "overview" | "references" | "regulatory" | "findings" | "activity";
+
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
 
 const LEVEL_PROGRESS_LABELS: Record<string, string> = {
@@ -67,6 +73,35 @@ const LEVEL_PROGRESS_LABELS: Record<string, string> = {
   L7: "Lifecycle Compliance", L8: "Regulatory Intelligence", L9: "Enforcement",
   L10: "Longitudinal", L11: "Inspection Readiness",
   validating: "Validating findings", scoring: "Calculating score",
+};
+
+// ── DTAP Intelligence Maps ─────────────────────────────────────────────────────
+
+const DTAP_LABEL: Record<string, string> = {
+  atm: "Analytical Test Method",
+  sop: "Standard Operating Procedure",
+  capa: "CAPA",
+  deviation: "Deviation Report",
+  lir: "Lab Investigation Report",
+  validation: "Validation Protocol",
+};
+
+const DTAP_CONTEXT: Record<string, string> = {
+  atm: "QC testing / documentation",
+  sop: "Process control / operations",
+  capa: "Quality event / corrective action",
+  deviation: "Deviation management",
+  lir: "Lab investigation / OOS",
+  validation: "Process / method validation",
+};
+
+const DTAP_REVIEW_ITEMS: Record<string, string[]> = {
+  atm: ["Acceptance criteria", "Sample handling", "Reagents / materials", "Instrument qualification", "Calculations", "Data integrity", "Reference standards", "System suitability"],
+  sop: ["Procedure steps", "Responsibilities", "References", "Revision history", "Approval chain", "Training requirements"],
+  capa: ["Root cause analysis", "Corrective actions", "Preventive actions", "Effectiveness check", "Timeline", "Risk assessment"],
+  deviation: ["Event description", "Impact assessment", "Root cause", "Disposition", "CAPA linkage", "Recurrence prevention"],
+  lir: ["OOS investigation", "Phase I / Phase II", "Assignable cause", "Disposition", "Method validation"],
+  validation: ["Protocol design", "Acceptance criteria", "Statistical analysis", "Risk assessment", "Change control"],
 };
 
 // ── Regulatory Framework Data ──────────────────────────────────────────────────
@@ -126,8 +161,6 @@ function FrameworkSelectorPanel({
   selected: string[];
   onChange: (codes: string[]) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-
   const toggle = (code: string) =>
     onChange(selected.includes(code) ? selected.filter((c) => c !== code) : [...selected, code]);
 
@@ -141,79 +174,69 @@ function FrameworkSelectorPanel({
   };
 
   return (
-    <div className="border rounded-xl overflow-hidden bg-card">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/30 transition-colors text-left"
-      >
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Regulatory Frameworks</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-            {selected.length} / {ALL_FRAMEWORK_CODES.length} selected
-          </span>
-        </div>
-        <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
-      </button>
-
-      {expanded && (
-        <div className="border-t px-5 py-4 space-y-4">
-          <p className="text-xs text-muted-foreground">
-            Select which regulatory frameworks Clyira should assess this document against. All are selected by default.
-          </p>
-          {FRAMEWORK_GROUPS.map((group) => {
-            const groupCodes = group.items.map((i) => i.code);
-            const allGroupSelected = groupCodes.every((c) => selected.includes(c));
-            const someGroupSelected = groupCodes.some((c) => selected.includes(c));
-            return (
-              <div key={group.group}>
-                <button
-                  type="button"
-                  onClick={() => toggleGroup(groupCodes)}
-                  className="flex items-center gap-2 mb-2"
-                >
-                  {allGroupSelected ? (
-                    <CheckSquare className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                  ) : someGroupSelected ? (
-                    <div className="w-3.5 h-3.5 border-2 border-primary rounded-sm flex-shrink-0 bg-primary/20" />
-                  ) : (
-                    <Square className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                  )}
-                  <span className="text-xs font-semibold">{group.group}</span>
-                </button>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 pl-5">
-                  {group.items.map((item) => (
-                    <label key={item.code} className="flex items-start gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={selected.includes(item.code)}
-                        onChange={() => toggle(item.code)}
-                        className="mt-0.5 accent-primary flex-shrink-0"
-                      />
-                      <span className="flex-1 min-w-0">
-                        <span className="text-xs font-medium">{item.label}</span>
-                        <span className="text-[10px] text-muted-foreground ml-1.5">{item.description}</span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
+    <div className="bg-card border rounded-xl overflow-hidden">
+      <div className="px-5 py-4 border-b flex items-center gap-2">
+        <ShieldCheck className="w-4 h-4 text-muted-foreground" />
+        <h2 className="font-semibold">Regulatory Frameworks</h2>
+        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+          {selected.length} / {ALL_FRAMEWORK_CODES.length} selected
+        </span>
+      </div>
+      <div className="px-5 py-4 space-y-4">
+        <p className="text-xs text-muted-foreground">
+          Select which regulatory frameworks Clyira should assess this document against. All are selected by default.
+        </p>
+        {FRAMEWORK_GROUPS.map((group) => {
+          const groupCodes = group.items.map((i) => i.code);
+          const allGroupSelected = groupCodes.every((c) => selected.includes(c));
+          const someGroupSelected = groupCodes.some((c) => selected.includes(c));
+          return (
+            <div key={group.group}>
+              <button
+                type="button"
+                onClick={() => toggleGroup(groupCodes)}
+                className="flex items-center gap-2 mb-2"
+              >
+                {allGroupSelected ? (
+                  <CheckSquare className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                ) : someGroupSelected ? (
+                  <div className="w-3.5 h-3.5 border-2 border-primary rounded-sm flex-shrink-0 bg-primary/20" />
+                ) : (
+                  <Square className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                )}
+                <span className="text-xs font-semibold">{group.group}</span>
+              </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 pl-5">
+                {group.items.map((item) => (
+                  <label key={item.code} className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(item.code)}
+                      onChange={() => toggle(item.code)}
+                      className="mt-0.5 accent-primary flex-shrink-0"
+                    />
+                    <span className="flex-1 min-w-0">
+                      <span className="text-xs font-medium">{item.label}</span>
+                      <span className="text-[10px] text-muted-foreground ml-1.5">{item.description}</span>
+                    </span>
+                  </label>
+                ))}
               </div>
-            );
-          })}
-          <div className="flex gap-2 pt-1 border-t">
-            <button type="button" onClick={() => onChange(ALL_FRAMEWORK_CODES)}
-              className="text-[10px] text-primary hover:underline font-medium">
-              Select all
-            </button>
-            <span className="text-[10px] text-muted-foreground">·</span>
-            <button type="button" onClick={() => onChange([])}
-              className="text-[10px] text-muted-foreground hover:underline">
-              Clear all
-            </button>
-          </div>
+            </div>
+          );
+        })}
+        <div className="flex gap-2 pt-1 border-t">
+          <button type="button" onClick={() => onChange(ALL_FRAMEWORK_CODES)}
+            className="text-[10px] text-primary hover:underline font-medium">
+            Select all
+          </button>
+          <span className="text-[10px] text-muted-foreground">·</span>
+          <button type="button" onClick={() => onChange([])}
+            className="text-[10px] text-muted-foreground hover:underline">
+            Clear all
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -221,14 +244,9 @@ function FrameworkSelectorPanel({
 // ── Finding Card ───────────────────────────────────────────────────────────────
 
 function FindingCard({
-  finding,
-  documentId,
-  assessmentId,
-  onStatusChange,
+  finding, documentId, assessmentId, onStatusChange,
 }: {
-  finding: Finding;
-  documentId: string;
-  assessmentId: string;
+  finding: Finding; documentId: string; assessmentId: string;
   onStatusChange?: (findingId: string, newStatus: string, adjustedScore?: number) => void;
 }) {
   const [expanded, setExpanded] = useState(finding.severity === "critical" || finding.severity === "high");
@@ -243,12 +261,10 @@ function FindingCard({
   const doAction = async (newStatus: string, disputeReason_?: string) => {
     setActioning(true);
     try {
-      const res = await assessmentsApi.actionFinding(
-        assessmentId, finding.id, newStatus, "", disputeReason_
-      );
+      const res = await assessmentsApi.actionFinding(assessmentId, finding.id, newStatus, "", disputeReason_);
       setLocalStatus(newStatus);
       onStatusChange?.(finding.id, newStatus, res.data?.adjusted_score);
-    } catch { /* ignore */ }
+    } catch { }
     finally { setActioning(false); }
   };
 
@@ -264,7 +280,7 @@ function FindingCard({
   const ACTION_BUTTONS = [
     { status: "acknowledged", label: "Acknowledge", icon: ThumbsUp, show: localStatus === "open" },
     { status: "in_progress", label: "In Progress", icon: Clock, show: localStatus === "acknowledged" },
-    { status: "resolved", label: "Resolve", icon: CheckCheck, show: ["open","acknowledged","in_progress"].includes(localStatus) },
+    { status: "resolved", label: "Resolve", icon: CheckCheck, show: ["open", "acknowledged", "in_progress"].includes(localStatus) },
     { status: "disputed", label: "Dispute", icon: Flag, show: localStatus !== "resolved", isDispute: true },
   ];
 
@@ -275,19 +291,14 @@ function FindingCard({
           <div className="bg-card border rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
             <h3 className="font-semibold">Dispute Finding</h3>
             <p className="text-sm text-muted-foreground">{finding.title}</p>
-            <textarea
-              value={disputeReason}
-              onChange={e => setDisputeReason(e.target.value)}
+            <textarea value={disputeReason} onChange={e => setDisputeReason(e.target.value)}
               placeholder="Explain why this finding is inaccurate or should not apply..."
-              className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[80px]"
-            />
+              className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[80px]" />
             <div className="flex gap-3">
               <button onClick={() => setShowDisputeModal(false)} className="flex-1 py-2 border rounded-lg text-sm hover:bg-accent">Cancel</button>
-              <button
-                onClick={() => { doAction("disputed", disputeReason); setShowDisputeModal(false); }}
+              <button onClick={() => { doAction("disputed", disputeReason); setShowDisputeModal(false); }}
                 disabled={!disputeReason.trim()}
-                className="flex-1 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-700 disabled:opacity-50"
-              >
+                className="flex-1 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-700 disabled:opacity-50">
                 Submit Dispute
               </button>
             </div>
@@ -296,10 +307,8 @@ function FindingCard({
       )}
 
       <div className={cn("border rounded-lg overflow-hidden", cfg.border)}>
-        <button
-          className={cn("w-full flex items-start gap-3 px-4 py-3 text-left", cfg.bg, "hover:opacity-90 transition-opacity")}
-          onClick={() => setExpanded(!expanded)}
-        >
+        <button className={cn("w-full flex items-start gap-3 px-4 py-3 text-left", cfg.bg, "hover:opacity-90 transition-opacity")}
+          onClick={() => setExpanded(!expanded)}>
           <div className={cn("w-1 self-stretch rounded-full flex-shrink-0", cfg.dot)} style={{ minHeight: 20 }} />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -311,9 +320,7 @@ function FindingCard({
                 </span>
               )}
               {finding.severity_elevated && (
-                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">
-                  ↑ Elevated
-                </span>
+                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">↑ Elevated</span>
               )}
               <FindingStatusBadge status={localStatus} className="ml-auto" />
             </div>
@@ -329,21 +336,16 @@ function FindingCard({
 
         {expanded && (
           <div className="px-4 py-4 space-y-4 bg-card border-t">
-            {/* Description */}
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Description</p>
               <p className="text-sm leading-relaxed">{finding.description}</p>
             </div>
-
-            {/* Evidence */}
             {finding.evidence && (
               <div>
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Evidence</p>
                 <p className="text-sm text-muted-foreground italic leading-relaxed">"{finding.evidence}"</p>
               </div>
             )}
-
-            {/* Location + Citation */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {finding.location && (
                 <div>
@@ -362,8 +364,6 @@ function FindingCard({
                 </div>
               )}
             </div>
-
-            {/* Enforcement context */}
             {finding.enforcement_match && finding.enforcement_context && (
               <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
                 <p className="text-xs font-semibold text-red-800 mb-1 flex items-center gap-1">
@@ -372,8 +372,6 @@ function FindingCard({
                 <p className="text-xs text-red-700 leading-relaxed">{finding.enforcement_context}</p>
               </div>
             )}
-
-            {/* Remediation */}
             {finding.suggestion_draft && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5">
                 <p className="text-xs font-semibold text-blue-800 mb-1.5 flex items-center gap-1">
@@ -382,15 +380,10 @@ function FindingCard({
                 <p className="text-sm text-blue-900 leading-relaxed whitespace-pre-wrap">{finding.suggestion_draft}</p>
               </div>
             )}
-
-            {/* Author Assistant — Draft Fix */}
             <div>
               {!draft && (
-                <button
-                  onClick={loadDraft}
-                  disabled={draftLoading}
-                  className="flex items-center gap-1.5 text-xs text-primary border border-primary/30 hover:bg-primary/5 rounded-lg px-3 py-1.5 transition-colors"
-                >
+                <button onClick={loadDraft} disabled={draftLoading}
+                  className="flex items-center gap-1.5 text-xs text-primary border border-primary/30 hover:bg-primary/5 rounded-lg px-3 py-1.5 transition-colors">
                   {draftLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <BookOpen className="w-3 h-3" />}
                   {draftLoading ? "Drafting fix…" : "Draft Fix with Author Assistant"}
                 </button>
@@ -409,16 +402,12 @@ function FindingCard({
                 </div>
               )}
             </div>
-
-            {/* Dispute reason display */}
             {localStatus === "disputed" && finding.dispute_reason && (
               <div className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
                 <p className="text-xs font-semibold text-orange-800 mb-0.5">Dispute Reason</p>
                 <p className="text-xs text-orange-700">{finding.dispute_reason}</p>
               </div>
             )}
-
-            {/* Action buttons */}
             {localStatus !== "resolved" && (
               <div className="flex items-center gap-2 flex-wrap pt-1 border-t">
                 <span className="text-xs text-muted-foreground font-medium">Actions:</span>
@@ -426,16 +415,14 @@ function FindingCard({
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
                 ) : (
                   ACTION_BUTTONS.filter(b => b.show).map(btn => (
-                    <button
-                      key={btn.status}
+                    <button key={btn.status}
                       onClick={() => btn.isDispute ? setShowDisputeModal(true) : doAction(btn.status)}
                       className={cn(
                         "flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md border transition-colors",
                         btn.status === "resolved" ? "border-green-300 text-green-700 hover:bg-green-50" :
                         btn.status === "disputed" ? "border-orange-300 text-orange-700 hover:bg-orange-50" :
                         "border-border text-muted-foreground hover:bg-accent",
-                      )}
-                    >
+                      )}>
                       <btn.icon className="w-2.5 h-2.5" />
                       {btn.label}
                     </button>
@@ -448,8 +435,6 @@ function FindingCard({
                 <CheckCheck className="w-3.5 h-3.5" /> Finding resolved
               </div>
             )}
-
-            {/* Confidence */}
             {finding.confidence_score != null && (
               <p className="text-[10px] text-muted-foreground">
                 Confidence: {(finding.confidence_score * 100).toFixed(0)}% · {finding.validated ? "Validated" : "Unvalidated"}
@@ -467,26 +452,22 @@ function FindingCard({
 
 const REF_TYPES = [
   { value: "organizational_guideline", label: "Org. Guideline" },
-  { value: "internal_standard",        label: "Internal Standard" },
-  { value: "checklist",                label: "Checklist" },
-  { value: "template",                 label: "Template" },
+  { value: "internal_standard", label: "Internal Standard" },
+  { value: "checklist", label: "Checklist" },
+  { value: "template", label: "Template" },
 ];
 
 const REF_TYPE_STYLES: Record<string, string> = {
   organizational_guideline: "bg-blue-50 text-blue-700 border-blue-200",
-  internal_standard:        "bg-purple-50 text-purple-700 border-purple-200",
-  checklist:                "bg-green-50 text-green-700 border-green-200",
-  template:                 "bg-amber-50 text-amber-700 border-amber-200",
+  internal_standard: "bg-purple-50 text-purple-700 border-purple-200",
+  checklist: "bg-green-50 text-green-700 border-green-200",
+  template: "bg-amber-50 text-amber-700 border-amber-200",
 };
 
 function RefTypeBadge({ type }: { type: string }) {
   const label = REF_TYPES.find(r => r.value === type)?.label ?? type;
   const style = REF_TYPE_STYLES[type] ?? "bg-muted text-muted-foreground border-border";
-  return (
-    <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded border", style)}>
-      {label}
-    </span>
-  );
+  return <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded border", style)}>{label}</span>;
 }
 
 // ── Upload Reference Modal ─────────────────────────────────────────────────────
@@ -505,14 +486,8 @@ function UploadReferenceModal({
     if (!incoming) return;
     setFiles(prev => {
       const existing = new Set(prev.map(f => f.name));
-      const next = Array.from(incoming).filter(f => !existing.has(f.name));
-      return [...prev, ...next];
+      return [...prev, ...Array.from(incoming).filter(f => !existing.has(f.name))];
     });
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault(); setDragging(false);
-    addFiles(e.dataTransfer.files);
   };
 
   const handleSubmit = async () => {
@@ -526,9 +501,7 @@ function UploadReferenceModal({
       onSuccess();
     } catch (err: any) {
       setError(err?.response?.data?.detail ?? "Upload failed. Please try again.");
-    } finally {
-      setUploading(false);
-    }
+    } finally { setUploading(false); }
   };
 
   return (
@@ -537,73 +510,49 @@ function UploadReferenceModal({
         <div className="flex items-center justify-between px-6 py-4 border-b">
           <div>
             <h2 className="font-semibold">Upload Validation Reference</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              SOPs, checklists, internal standards — used during the next assessment
-            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">SOPs, checklists, internal standards — used during the next assessment</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-md hover:bg-accent"><X className="w-4 h-4" /></button>
         </div>
-
         <div className="p-6 space-y-4">
-          {/* Drop zone */}
-          <div
-            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
-            onDrop={handleDrop}
+            onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }}
             onClick={() => inputRef.current?.click()}
-            className={cn(
-              "border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors",
-              dragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/30"
-            )}
-          >
+            className={cn("border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors",
+              dragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/30")}>
             <input ref={inputRef} type="file" multiple accept=".pdf,.docx,.doc,.xlsx,.xls"
               className="hidden" onChange={(e) => addFiles(e.target.files)} />
             <FileUp className="w-7 h-7 text-muted-foreground mx-auto mb-2" />
             <p className="text-sm font-medium">Drop files or click to browse</p>
             <p className="text-xs text-muted-foreground mt-1">PDF, DOCX, XLSX · multiple files allowed</p>
           </div>
-
-          {/* File list */}
           {files.length > 0 && (
             <div className="space-y-1.5 max-h-36 overflow-y-auto">
               {files.map((f, i) => (
                 <div key={i} className="flex items-center gap-2 text-sm bg-muted/40 rounded-lg px-3 py-1.5">
                   <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                   <span className="flex-1 truncate text-xs">{f.name}</span>
-                  <button onClick={() => setFiles(prev => prev.filter((_, j) => j !== i))}
-                    className="text-muted-foreground hover:text-foreground">
+                  <button onClick={() => setFiles(prev => prev.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-foreground">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
               ))}
             </div>
           )}
-
-          {/* Reference type */}
           <div>
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide block mb-1.5">
-              Reference Type
-            </label>
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide block mb-1.5">Reference Type</label>
             <select value={refType} onChange={(e) => setRefType(e.target.value)}
               className="w-full px-3 py-2 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30">
               {REF_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
-            <p className="text-xs text-muted-foreground mt-1.5">
-              {refType === "organizational_guideline" && "Company SOPs, quality manuals, and internal guidance documents"}
-              {refType === "internal_standard" && "Internal testing standards, specifications, and method validations"}
-              {refType === "checklist" && "Audit checklists, inspection readiness templates, and verification forms"}
-              {refType === "template" && "Blank forms, report templates, and document shells"}
-            </p>
           </div>
-
           {error && (
             <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
-              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              {error}
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />{error}
             </div>
           )}
         </div>
-
         <div className="px-6 pb-6 flex gap-3">
           <button onClick={onClose} className="flex-1 py-2.5 border rounded-lg text-sm hover:bg-accent">Cancel</button>
           <button onClick={handleSubmit} disabled={!files.length || uploading}
@@ -648,25 +597,16 @@ function QAAssistantPanel({ documentId, assessmentId }: { documentId: string; as
           Ask questions about this document — e.g. "Does this SOP address deviation handling?" or "What's missing from the root cause section?"
         </p>
         <div className="flex gap-2">
-          <input
-            type="text"
-            value={question}
-            onChange={e => setQuestion(e.target.value)}
+          <input type="text" value={question} onChange={e => setQuestion(e.target.value)}
             onKeyDown={e => e.key === "Enter" && !loading && ask()}
             placeholder="Ask a compliance question about this document…"
-            className="flex-1 px-3 py-2 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
-          <button
-            onClick={ask}
-            disabled={loading || !question.trim()}
-            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-          >
+            className="flex-1 px-3 py-2 border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30" />
+          <button onClick={ask} disabled={loading || !question.trim()}
+            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           </button>
         </div>
-        {error && (
-          <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-2">{error}</p>
-        )}
+        {error && <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-2">{error}</p>}
         {answer && (
           <div className="space-y-2">
             <div className="bg-muted/40 rounded-lg px-4 py-3">
@@ -699,10 +639,8 @@ function ScoreSparkline({ scores }: { scores: number[] }) {
     const y = PAD + ((maxS - s) / range) * (H - PAD * 2);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
-  const latest = scores[0];
-  const oldest = scores[scores.length - 1];
-  const trend = latest - oldest;
-  const color = trend >= 0 ? "#10b981" : "#ef4444";
+  const latest = scores[0], oldest = scores[scores.length - 1];
+  const color = (latest - oldest) >= 0 ? "#10b981" : "#ef4444";
   return (
     <svg width={W} height={H} className="flex-shrink-0">
       <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
@@ -731,31 +669,25 @@ function AssessmentHistoryPanel({ documentId }: { documentId: string }) {
 
   return (
     <div className="bg-card border rounded-xl overflow-hidden">
-      <button
-        onClick={load}
-        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/30 transition-colors text-left"
-      >
+      <button onClick={load}
+        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/30 transition-colors text-left">
         <div className="flex items-center gap-2">
           <History className="w-4 h-4 text-muted-foreground" />
           <span className="text-sm font-medium">Assessment History</span>
           {history.length > 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
-              {history.length} runs
-            </span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">{history.length} runs</span>
           )}
         </div>
         <div className="flex items-center gap-3">
           {scores.length >= 2 && <ScoreSparkline scores={scores} />}
-          {loading
-            ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-            : <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
-          }
+          {loading ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+            : <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />}
         </div>
       </button>
       {expanded && history.length > 0 && (
         <div className="border-t divide-y">
           {history.map((h, i) => {
-            const prevScore = i < history.length - 1 ? (history[i+1].adjusted_score ?? history[i+1].clyira_score) : null;
+            const prevScore = i < history.length - 1 ? (history[i + 1].adjusted_score ?? history[i + 1].clyira_score) : null;
             const currScore = h.adjusted_score ?? h.clyira_score;
             const delta = prevScore != null && currScore != null ? currScore - prevScore : null;
             return (
@@ -812,12 +744,13 @@ export default function DocumentDetailPage() {
   const [viewMode, setViewMode] = useState<"list" | "review">("list");
   const [documentText, setDocumentText] = useState("");
   const [loadingText, setLoadingText] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>("overview");
 
   const loadSignatures = async () => {
     try {
       const res = await signaturesApi.list(id);
       setSignatures(res.data);
-    } catch { /* non-critical */ }
+    } catch { }
   };
 
   const switchToReview = async () => {
@@ -827,17 +760,14 @@ export default function DocumentDetailPage() {
     try {
       const res = await documentsApi.getText(id);
       setDocumentText(res.data.text || "");
-    } catch { /* non-critical — pane shows "no text" state */ }
+    } catch { }
     finally { setLoadingText(false); }
   };
 
   const loadDoc = async () => {
     setLoading(true);
     try {
-      const [res] = await Promise.all([
-        documentsApi.get(id),
-        loadSignatures(),
-      ]);
+      const [res] = await Promise.all([documentsApi.get(id), loadSignatures()]);
       setDoc(res.data);
       if (res.data.latest_assessment_id) {
         await loadAssessment(res.data.latest_assessment_id);
@@ -845,9 +775,7 @@ export default function DocumentDetailPage() {
     } catch (err: any) {
       const status = err?.response?.status;
       setError(status === 404 ? "Document not found." : "Failed to load document. Please refresh.");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
   const loadAssessment = async (assessmentId: string) => {
@@ -859,9 +787,7 @@ export default function DocumentDetailPage() {
       setAssessment(aRes.data);
       setAdjustedScore(aRes.data.adjusted_score ?? null);
       setFindings(fRes.data.findings ?? []);
-    } catch {
-      setError("Could not load assessment results.");
-    }
+    } catch { setError("Could not load assessment results."); }
   };
 
   const handleFindingStatusChange = useCallback((_findingId: string, _newStatus: string, newAdjustedScore?: number) => {
@@ -869,7 +795,7 @@ export default function DocumentDetailPage() {
   }, []);
 
   const exportDocx = async () => {
-    if (!assessment) return;
+    if (!assessment || !doc) return;
     setExporting(true);
     try {
       const res = await assessmentsApi.exportDocx(assessment.id);
@@ -877,15 +803,31 @@ export default function DocumentDetailPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Clyira_${doc?.title?.slice(0, 30) ?? "Report"}_${assessment.id.slice(0, 8)}.docx`;
+      a.download = `Clyira_${doc.title?.slice(0, 30) ?? "Report"}_${assessment.id.slice(0, 8)}.docx`;
       a.click();
       URL.revokeObjectURL(url);
     } catch { setError("Export failed. Please try again."); }
     finally { setExporting(false); }
   };
 
+  const exportCsv = async () => {
+    if (!assessment || !doc) return;
+    setExporting(true);
+    try {
+      const res = await assessmentsApi.exportCsv(assessment.id);
+      const blob = new Blob([res.data], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Clyira_Findings_${doc.title?.slice(0, 30) ?? "Report"}_${assessment.id.slice(0, 8)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { setError("CSV export failed. Please try again."); }
+    finally { setExporting(false); }
+  };
+
   const pollAssessment = async (assessmentId: string): Promise<void> => {
-    const maxAttempts = 90; // 90 × 10s = 15 min ceiling
+    const maxAttempts = 90;
     for (let i = 0; i < maxAttempts; i++) {
       await new Promise(r => setTimeout(r, 10000));
       try {
@@ -893,11 +835,7 @@ export default function DocumentDetailPage() {
         setAssessment(res.data);
         if (res.data.status === "completed") {
           await loadAssessment(assessmentId);
-          // Refresh doc to pick up updated score and status from DB
-          try {
-            const docRes = await documentsApi.get(id);
-            setDoc(docRes.data);
-          } catch { /* non-fatal — score ring just won't update */ }
+          try { const docRes = await documentsApi.get(id); setDoc(docRes.data); } catch { }
           setAssessing(false);
           return;
         }
@@ -906,7 +844,7 @@ export default function DocumentDetailPage() {
           setAssessing(false);
           return;
         }
-      } catch { /* continue polling */ }
+      } catch { }
     }
     setError("Assessment is taking longer than expected. Refresh to check status.");
     setAssessing(false);
@@ -918,9 +856,7 @@ export default function DocumentDetailPage() {
     try {
       const res = await assessmentsApi.run(doc.id, true, selectedFrameworks);
       setAssessment(res.data);
-      const status = res.data.status;
-      if (status === "queued" || status === "running") {
-        // Assessment running in background — poll for completion
+      if (res.data.status === "queued" || res.data.status === "running") {
         pollAssessment(res.data.id);
       } else if (res.data.id) {
         await loadAssessment(res.data.id);
@@ -936,20 +872,15 @@ export default function DocumentDetailPage() {
 
   useEffect(() => { loadDoc(); }, [id]);
 
-  const filteredFindings = severityFilter === "all"
-    ? findings
-    : findings.filter(f => f.severity === severityFilter);
-
-  const sortedFindings = [...filteredFindings].sort(
-    (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity)
-  );
+  const filteredFindings = severityFilter === "all" ? findings : findings.filter(f => f.severity === severityFilter);
+  const sortedFindings = [...filteredFindings].sort((a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity));
 
   if (loading) {
     return (
       <div className="space-y-5">
         <div className="h-8 bg-muted rounded w-1/3 animate-pulse" />
         <div className="grid grid-cols-3 gap-4">
-          {[1,2,3].map(i => <div key={i} className="h-32 bg-muted rounded-xl animate-pulse" />)}
+          {[1, 2, 3].map(i => <div key={i} className="h-32 bg-muted rounded-xl animate-pulse" />)}
         </div>
         <div className="h-64 bg-muted rounded-xl animate-pulse" />
       </div>
@@ -958,412 +889,746 @@ export default function DocumentDetailPage() {
 
   if (!doc) return <div className="text-muted-foreground text-sm">{error || "Document not found."}</div>;
 
+  // ── Derived state ────────────────────────────────────────────────────────────
+  const isReadyForAssessment = !!(doc.dtap_id && selectedFrameworks.length > 0);
+  const hasContentGaps = (doc.references?.length ?? 0) === 0;
+
+  const readinessItems = [
+    { label: "Document classified", status: doc.dtap_id ? "complete" : "missing", },
+    { label: "Regulatory scope", status: selectedFrameworks.length > 0 ? "complete" : "missing", },
+    { label: "Company / classification content", status: (doc.references?.length ?? 0) > 0 ? "complete" : "missing", },
+    { label: "Product / classification content", status: doc.document_category ? "secondary" : "not_listed", },
+    { label: "Prior quality history", status: "not_listed" as const, },
+  ];
+
+  const sopCount = doc.references?.filter((r: any) => r.reference_type === "organizational_guideline").length ?? 0;
+  const specCount = doc.references?.filter((r: any) => r.reference_type === "internal_standard").length ?? 0;
+
+  const contentCoverageRows = [
+    { type: "SOPs & Work Instructions", icon: FileText, count: sopCount, detail: sopCount > 0 ? `${sopCount} reference${sopCount !== 1 ? "s" : ""} linked` : "No company SOPs linked" },
+    { type: "Specifications", icon: ClipboardList, count: 0, detail: "No product specifications linked" },
+    { type: "Validation Protocols", icon: FlaskConical, count: specCount, detail: specCount > 0 ? `${specCount} linked` : "No validation protocols linked" },
+    { type: "Prior Guidance / LIRs", icon: History, count: 0, detail: "No related quality events linked" },
+    { type: "Product / Batch Context", icon: Package, count: 0, detail: "Product or batch context not linked" },
+  ];
+
+  const TAB_LABELS: Record<Tab, string> = {
+    overview: "Overview",
+    references: "References",
+    regulatory: "Regulatory Scope",
+    findings: "Findings & Evidence Map",
+    activity: "Activity",
+  };
+
+  // ── Render ───────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6">
+    <div className="-mx-5 -mt-4 flex flex-col">
+      {/* Modals */}
       {showRefUpload && (
-        <UploadReferenceModal
-          documentId={id}
-          onClose={() => setShowRefUpload(false)}
-          onSuccess={() => { setShowRefUpload(false); loadDoc(); }}
-        />
+        <UploadReferenceModal documentId={id} onClose={() => setShowRefUpload(false)}
+          onSuccess={() => { setShowRefUpload(false); loadDoc(); }} />
       )}
-      {showSignModal && doc && (
-        <SignatureModal
-          documentId={id}
-          documentTitle={doc.title}
+      {showSignModal && (
+        <SignatureModal documentId={id} documentTitle={doc.title}
           onClose={() => setShowSignModal(false)}
-          onSigned={() => { setShowSignModal(false); loadSignatures(); }}
-        />
+          onSigned={() => { setShowSignModal(false); loadSignatures(); }} />
       )}
 
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-        <Link href="/documents" className="hover:text-foreground">Documents</Link>
-        <ChevronRight className="w-3.5 h-3.5" />
-        <span className="text-foreground font-medium truncate max-w-xs">{doc.title}</span>
-      </div>
-
-      {/* Document header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-start gap-4">
-          <div className="w-12 h-12 rounded-xl bg-clyira-50 border border-clyira-100 flex items-center justify-center flex-shrink-0">
-            <FileText className="w-6 h-6 text-clyira-600" />
+      {/* ── Document Header ─────────────────────────────────────────────────── */}
+      <div className="bg-card border-b">
+        <div className="px-6 pt-4 pb-3">
+          {/* Breadcrumb */}
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2.5">
+            <Link href="/documents" className="hover:text-foreground transition-colors">Documents</Link>
+            <ChevronRight className="w-3 h-3" />
+            <span className="text-foreground font-medium">{doc.document_number ?? doc.title.slice(0, 24)}</span>
           </div>
-          <div>
-            <h1 className="text-xl font-semibold leading-tight">{doc.title}</h1>
-            <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-              {doc.document_number && (
-                <span className="text-xs font-mono text-muted-foreground">{doc.document_number} · v{doc.version ?? "1.0"}</span>
-              )}
-              {doc.document_category && <span className="text-xs font-medium bg-muted px-2 py-0.5 rounded">{doc.document_category}</span>}
-              {doc.department_owner && <span className="text-xs text-muted-foreground">{doc.department_owner}</span>}
-              {doc.dtap_id && <span className="text-xs font-mono text-muted-foreground/70">{doc.dtap_id}</span>}
-              <DocStatusBadge status={doc.status} />
+
+          {/* Title + actions */}
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-xl font-semibold leading-tight mb-2">{doc.title}</h1>
+
+              {/* Metadata chips row */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {doc.dtap_id && (
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border bg-muted/50 font-medium">
+                    <FileText className="w-2.5 h-2.5 text-muted-foreground" />
+                    {DTAP_LABEL[doc.dtap_id] ?? doc.dtap_id}
+                  </span>
+                )}
+                {doc.document_category && (
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border bg-muted/50 font-medium">
+                    {doc.document_category}
+                  </span>
+                )}
+                {doc.version && (
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border bg-muted/50 font-medium">
+                    Version {doc.version}
+                  </span>
+                )}
+                {isReadyForAssessment ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-green-200 bg-green-50 text-green-700 font-medium">
+                    <CheckCircle2 className="w-2.5 h-2.5" />
+                    Ready for Assessment
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-amber-200 bg-amber-50 text-amber-700 font-medium">
+                    <AlertTriangle className="w-2.5 h-2.5" />
+                    Setup Required
+                  </span>
+                )}
+                <span className="text-[11px] text-muted-foreground">
+                  Owner: {doc.department_owner ?? "Demo User (Admin)"} · Uploaded {formatDate(doc.created_at)} · {doc.file_type?.toUpperCase() ?? "—"} ({formatFileSize(doc.file_size_bytes)})
+                </span>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+              <button className="flex items-center gap-1.5 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-accent transition-colors">
+                <Eye className="w-3.5 h-3.5" /> Preview Document
+              </button>
+              <button onClick={() => setShowRefUpload(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-accent transition-colors">
+                <Plus className="w-3.5 h-3.5" /> Add Content
+              </button>
+              <button onClick={() => setActiveTab("regulatory")}
+                className="flex items-center gap-1.5 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-accent transition-colors">
+                <Settings2 className="w-3.5 h-3.5" /> Assessment Settings
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              <button onClick={runAssessment} disabled={assessing}
+                className="flex items-center gap-2 px-4 py-1.5 bg-primary text-primary-foreground rounded-md text-xs font-semibold hover:bg-primary/90 disabled:opacity-60 transition-colors">
+                {assessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                {assessing
+                  ? assessment?.current_level
+                    ? `${assessment.current_level}: ${LEVEL_PROGRESS_LABELS[assessment.current_level] ?? "Processing"}…`
+                    : (assessment?.status === "queued" ? "Queued…" : "Assessing…")
+                  : assessment ? "Re-assess" : "Run Assessment"}
+              </button>
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {assessment?.status === "completed" && (
-            <>
-              <button
-                onClick={exportDocx}
-                disabled={exporting}
-                className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm font-medium hover:bg-accent disabled:opacity-50"
-              >
-                {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                DOCX
-              </button>
-              <button
-                onClick={async () => {
-                  if (!assessment) return;
-                  setExporting(true);
-                  try {
-                    const res = await assessmentsApi.exportCsv(assessment.id);
-                    const blob = new Blob([res.data], { type: "text/csv" });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `Clyira_Findings_${doc?.title?.slice(0, 30) ?? "Report"}_${assessment.id.slice(0, 8)}.csv`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  } catch { setError("CSV export failed. Please try again."); }
-                  finally { setExporting(false); }
-                }}
-                disabled={exporting}
-                className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm font-medium hover:bg-accent disabled:opacity-50"
-              >
-                {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                CSV
-              </button>
-            </>
-          )}
-          <button
-            onClick={() => setShowSignModal(true)}
-            className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm font-medium hover:bg-accent transition-colors"
-            title="Electronically sign this document (21 CFR §11.50)"
-          >
-            <PenLine className="w-4 h-4" />
-            Sign
-          </button>
-        <button onClick={runAssessment} disabled={assessing}
-          className="flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60 flex-shrink-0"
-          title={`Assess against ${selectedFrameworks.length} frameworks`}>
-          {assessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-          {assessing
-            ? assessment?.current_level
-              ? `${assessment.current_level}: ${LEVEL_PROGRESS_LABELS[assessment.current_level] ?? "Processing"}…`
-              : (assessment?.status === "queued" ? "Queued…" : "Assessing…")
-            : assessment ? "Re-assess" : "Run Assessment"}
-        </button>
+
+        {/* Tab navigation */}
+        <div className="px-6 flex items-center gap-0">
+          {(Object.keys(TAB_LABELS) as Tab[]).map((tab) => (
+            <button key={tab} onClick={() => setActiveTab(tab)}
+              className={cn(
+                "px-4 py-2.5 text-sm font-medium border-b-2 transition-colors relative whitespace-nowrap",
+                activeTab === tab
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
+              )}>
+              {TAB_LABELS[tab]}
+              {tab === "findings" && findings.length > 0 && (
+                <span className={cn(
+                  "ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-medium",
+                  (assessment?.findings_critical ?? 0) > 0 ? "bg-red-100 text-red-700" : "bg-muted text-muted-foreground"
+                )}>
+                  {findings.length}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
       </div>
 
-      {error && (
-        <div className="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-4 py-3">{error}</div>
-      )}
-
-      {/* Data Integrity Hold Banner — compact single line */}
-      {assessment?.data_integrity_hold && (
-        <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
-          <Lock className="w-3.5 h-3.5 text-red-600 shrink-0" />
-          <p className="text-xs font-semibold text-red-800">Data Integrity Hold</p>
-          <span className="text-red-300">·</span>
-          <p className="text-xs text-red-700 truncate">
-            {assessment.suspended_reason || "Critical ALCOA+/Data Integrity finding detected. Score capped at 50 until resolved."}
-          </p>
-        </div>
-      )}
-
-      {/* Score + meta — compact single row */}
-      <div className="bg-card border rounded-lg px-4 py-2.5 flex items-center gap-6 flex-wrap">
-        {/* Score */}
-        <div className="flex items-center gap-3 shrink-0">
-          <ScoreRing score={adjustedScore ?? doc.latest_score} size="sm" />
-          <div>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Score</p>
-            {assessment && adjustedScore != null && adjustedScore !== assessment.clyira_score && (
-              <p className="text-[10px] text-green-600 font-medium">↑ adj from {assessment.clyira_score?.toFixed(1)}</p>
-            )}
-            {assessment && (
-              <p className="text-[10px] text-muted-foreground">{assessment.levels_run?.length ?? 0} levels · {timeAgo(assessment.created_at)}</p>
-            )}
+      {/* ── Tab Content ─────────────────────────────────────────────────────── */}
+      <div className="p-5 flex-1 bg-muted/30">
+        {/* Error + hold banners */}
+        {error && (
+          <div className="mb-4 bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-4 py-3">{error}</div>
+        )}
+        {assessment?.data_integrity_hold && (
+          <div className="mb-4 flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+            <Lock className="w-3.5 h-3.5 text-red-600 shrink-0" />
+            <p className="text-xs font-semibold text-red-800">Data Integrity Hold</p>
+            <span className="text-red-300">·</span>
+            <p className="text-xs text-red-700 truncate">
+              {assessment.suspended_reason || "Critical ALCOA+/Data Integrity finding detected. Score capped at 50 until resolved."}
+            </p>
           </div>
-        </div>
-
-        <div className="h-8 w-px bg-border shrink-0" />
-
-        {/* Findings summary */}
-        {assessment ? (
-          <div className="flex items-center gap-1.5">
-            {[
-              { label: "Crit", count: assessment.findings_critical, sev: "critical" },
-              { label: "High", count: assessment.findings_high, sev: "high" },
-              { label: "Med", count: assessment.findings_medium, sev: "medium" },
-              { label: "Low", count: assessment.findings_low, sev: "low" },
-              { label: "Info", count: assessment.findings_info, sev: "info" },
-            ].map(({ label, count, sev }) => {
-              const cfg = getSeverityConfig(sev);
-              return (
-                <div key={sev} className={cn("rounded px-2 py-1 text-center min-w-[36px]", count > 0 ? cfg.bg : "bg-muted/30")}>
-                  <p className={cn("text-sm font-bold tabular-nums leading-none", count > 0 ? cfg.color : "text-muted-foreground/30")}>{count}</p>
-                  <p className={cn("text-[9px] font-medium mt-0.5", count > 0 ? cfg.color : "text-muted-foreground/30")}>{label}</p>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">Not yet assessed</p>
         )}
 
-        <div className="h-8 w-px bg-border shrink-0" />
+        {/* ── OVERVIEW TAB ──────────────────────────────────────────────────── */}
+        {activeTab === "overview" && (
+          <div className="grid grid-cols-3 gap-5">
+            {/* Left column */}
+            <div className="col-span-2 space-y-4">
 
-        {/* File info inline */}
-        <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
-          <span><span className="font-medium text-foreground">{doc.file_type?.toUpperCase() ?? "—"}</span> · {formatFileSize(doc.file_size_bytes)}</span>
-          <span>Uploaded {formatDate(doc.created_at)}</span>
-          <span>{doc.references?.length ?? 0} references</span>
-          {assessment?.enforcement_matches ? (
-            <span className="font-medium text-orange-600">{assessment.enforcement_matches} enforcement match{assessment.enforcement_matches !== 1 ? "es" : ""}</span>
-          ) : null}
-        </div>
-      </div>
+              {/* Readiness Summary */}
+              <div className="bg-card border rounded-xl overflow-hidden">
+                <div className="px-5 py-3 border-b">
+                  <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Readiness Summary</h3>
+                </div>
+                <div className="p-4 grid grid-cols-2 gap-4">
+                  {/* Status callouts */}
+                  <div className="space-y-2.5">
+                    {isReadyForAssessment ? (
+                      <div className="flex items-start gap-3 p-3 rounded-lg bg-green-50 border border-green-200">
+                        <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-semibold text-green-800">Ready for assessment</p>
+                          <p className="text-xs text-green-700 mt-0.5 leading-relaxed">
+                            Clyira can assess this document using the selected regulatory frameworks.
+                          </p>
+                          {hasContentGaps && (
+                            <button onClick={() => setShowRefUpload(true)}
+                              className="text-[11px] text-green-700 font-medium mt-1.5 hover:underline">
+                              Add content →
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 border border-amber-200">
+                        <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-semibold text-amber-800">Setup required</p>
+                          <p className="text-xs text-amber-700 mt-0.5">Document classification and regulatory scope must be configured.</p>
+                        </div>
+                      </div>
+                    )}
+                    {hasContentGaps && (
+                      <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 border border-amber-200">
+                        <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-semibold text-amber-800">Company content is incomplete.</p>
+                          <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
+                            Adding company-specific references improves accuracy and reduces false positives.
+                          </p>
+                          <button onClick={() => setShowRefUpload(true)}
+                            className="text-[11px] text-amber-700 font-medium mt-1.5 hover:underline">
+                            Add content →
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
-      {/* Findings */}
-      {assessment && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <h2 className="font-semibold">Assessment Findings</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {findings.length} finding{findings.length !== 1 ? "s" : ""} · L1–L11 neuro-symbolic analysis
-                {assessment.processing_time_seconds ? ` · ${assessment.processing_time_seconds.toFixed(1)}s` : ""}
-              </p>
-            </div>
-            <div className="flex items-center gap-3 flex-wrap">
-              {/* List / Review toggle */}
-              <div className="flex items-center rounded-lg border bg-muted/30 p-0.5 gap-0.5">
-                <button
-                  onClick={() => setViewMode("list")}
-                  className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-                    viewMode === "list"
-                      ? "bg-card shadow-sm text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  <LayoutList className="w-3.5 h-3.5" />
-                  List
-                </button>
-                <button
-                  onClick={switchToReview}
-                  className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-                    viewMode === "review"
-                      ? "bg-card shadow-sm text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  {loadingText
-                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    : <FileSearch className="w-3.5 h-3.5" />
-                  }
-                  Review
-                </button>
+                  {/* Checklist */}
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-[1fr_auto] gap-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-1 pb-1 border-b">
+                      <span>Item</span>
+                      <span>Status</span>
+                    </div>
+                    {readinessItems.map((item) => (
+                      <div key={item.label} className="flex items-center justify-between gap-2 px-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {item.status === "complete" ? (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                          ) : item.status === "missing" ? (
+                            <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                          ) : (
+                            <Minus className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
+                          )}
+                          <span className="text-xs text-muted-foreground truncate">{item.label}</span>
+                        </div>
+                        <span className={cn(
+                          "text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0",
+                          item.status === "complete" ? "bg-green-50 text-green-700" :
+                          item.status === "missing" ? "bg-amber-50 text-amber-700" :
+                          "text-muted-foreground/60"
+                        )}>
+                          {item.status === "complete" ? "Complete" :
+                           item.status === "missing" ? "Missing" :
+                           item.status === "secondary" ? "Sec listed" : "Not listed"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
 
-              {/* Severity filter — only in list mode */}
-              {viewMode === "list" && (
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {["all", "critical", "high", "medium", "low"].map(s => (
-                    <button key={s} onClick={() => setSeverityFilter(s)}
-                      className={cn("px-3 py-1 rounded-full text-xs font-medium border transition-colors capitalize",
-                        severityFilter === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-accent border-border")}>
-                      {s === "all" ? `All (${findings.length})` : `${s.charAt(0).toUpperCase() + s.slice(1)} (${findings.filter(f => f.severity === s).length})`}
+              {/* Assessment Scope */}
+              <div className="bg-card border rounded-xl overflow-hidden">
+                <div className="px-5 py-3 border-b flex items-center justify-between">
+                  <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Assessment Scope</h3>
+                  <button onClick={() => setActiveTab("regulatory")}
+                    className="flex items-center gap-1 text-[11px] text-primary hover:underline font-medium">
+                    <Edit3 className="w-2.5 h-2.5" /> Edit scope
+                  </button>
+                </div>
+                <div className="p-4">
+                  <div className="grid grid-cols-4 gap-3 mb-4">
+                    {[
+                      { label: "Review mode", value: "Inspection grade" },
+                      { label: "Regulatory perspective", value: "FDA / GMP" },
+                      { label: "Frameworks", value: `${selectedFrameworks.length} selected` },
+                      { label: "Output", value: "Findings + Evidence Map + Action Plan" },
+                    ].map(({ label, value }) => (
+                      <div key={label} className="text-center p-3 rounded-lg bg-muted/30 border">
+                        <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">{label}</p>
+                        <p className="text-xs font-semibold leading-tight">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                      Selected Frameworks ({selectedFrameworks.length} items)
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedFrameworks.slice(0, 5).map(code => {
+                        const item = FRAMEWORK_GROUPS.flatMap(g => g.items).find(i => i.code === code);
+                        return (
+                          <span key={code} className="text-[10px] px-2 py-0.5 rounded-full border bg-muted/30 font-medium">
+                            {item?.label ?? code}
+                          </span>
+                        );
+                      })}
+                      {selectedFrameworks.length > 5 && (
+                        <button onClick={() => setActiveTab("regulatory")}
+                          className="text-[10px] px-2 py-0.5 rounded-full border border-primary/30 bg-primary/5 text-primary font-medium hover:bg-primary/10 transition-colors">
+                          +{selectedFrameworks.length - 5} more
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Content Coverage */}
+              <div className="bg-card border rounded-xl overflow-hidden">
+                <div className="px-5 py-3 border-b">
+                  <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Content Coverage</h3>
+                </div>
+                <div className="divide-y">
+                  <div className="grid grid-cols-[2fr_1fr_3fr_60px] gap-3 px-5 py-2 bg-muted/20">
+                    {["Content Type", "Status", "Details", "Action"].map(h => (
+                      <p key={h} className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{h}</p>
+                    ))}
+                  </div>
+                  {contentCoverageRows.map((row) => (
+                    <div key={row.type} className="grid grid-cols-[2fr_1fr_3fr_60px] gap-3 items-center px-5 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <row.icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        <span className="text-xs font-medium">{row.type}</span>
+                      </div>
+                      <div>
+                        {row.count > 0 ? (
+                          <span className="flex items-center gap-1 text-[11px] font-semibold text-amber-700">
+                            <span className="w-2.5 h-2.5 rounded-full border-2 border-amber-500 shrink-0" />
+                            {row.count} linked
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground font-medium">Not linked</span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground leading-tight">{row.detail}</p>
+                      <button onClick={() => setShowRefUpload(true)}
+                        className="text-[11px] text-primary font-medium hover:underline text-left">
+                        {row.count > 0 ? "Add" : "Link"}
+                      </button>
+                    </div>
+                  ))}
+                  <div className="px-5 py-2.5">
+                    <button onClick={() => setShowRefUpload(true)}
+                      className="text-[11px] text-primary font-medium hover:underline">
+                      Manage content →
                     </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Assessment result summary (when available) */}
+              {assessment && (
+                <div className="bg-card border rounded-xl p-4">
+                  <div className="flex items-center gap-4">
+                    <ScoreRing score={adjustedScore ?? doc.latest_score} size="sm" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold">
+                        {assessment.score_band ?? "—"} · {(adjustedScore ?? assessment.clyira_score)?.toFixed(1)} / 100
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {findings.length} findings · L1–L11 · {timeAgo(assessment.created_at)}
+                        {assessment.processing_time_seconds ? ` · ${assessment.processing_time_seconds.toFixed(1)}s` : ""}
+                      </p>
+                      <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                        {[
+                          { label: "Crit", count: assessment.findings_critical, sev: "critical" },
+                          { label: "High", count: assessment.findings_high, sev: "high" },
+                          { label: "Med", count: assessment.findings_medium, sev: "medium" },
+                          { label: "Low", count: assessment.findings_low, sev: "low" },
+                        ].map(({ label, count, sev }) => {
+                          const cfg = getSeverityConfig(sev);
+                          return count > 0 ? (
+                            <button key={sev}
+                              onClick={() => { setActiveTab("findings"); setSeverityFilter(sev); }}
+                              className={cn("rounded px-2 py-0.5 hover:opacity-80 transition-opacity", cfg.bg)}>
+                              <span className={cn("text-xs font-bold tabular-nums", cfg.color)}>{count}</span>
+                              <span className={cn("text-[9px] font-medium ml-1", cfg.color)}>{label}</span>
+                            </button>
+                          ) : null;
+                        })}
+                        {(assessment.enforcement_matches ?? 0) > 0 && (
+                          <span className="text-[10px] font-medium text-orange-600">
+                            {assessment.enforcement_matches} enforcement match{assessment.enforcement_matches !== 1 ? "es" : ""}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button onClick={() => setActiveTab("findings")}
+                      className="flex items-center gap-1.5 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-accent transition-colors shrink-0">
+                      View findings <ChevronRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* No assessment CTA */}
+              {!assessment && !assessing && (
+                <div className="bg-muted/30 border border-dashed rounded-xl px-8 py-8 text-center">
+                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-3">
+                    <Play className="w-5 h-5 text-primary" />
+                  </div>
+                  <h3 className="font-semibold mb-1">No assessment yet</h3>
+                  <p className="text-sm text-muted-foreground max-w-sm mx-auto mb-4">
+                    Run the L1–L11 neuro-symbolic engine to identify structural, content, and regulatory compliance gaps.
+                  </p>
+                  <button onClick={runAssessment}
+                    className="px-6 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+                    Run Assessment Now
+                  </button>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Assessing against {selectedFrameworks.length} of {ALL_FRAMEWORK_CODES.length} frameworks
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Right column */}
+            <div className="space-y-4">
+              {/* Document Intelligence */}
+              <div className="bg-card border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b">
+                  <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Document Intelligence</h3>
+                </div>
+                <div className="p-4 space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { label: "Document Type", value: doc.dtap_id ? (DTAP_LABEL[doc.dtap_id] ?? doc.dtap_id) : "—" },
+                      { label: "Document context", value: doc.dtap_id ? (DTAP_CONTEXT[doc.dtap_id] ?? "—") : "—" },
+                      { label: "Self-reference", value: (doc.references?.length ?? 0) > 3 ? "High" : (doc.references?.length ?? 0) > 0 ? "Moderate" : "Low" },
+                    ].map(({ label, value }) => (
+                      <div key={label} className={label === "Document Type" ? "col-span-2" : ""}>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">{label}</p>
+                        <p className="text-xs font-semibold">{value}</p>
+                      </div>
+                    ))}
+                    <div className="col-span-2">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Confidence</p>
+                      {assessment ? (
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs font-semibold w-8">{Math.min(99, Math.round((assessment.clyira_score ?? 50) * 0.87))}%</p>
+                          <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                            <div className="h-full bg-primary rounded-full transition-all"
+                              style={{ width: `${Math.min(99, Math.round((assessment.clyira_score ?? 50) * 0.87))}%` }} />
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">—</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {doc.dtap_id && DTAP_REVIEW_ITEMS[doc.dtap_id] && (
+                    <div>
+                      <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Expected review items</p>
+                      <div className="flex flex-wrap gap-1">
+                        {DTAP_REVIEW_ITEMS[doc.dtap_id].slice(0, 6).map(item => (
+                          <span key={item} className="text-[10px] px-1.5 py-0.5 rounded bg-muted border text-muted-foreground">{item}</span>
+                        ))}
+                        {DTAP_REVIEW_ITEMS[doc.dtap_id].length > 6 && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 border border-primary/20 text-primary font-medium">
+                            +{DTAP_REVIEW_ITEMS[doc.dtap_id].length - 6} more
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Linked Context Kit */}
+              <div className="bg-card border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b flex items-center justify-between">
+                  <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Linked Context Kit</h3>
+                  <button onClick={() => setShowRefUpload(true)} className="text-[10px] text-primary hover:underline font-medium">+ Add</button>
+                </div>
+                <div className="p-4">
+                  {(doc.references?.length ?? 0) === 0 ? (
+                    <div className="text-center py-4">
+                      <Link2 className="w-7 h-7 text-muted-foreground/25 mx-auto mb-2" />
+                      <p className="text-[11px] text-muted-foreground">No linked content items</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {doc.references!.slice(0, 4).map((ref: any) => (
+                        <div key={ref.id} className="flex items-center gap-2">
+                          <FileText className="w-3 h-3 text-muted-foreground shrink-0" />
+                          <span className="flex-1 truncate text-[11px] text-muted-foreground">{ref.title}</span>
+                          <RefTypeBadge type={ref.reference_type} />
+                        </div>
+                      ))}
+                      {doc.references!.length > 4 && (
+                        <button onClick={() => setActiveTab("references")} className="text-[10px] text-primary hover:underline">
+                          +{doc.references!.length - 4} more
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Document Details */}
+              <div className="bg-card border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b">
+                  <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Document Details</h3>
+                </div>
+                <div className="p-4 space-y-2.5">
+                  {[
+                    { label: "File name", value: doc.title },
+                    { label: "File type", value: doc.file_type?.toUpperCase() ?? "—" },
+                    { label: "Version", value: doc.version ?? "—" },
+                    { label: "Uploaded", value: formatDate(doc.created_at) },
+                    { label: "Last modified", value: formatDate(doc.created_at) },
+                    { label: "Owner", value: doc.department_owner ?? "Demo User (Admin)" },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="flex items-start justify-between gap-2">
+                      <p className="text-[10px] text-muted-foreground shrink-0">{label}</p>
+                      <p className="text-[10px] font-medium text-right truncate max-w-[150px]" title={value}>{value}</p>
+                    </div>
+                  ))}
+                  {assessment && (
+                    <div className="pt-2 mt-1 border-t">
+                      <div className="flex items-start gap-1.5">
+                        <ShieldCheck className="w-3 h-3 text-primary mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-[10px] text-muted-foreground leading-relaxed">
+                            Assessment uses {selectedFrameworks.length} regulatory frameworks
+                          </p>
+                          <button onClick={() => setActiveTab("regulatory")}
+                            className="text-[10px] text-primary hover:underline mt-0.5 block">
+                            Adjust in Assessment Settings
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── REFERENCES TAB ────────────────────────────────────────────────── */}
+        {activeTab === "references" && (
+          <div className="max-w-3xl space-y-4">
+            <div className="bg-card border rounded-xl overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b">
+                <div>
+                  <h2 className="font-semibold flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-muted-foreground" />
+                    Custom Validation References
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Upload your SOPs, checklists, or internal standards — Clyira uses these as assessment context
+                  </p>
+                </div>
+                <button onClick={() => setShowRefUpload(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-medium hover:bg-accent transition-colors">
+                  <Plus className="w-3.5 h-3.5" /> Add Reference
+                </button>
+              </div>
+              {doc.references && doc.references.length > 0 ? (
+                <div className="divide-y">
+                  {doc.references.map((ref: any) => (
+                    <div key={ref.id} className="flex items-center gap-3 px-5 py-3">
+                      <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                      <span className="text-sm flex-1 truncate">{ref.title}</span>
+                      <RefTypeBadge type={ref.reference_type} />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="px-5 py-10 text-center">
+                  <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
+                    <BookOpen className="w-5 h-5 text-muted-foreground/50" />
+                  </div>
+                  <p className="text-sm font-medium text-muted-foreground">No references uploaded yet</p>
+                  <p className="text-xs text-muted-foreground mt-1 max-w-xs mx-auto">
+                    Add your organizational guidelines or internal standards to get more accurate, context-aware findings.
+                  </p>
+                  <button onClick={() => setShowRefUpload(true)}
+                    className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 border rounded-lg text-sm font-medium hover:bg-accent transition-colors">
+                    <Upload className="w-3.5 h-3.5" /> Upload First Reference
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── REGULATORY SCOPE TAB ─────────────────────────────────────────── */}
+        {activeTab === "regulatory" && (
+          <div className="max-w-2xl">
+            <FrameworkSelectorPanel selected={selectedFrameworks} onChange={setSelectedFrameworks} />
+          </div>
+        )}
+
+        {/* ── FINDINGS TAB ─────────────────────────────────────────────────── */}
+        {activeTab === "findings" && (
+          <div className="space-y-4">
+            {assessment ? (
+              <>
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <h2 className="font-semibold">Assessment Findings</h2>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {findings.length} finding{findings.length !== 1 ? "s" : ""} · L1–L11 neuro-symbolic analysis
+                      {assessment.processing_time_seconds ? ` · ${assessment.processing_time_seconds.toFixed(1)}s` : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex items-center rounded-lg border bg-muted/30 p-0.5 gap-0.5">
+                      <button onClick={() => setViewMode("list")}
+                        className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                          viewMode === "list" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground")}>
+                        <LayoutList className="w-3.5 h-3.5" /> List
+                      </button>
+                      <button onClick={switchToReview}
+                        className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                          viewMode === "review" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground")}>
+                        {loadingText ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileSearch className="w-3.5 h-3.5" />}
+                        Review
+                      </button>
+                    </div>
+                    {viewMode === "list" && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {["all", "critical", "high", "medium", "low"].map(s => (
+                          <button key={s} onClick={() => setSeverityFilter(s)}
+                            className={cn("px-3 py-1 rounded-full text-xs font-medium border transition-colors capitalize",
+                              severityFilter === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-accent border-border")}>
+                            {s === "all" ? `All (${findings.length})` : `${s.charAt(0).toUpperCase() + s.slice(1)} (${findings.filter(f => f.severity === s).length})`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {assessment.status === "completed" && (
+                      <div className="flex items-center gap-2">
+                        <button onClick={exportDocx} disabled={exporting}
+                          className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-medium hover:bg-accent disabled:opacity-50">
+                          {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} DOCX
+                        </button>
+                        <button onClick={exportCsv} disabled={exporting}
+                          className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-medium hover:bg-accent disabled:opacity-50">
+                          {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} CSV
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {viewMode === "review" ? (
+                  <div className="bg-card border rounded-xl p-4">
+                    <DocumentReviewPane documentText={documentText} fileType={doc.file_type}
+                      findings={findings} documentId={id} assessmentId={assessment.id} />
+                  </div>
+                ) : sortedFindings.length === 0 ? (
+                  <div className="bg-green-50 border border-green-200 rounded-xl px-6 py-8 text-center">
+                    <CheckCircle2 className="w-10 h-10 text-green-500 mx-auto mb-2" />
+                    <p className="font-semibold text-green-800">
+                      {severityFilter === "all" ? "No findings — document passed all checks" : `No ${severityFilter} findings`}
+                    </p>
+                    <p className="text-sm text-green-700 mt-1">
+                      {severityFilter === "all" ? "All applicable L1–L11 levels passed." : "Change the filter to see other severity levels."}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {sortedFindings.map(f => (
+                      <FindingCard key={f.id} finding={f} documentId={id}
+                        assessmentId={assessment.id} onStatusChange={handleFindingStatusChange} />
+                    ))}
+                  </div>
+                )}
+
+                {assessment.status === "completed" && (
+                  <QAAssistantPanel documentId={id} assessmentId={assessment.id} />
+                )}
+              </>
+            ) : (
+              <div className="bg-muted/30 border border-dashed rounded-xl px-8 py-10 text-center">
+                <Play className="w-8 h-8 text-primary mx-auto mb-3" />
+                <h3 className="font-semibold mb-1">No findings yet</h3>
+                <p className="text-sm text-muted-foreground mb-4">Run an assessment from the Overview tab to generate findings.</p>
+                <button onClick={() => { setActiveTab("overview"); runAssessment(); }}
+                  className="px-6 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+                  Run Assessment
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── ACTIVITY TAB ─────────────────────────────────────────────────── */}
+        {activeTab === "activity" && (
+          <div className="max-w-3xl space-y-4">
+            <AssessmentHistoryPanel documentId={id} />
+
+            {/* Electronic Signatures */}
+            <div className="bg-card border rounded-xl overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b">
+                <div className="flex items-center gap-2">
+                  <PenLine className="w-4 h-4 text-muted-foreground" />
+                  <h2 className="font-semibold text-sm">Electronic Signatures</h2>
+                  <span className="text-[10px] text-muted-foreground">21 CFR Part 11 §11.50</span>
+                </div>
+                <button onClick={() => setShowSignModal(true)}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 border rounded-md hover:bg-accent transition-colors font-medium">
+                  <PenLine className="w-3 h-3" /> Sign document
+                </button>
+              </div>
+              {signatures.length === 0 ? (
+                <div className="px-5 py-8 text-center">
+                  <p className="text-sm text-muted-foreground">No signatures applied yet.</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Electronically sign this document to create a tamper-evident, legally binding record.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y">
+                  {signatures.map((sig) => (
+                    <div key={sig.id} className={`px-5 py-4 flex items-start gap-4 ${sig.is_voided ? "opacity-50" : ""}`}>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                        sig.meaning === "approved" ? "bg-green-100" : sig.meaning === "reviewed" ? "bg-blue-100" : "bg-purple-100"}`}>
+                        <PenLine className={`w-3.5 h-3.5 ${
+                          sig.meaning === "approved" ? "text-green-700" : sig.meaning === "reviewed" ? "text-blue-700" : "text-purple-700"}`} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-medium">{sig.user_full_name}</p>
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded capitalize ${
+                            sig.meaning === "approved" ? "bg-green-100 text-green-700" :
+                            sig.meaning === "reviewed" ? "bg-blue-100 text-blue-700" : "bg-purple-100 text-purple-700"}`}>
+                            {sig.meaning}
+                          </span>
+                          {sig.is_voided && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-700">VOIDED</span>}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">{sig.user_email} · {sig.user_role}</p>
+                        {sig.void_reason && <p className="text-xs text-red-600 mt-0.5">Voided: {sig.void_reason}</p>}
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-xs text-muted-foreground">{new Date(sig.signed_at).toLocaleString()}</p>
+                        {sig.document_version && <p className="text-[10px] font-mono text-muted-foreground/60">v{sig.document_version}</p>}
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}
             </div>
-          </div>
-
-          {viewMode === "review" ? (
-            <div className="bg-card border rounded-xl p-4">
-              <DocumentReviewPane
-                documentText={documentText}
-                fileType={doc.file_type}
-                findings={findings}
-                documentId={id}
-                assessmentId={assessment.id}
-              />
-            </div>
-          ) : sortedFindings.length === 0 ? (
-            <div className="bg-green-50 border border-green-200 rounded-xl px-6 py-8 text-center">
-              <CheckCircle2 className="w-10 h-10 text-green-500 mx-auto mb-2" />
-              <p className="font-semibold text-green-800">
-                {severityFilter === "all" ? "No findings — document passed all checks" : `No ${severityFilter} findings`}
-              </p>
-              <p className="text-sm text-green-700 mt-1">
-                {severityFilter === "all" ? "All applicable L1–L11 levels passed." : "Change the filter to see other severity levels."}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {sortedFindings.map(f => (
-                <FindingCard
-                  key={f.id}
-                  finding={f}
-                  documentId={id}
-                  assessmentId={assessment.id}
-                  onStatusChange={handleFindingStatusChange}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* QA Assistant */}
-      {assessment?.status === "completed" && (
-        <QAAssistantPanel documentId={id} assessmentId={assessment.id} />
-      )}
-
-      {/* Assessment History */}
-      <AssessmentHistoryPanel documentId={id} />
-
-      {/* Custom Validation References */}
-      <div className="bg-card border rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b">
-          <div>
-            <h2 className="font-semibold flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-muted-foreground" />
-              Custom Validation References
-            </h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Upload your SOPs, checklists, or internal standards — Clyira uses these as assessment context
-            </p>
-          </div>
-          <button
-            onClick={() => setShowRefUpload(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-medium hover:bg-accent transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5" /> Add Reference
-          </button>
-        </div>
-
-        {doc.references && doc.references.length > 0 ? (
-          <div className="divide-y">
-            {doc.references.map((ref: any) => (
-              <div key={ref.id} className="flex items-center gap-3 px-5 py-3">
-                <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                <span className="text-sm flex-1 truncate">{ref.title}</span>
-                <RefTypeBadge type={ref.reference_type} />
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="px-5 py-8 text-center">
-            <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
-              <BookOpen className="w-5 h-5 text-muted-foreground/50" />
-            </div>
-            <p className="text-sm font-medium text-muted-foreground">No references uploaded yet</p>
-            <p className="text-xs text-muted-foreground mt-1 max-w-xs mx-auto">
-              Add your organizational guidelines or internal standards to get more accurate, context-aware findings.
-            </p>
-            <button
-              onClick={() => setShowRefUpload(true)}
-              className="mt-4 flex items-center gap-1.5 px-4 py-2 border rounded-lg text-sm font-medium hover:bg-accent transition-colors mx-auto"
-            >
-              <Upload className="w-3.5 h-3.5" /> Upload First Reference
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Regulatory Framework Selector (always visible) */}
-      <FrameworkSelectorPanel selected={selectedFrameworks} onChange={setSelectedFrameworks} />
-
-      {/* No assessment CTA */}
-      {!assessment && !assessing && (
-        <div className="bg-muted/30 border border-dashed rounded-xl px-8 py-10 text-center">
-          <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
-            <Play className="w-6 h-6 text-primary" />
-          </div>
-          <h3 className="font-semibold mb-1">Ready to assess</h3>
-          <p className="text-sm text-muted-foreground max-w-sm mx-auto mb-4">
-            Run the L1–L11 neuro-symbolic assessment engine to identify structural, content, and regulatory compliance gaps.
-          </p>
-          <button onClick={runAssessment}
-            className="px-6 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
-            Run Assessment Now
-          </button>
-          <p className="text-xs text-muted-foreground mt-3">
-            Assessing against {selectedFrameworks.length} of {ALL_FRAMEWORK_CODES.length} frameworks
-          </p>
-        </div>
-      )}
-
-      {/* Electronic Signature Manifest */}
-      <div className="bg-card border rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b">
-          <div className="flex items-center gap-2">
-            <PenLine className="w-4 h-4 text-muted-foreground" />
-            <h2 className="font-semibold text-sm">Electronic Signatures</h2>
-            <span className="text-[10px] text-muted-foreground">21 CFR Part 11 §11.50</span>
-          </div>
-          <button
-            onClick={() => setShowSignModal(true)}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 border rounded-md hover:bg-accent transition-colors font-medium"
-          >
-            <PenLine className="w-3 h-3" /> Sign document
-          </button>
-        </div>
-
-        {signatures.length === 0 ? (
-          <div className="px-5 py-8 text-center">
-            <p className="text-sm text-muted-foreground">No signatures applied yet.</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Electronically sign this document to create a tamper-evident, legally binding record.
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y">
-            {signatures.map((sig) => (
-              <div key={sig.id} className={`px-5 py-4 flex items-start gap-4 ${sig.is_voided ? "opacity-50" : ""}`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                  sig.meaning === "approved" ? "bg-green-100" :
-                  sig.meaning === "reviewed" ? "bg-blue-100" : "bg-purple-100"
-                }`}>
-                  <PenLine className={`w-3.5 h-3.5 ${
-                    sig.meaning === "approved" ? "text-green-700" :
-                    sig.meaning === "reviewed" ? "text-blue-700" : "text-purple-700"
-                  }`} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-medium">{sig.user_full_name}</p>
-                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded capitalize ${
-                      sig.meaning === "approved" ? "bg-green-100 text-green-700" :
-                      sig.meaning === "reviewed" ? "bg-blue-100 text-blue-700" : "bg-purple-100 text-purple-700"
-                    }`}>
-                      {sig.meaning}
-                    </span>
-                    {sig.is_voided && (
-                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-700">VOIDED</span>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-0.5">{sig.user_email} · {sig.user_role}</p>
-                  {sig.void_reason && (
-                    <p className="text-xs text-red-600 mt-0.5">Voided: {sig.void_reason}</p>
-                  )}
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <p className="text-xs text-muted-foreground">{new Date(sig.signed_at).toLocaleString()}</p>
-                  {sig.document_version && (
-                    <p className="text-[10px] font-mono text-muted-foreground/60">v{sig.document_version}</p>
-                  )}
-                </div>
-              </div>
-            ))}
           </div>
         )}
       </div>
