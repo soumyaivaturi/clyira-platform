@@ -113,6 +113,14 @@ class Finding(Base, TimestampMixin):
     validated = Column(Boolean, default=False)  # Passed verification check
     confidence_score = Column(Float)  # Model confidence in finding
 
+    # Engine traceability fields
+    verification_state = Column(String(10), nullable=True)   # green, red, blue, gray
+    field_criticality = Column(String(10), nullable=True)    # critical, high, medium, low
+    source_page = Column(Integer, nullable=True)
+    human_verification_required = Column(Boolean, default=False, nullable=True)
+    extraction_confidence = Column(Float, nullable=True)     # IDP extraction confidence (0-1)
+    explanation_trace = Column(JSONB, nullable=True)         # Structured reasoning trace
+
 
 
 class FindingComment(Base):
