@@ -49,6 +49,7 @@ interface Assessment {
   enforcement_matches: number; processing_time_seconds?: number;
   levels_run?: string[]; created_at?: string;
   data_integrity_hold?: boolean; suspended_reason?: string;
+  error_detail?: string;
 }
 
 interface HistoryEntry {
@@ -78,6 +79,14 @@ const LEVEL_PROGRESS_LABELS: Record<string, string> = {
 // ── DTAP Intelligence Maps ─────────────────────────────────────────────────────
 
 const DTAP_LABEL: Record<string, string> = {
+  // DB stores DTAP IDs like "DTAP-003"; also accept lowercase shorthand
+  "DTAP-001": "Standard Operating Procedure",
+  "DTAP-002": "CAPA",
+  "DTAP-003": "Analytical Test Method",
+  "DTAP-004": "Deviation Report",
+  "DTAP-005": "Lab Investigation Report",
+  "DTAP-006": "Validation Protocol",
+  "DTAP-007": "Batch Record",
   atm: "Analytical Test Method",
   sop: "Standard Operating Procedure",
   capa: "CAPA",
@@ -87,6 +96,13 @@ const DTAP_LABEL: Record<string, string> = {
 };
 
 const DTAP_CONTEXT: Record<string, string> = {
+  "DTAP-001": "Process control / operations",
+  "DTAP-002": "Quality event / corrective action",
+  "DTAP-003": "QC testing / documentation",
+  "DTAP-004": "Deviation management",
+  "DTAP-005": "Lab investigation / OOS",
+  "DTAP-006": "Process / method validation",
+  "DTAP-007": "Batch manufacturing / lot release",
   atm: "QC testing / documentation",
   sop: "Process control / operations",
   capa: "Quality event / corrective action",
@@ -96,6 +112,13 @@ const DTAP_CONTEXT: Record<string, string> = {
 };
 
 const DTAP_REVIEW_ITEMS: Record<string, string[]> = {
+  "DTAP-001": ["Procedure steps", "Responsibilities", "References", "Revision history", "Approval chain", "Training requirements"],
+  "DTAP-002": ["Root cause analysis", "Corrective actions", "Preventive actions", "Effectiveness check", "Timeline", "Risk assessment"],
+  "DTAP-003": ["Acceptance criteria", "Sample handling", "Reagents / materials", "Instrument qualification", "Calculations", "Data integrity", "Reference standards", "System suitability"],
+  "DTAP-004": ["Event description", "Impact assessment", "Root cause", "Disposition", "CAPA linkage", "Recurrence prevention"],
+  "DTAP-005": ["OOS investigation", "Phase I / Phase II", "Assignable cause", "Disposition", "Method validation"],
+  "DTAP-006": ["Protocol design", "Acceptance criteria", "Statistical analysis", "Risk assessment", "Change control"],
+  "DTAP-007": ["Batch formula", "Process parameters", "In-process controls", "Yield reconciliation", "QC release"],
   atm: ["Acceptance criteria", "Sample handling", "Reagents / materials", "Instrument qualification", "Calculations", "Data integrity", "Reference standards", "System suitability"],
   sop: ["Procedure steps", "Responsibilities", "References", "Revision history", "Approval chain", "Training requirements"],
   capa: ["Root cause analysis", "Corrective actions", "Preventive actions", "Effectiveness check", "Timeline", "Risk assessment"],
@@ -850,6 +873,7 @@ export default function DocumentDetailPage() {
         }
         if (res.data.status === "failed") {
           setError("Assessment failed. Please try again.");
+          setAssessment(res.data); // preserve error_detail for display
           setAssessing(false);
           return;
         }
@@ -1050,7 +1074,17 @@ export default function DocumentDetailPage() {
       <div className="p-5 flex-1 bg-muted/30">
         {/* Error + hold banners */}
         {error && (
-          <div className="mb-4 bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-4 py-3">{error}</div>
+          <div className="mb-4 bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-4 py-3">
+            <p className="font-medium">{error}</p>
+            {assessment?.error_detail && (
+              <details className="mt-2">
+                <summary className="text-xs cursor-pointer opacity-70 hover:opacity-100">Show error details</summary>
+                <pre className="mt-1.5 text-[10px] font-mono whitespace-pre-wrap break-all opacity-80 max-h-40 overflow-y-auto bg-destructive/5 rounded p-2">
+                  {assessment.error_detail}
+                </pre>
+              </details>
+            )}
+          </div>
         )}
         {assessment?.data_integrity_hold && (
           <div className="mb-4 flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">

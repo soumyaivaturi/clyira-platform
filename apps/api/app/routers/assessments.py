@@ -91,6 +91,7 @@ class AssessmentOut(BaseModel):
     processing_time_seconds: Optional[float] = None
     levels_run: Optional[list] = None
     created_at: Optional[datetime] = None
+    error_detail: Optional[str] = None
 
     class Config:
         from_attributes = True
