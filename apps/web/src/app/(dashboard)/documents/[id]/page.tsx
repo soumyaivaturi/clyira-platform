@@ -745,6 +745,12 @@ export default function DocumentDetailPage() {
   const [documentText, setDocumentText] = useState("");
   const [loadingText, setLoadingText] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const loadSignatures = async () => {
     try {
@@ -830,12 +836,15 @@ export default function DocumentDetailPage() {
     const maxAttempts = 90;
     for (let i = 0; i < maxAttempts; i++) {
       await new Promise(r => setTimeout(r, 10000));
+      if (!mountedRef.current) return;
       try {
         const res = await assessmentsApi.get(assessmentId);
+        if (!mountedRef.current) return;
         setAssessment(res.data);
         if (res.data.status === "completed") {
           await loadAssessment(assessmentId);
-          try { const docRes = await documentsApi.get(id); setDoc(docRes.data); } catch { }
+          if (!mountedRef.current) return;
+          try { const docRes = await documentsApi.get(id); if (mountedRef.current) setDoc(docRes.data); } catch { }
           setAssessing(false);
           return;
         }
@@ -846,6 +855,7 @@ export default function DocumentDetailPage() {
         }
       } catch { }
     }
+    if (!mountedRef.current) return;
     setError("Assessment is taking longer than expected. Refresh to check status.");
     setAssessing(false);
   };
@@ -906,8 +916,8 @@ export default function DocumentDetailPage() {
 
   const contentCoverageRows = [
     { type: "SOPs & Work Instructions", icon: FileText, count: sopCount, detail: sopCount > 0 ? `${sopCount} reference${sopCount !== 1 ? "s" : ""} linked` : "No company SOPs linked" },
-    { type: "Specifications", icon: ClipboardList, count: 0, detail: "No product specifications linked" },
-    { type: "Validation Protocols", icon: FlaskConical, count: specCount, detail: specCount > 0 ? `${specCount} linked` : "No validation protocols linked" },
+    { type: "Specifications", icon: ClipboardList, count: specCount, detail: specCount > 0 ? `${specCount} linked` : "No product specifications linked" },
+    { type: "Validation Protocols", icon: FlaskConical, count: 0, detail: "No validation protocols linked" },
     { type: "Prior Guidance / LIRs", icon: History, count: 0, detail: "No related quality events linked" },
     { type: "Product / Batch Context", icon: Package, count: 0, detail: "Product or batch context not linked" },
   ];
@@ -986,7 +996,8 @@ export default function DocumentDetailPage() {
 
             {/* Action buttons */}
             <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-              <button className="flex items-center gap-1.5 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-accent transition-colors">
+              <button onClick={() => { setActiveTab("findings"); switchToReview(); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-accent transition-colors">
                 <Eye className="w-3.5 h-3.5" /> Preview Document
               </button>
               <button onClick={() => setShowRefUpload(true)}
@@ -1564,8 +1575,8 @@ export default function DocumentDetailPage() {
                 <Play className="w-8 h-8 text-primary mx-auto mb-3" />
                 <h3 className="font-semibold mb-1">No findings yet</h3>
                 <p className="text-sm text-muted-foreground mb-4">Run an assessment from the Overview tab to generate findings.</p>
-                <button onClick={() => { setActiveTab("overview"); runAssessment(); }}
-                  className="px-6 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
+                <button onClick={runAssessment} disabled={assessing}
+                  className="px-6 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
                   Run Assessment
                 </button>
               </div>

@@ -16,6 +16,22 @@ from app.dtap import DTAPRegistry
 logger = logging.getLogger(__name__)
 
 
+def _is_structural(line: str) -> bool:
+    """Return True if a line looks like a heading / section header / list item
+    rather than flowing body text.  Used by the DOCX extractor to decide
+    whether consecutive paragraphs should be space-merged."""
+    t = line.strip()
+    if not t:
+        return True
+    if len(t) < 100 and t.isupper():
+        return True
+    if len(t) < 100 and t[0].isdigit() and "." in t[:6] and len(t.split()) <= 12:
+        return True
+    if t.startswith("|") or " | " in t:
+        return True  # table row
+    return False
+
+
 class DocumentService:
     """Service layer for document operations"""
 
@@ -223,12 +239,49 @@ class DocumentService:
             try:
                 from docx import Document as DocxDocument
                 doc = DocxDocument(io.BytesIO(content))
-                parts = []
-                # Paragraphs (body text, headings)
+                parts: list[str] = []
+                # Paragraphs — preserve original document structure.
+                # Word stores each line as a separate <w:p> element, but many
+                # of them are just consecutive sentences that should flow as a
+                # single block.  We use paragraph styles + spacing to decide
+                # when to insert a real line break vs. a space.
                 for p in doc.paragraphs:
-                    if p.text.strip():
-                        parts.append(p.text)
-                # Tables — test methods and lab docs are almost entirely table-formatted
+                    text = p.text.strip()
+                    if not text:
+                        # Empty paragraph = intentional visual break in the
+                        # original doc → double-newline so the frontend can
+                        # distinguish paragraph breaks from soft wraps.
+                        if parts and parts[-1] != "":
+                            parts.append("")          # will become \n\n
+                        continue
+
+                    style_name = (p.style.name or "").lower()
+                    is_heading = "heading" in style_name or "title" in style_name
+                    is_list = "list" in style_name or "bullet" in style_name
+                    # Heuristic: short, CAPS/numbered lines = section headers
+                    is_section_header = (
+                        len(text) < 100
+                        and (text.isupper() or (text[0].isdigit() and "." in text[:6]))
+                        and len(text.split()) <= 12
+                    )
+
+                    if is_heading or is_list or is_section_header:
+                        # Structural element — always on its own line
+                        parts.append(text)
+                    else:
+                        # Body paragraph — check if we should merge with the
+                        # previous body paragraph (space-join) or start a new
+                        # one.  We start a new block after headings, empty
+                        # lines, or list items; otherwise merge.
+                        if parts and parts[-1] != "" and not _is_structural(parts[-1]) and not _is_structural(text):
+                            # Merge with previous body paragraph
+                            parts[-1] = parts[-1] + " " + text
+                        else:
+                            parts.append(text)
+
+                # Tables — test methods and lab docs are table-heavy
+                if parts and parts[-1] != "":
+                    parts.append("")
                 for table in doc.tables:
                     for row in table.rows:
                         row_texts = [cell.text.strip() for cell in row.cells if cell.text.strip()]
@@ -252,7 +305,9 @@ class DocumentService:
                             text += "\n" + "\n".join(rows)
                         if text.strip():
                             pages.append(text)
-                result = "\n".join(pages)
+                # Double-newline between pages so the frontend can distinguish
+                # real paragraph/page breaks from soft line-wraps
+                result = "\n\n".join(pages)
                 if result.strip():
                     return result
             except Exception as e:
@@ -261,7 +316,7 @@ class DocumentService:
             try:
                 from PyPDF2 import PdfReader
                 reader = PdfReader(io.BytesIO(content))
-                return "\n".join(page.extract_text() or "" for page in reader.pages)
+                return "\n\n".join(page.extract_text() or "" for page in reader.pages)
             except Exception as e:
                 logger.error(f"PDF extraction failed entirely: {e}")
                 return ""

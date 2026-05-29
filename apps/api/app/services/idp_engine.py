@@ -714,10 +714,6 @@ class TrOCRProvider(IDPProvider):
             pixel_values = processor(images=pil_img, return_tensors="pt").pixel_values
 
             with torch.no_grad():
-                generated_ids = model.generate(
-                    pixel_values,
-                    max_new_tokens=128,
-                )
                 outputs = model.generate(
                     pixel_values,
                     max_new_tokens=128,
@@ -725,7 +721,7 @@ class TrOCRProvider(IDPProvider):
                     return_dict_in_generate=True,
                 )
 
-            text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+            text = processor.batch_decode(outputs.sequences, skip_special_tokens=True)[0]
 
             # Approximate confidence from sequence scores
             confidence = 0.6  # TrOCR doesn't expose token-level confidence directly
@@ -986,7 +982,13 @@ class IDPEngine:
 
     @staticmethod
     def full_text(output: IDPOutput) -> str:
-        """Flatten all page region content into a single string for the assessment engine."""
+        """Flatten all page region content into a single string for the assessment engine.
+
+        Uses double-newlines (``\\n\\n``) between pages/regions so the frontend
+        can distinguish real paragraph breaks from soft line-wraps within a
+        block.  Single ``\\n`` inside a region's content is left as-is — the
+        frontend will collapse them to spaces within the same paragraph.
+        """
         parts = []
         for page in output.pages:
             for region in page.regions:
@@ -998,4 +1000,4 @@ class IDPEngine:
                 parts.append(header_line)
                 for row in table.rows:
                     parts.append("\t".join(row))
-        return "\n".join(parts)
+        return "\n\n".join(parts)

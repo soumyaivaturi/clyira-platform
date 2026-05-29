@@ -379,7 +379,7 @@ async def action_finding(
         finding.dispute_reason = data.dispute_reason
     if data.finding_status == "resolved":
         from datetime import datetime
-        finding.resolved_at = datetime.utcnow().isoformat()
+        finding.resolved_at = datetime.utcnow()
     finding.actioned_by = current_user.id
     await db.commit()
 
