@@ -76,14 +76,14 @@ _BPR_VISION_PROMPT = (
 
 
 async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
-    """Extract BPR fields from a scanned/screenshot PDF using Claude Vision.
+    """Extract BPR fields from a scanned/screenshot PDF using Gemini Vision (free tier).
     Returns (fields_dict, error_string). error_string is None on success.
     """
     import base64, re
     from app.core.config import settings
 
-    if not settings.ANTHROPIC_API_KEY:
-        return {}, "ANTHROPIC_API_KEY not set"
+    if not settings.GEMINI_API_KEY:
+        return {}, "GEMINI_API_KEY not set"
 
     try:
         import fitz
@@ -97,24 +97,22 @@ async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
         return {}, f"PDF→image failed: {e}"
 
     try:
-        import anthropic
-        client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        msg = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=512,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64},
-                    },
-                    {"type": "text", "text": _BPR_VISION_PROMPT},
-                ],
-            }],
-        )
-        raw = msg.content[0].text
-        logger.info(f"Claude Vision raw (first 300): {raw[:300]}")
+        import httpx
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+                params={"key": settings.GEMINI_API_KEY},
+                json={
+                    "contents": [{"parts": [
+                        {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}},
+                        {"text": _BPR_VISION_PROMPT},
+                    ]}],
+                    "generationConfig": {"maxOutputTokens": 512, "temperature": 0.1},
+                },
+            )
+        resp.raise_for_status()
+        raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+        logger.info(f"Gemini Vision raw (first 300): {raw[:300]}")
 
         _KEY_MAP = {
             "LOT_NUMBER": "lot_number", "PRODUCT_NAME": "product_name",
@@ -227,9 +225,9 @@ async def scan_document_for_fields(
     vision_error = None
     if not extracted_text.strip() and file_type == "pdf":
         from app.core.config import settings
-        if not settings.ANTHROPIC_API_KEY:
-            vision_error = "ANTHROPIC_API_KEY not set"
-            logger.warning("Vision scan skipped: ANTHROPIC_API_KEY not set on this deployment")
+        if not settings.GEMINI_API_KEY:
+            vision_error = "GEMINI_API_KEY not set"
+            logger.warning("Vision scan skipped: GEMINI_API_KEY not set on this deployment")
         else:
             vision_fields, vision_error = await _vision_scan_bpr_fields(content)
             if vision_fields:
