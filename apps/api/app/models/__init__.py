@@ -2,7 +2,7 @@ from app.models.base import Base
 from app.models.company import Company
 from app.models.user import User
 from app.models.document import Document, DocumentReference
-from app.models.assessment import Assessment, Finding
+from app.models.assessment import Assessment, Finding, FindingComment
 from app.models.regulatory import RegulatoryCorpus, EnforcementRecord
 from app.models.readiness import ReadinessScore
 from app.models.inspection import Inspection, InspectionRequest, InspectionLog
@@ -36,6 +36,7 @@ __all__ = [
     "DocumentReference",
     "Assessment",
     "Finding",
+    "FindingComment",
     "RegulatoryCorpus",
     "EnforcementRecord",
     "ReadinessScore",
