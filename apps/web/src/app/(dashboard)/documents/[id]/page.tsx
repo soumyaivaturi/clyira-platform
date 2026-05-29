@@ -906,7 +906,9 @@ export default function DocumentDetailPage() {
 
   useEffect(() => { loadDoc(); }, [id]);
 
-  const filteredFindings = severityFilter === "all" ? findings : findings.filter(f => f.severity === severityFilter);
+  const filteredFindings = severityFilter === "all"
+    ? findings.filter(f => f.severity !== "info")
+    : findings.filter(f => f.severity === severityFilter);
   const sortedFindings = [...filteredFindings].sort((a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity));
 
   if (loading) {
@@ -1057,14 +1059,17 @@ export default function DocumentDetailPage() {
                   : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
               )}>
               {TAB_LABELS[tab]}
-              {tab === "findings" && findings.length > 0 && (
-                <span className={cn(
-                  "ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-medium",
-                  (assessment?.findings_critical ?? 0) > 0 ? "bg-red-100 text-red-700" : "bg-muted text-muted-foreground"
-                )}>
-                  {findings.length}
-                </span>
-              )}
+              {tab === "findings" && findings.length > 0 && (() => {
+                const issueCount = findings.filter(f => f.severity !== "info").length;
+                return (
+                  <span className={cn(
+                    "ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-medium",
+                    (assessment?.findings_critical ?? 0) > 0 ? "bg-red-100 text-red-700" : "bg-muted text-muted-foreground"
+                  )}>
+                    {issueCount}
+                  </span>
+                );
+              })()}
             </button>
           ))}
         </div>
@@ -1532,7 +1537,7 @@ export default function DocumentDetailPage() {
                   <div>
                     <h2 className="font-semibold">Assessment Findings</h2>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {findings.length} finding{findings.length !== 1 ? "s" : ""} · L1–L11 neuro-symbolic analysis
+                      {findings.filter(f => f.severity !== "info").length} issue{findings.filter(f => f.severity !== "info").length !== 1 ? "s" : ""} · {findings.filter(f => f.severity === "info").length} passed checks · L1–L11
                       {assessment.processing_time_seconds ? ` · ${assessment.processing_time_seconds.toFixed(1)}s` : ""}
                     </p>
                   </div>
@@ -1552,11 +1557,15 @@ export default function DocumentDetailPage() {
                     </div>
                     {viewMode === "list" && (
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {["all", "critical", "high", "medium", "low"].map(s => (
+                        {["all", "critical", "high", "medium", "low", "info"].map(s => (
                           <button key={s} onClick={() => setSeverityFilter(s)}
                             className={cn("px-3 py-1 rounded-full text-xs font-medium border transition-colors capitalize",
                               severityFilter === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-accent border-border")}>
-                            {s === "all" ? `All (${findings.length})` : `${s.charAt(0).toUpperCase() + s.slice(1)} (${findings.filter(f => f.severity === s).length})`}
+                            {s === "all"
+                              ? `Issues (${findings.filter(f => f.severity !== "info").length})`
+                              : s === "info"
+                              ? `Passed (${findings.filter(f => f.severity === "info").length})`
+                              : `${s.charAt(0).toUpperCase() + s.slice(1)} (${findings.filter(f => f.severity === s).length})`}
                           </button>
                         ))}
                       </div>
