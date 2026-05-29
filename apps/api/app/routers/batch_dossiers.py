@@ -76,79 +76,70 @@ _BPR_VISION_PROMPT = (
 
 
 async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
-    """Extract BPR fields from a scanned/screenshot PDF using Gemini Vision.
+    """Extract BPR fields from a scanned/screenshot PDF using Claude Vision.
     Returns (fields_dict, error_string). error_string is None on success.
     """
-    import base64, httpx, re
+    import base64, re
     from app.core.config import settings
+
+    if not settings.ANTHROPIC_API_KEY:
+        return {}, "ANTHROPIC_API_KEY not set"
 
     try:
         import fitz
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        # Scan only page 1 — BPR header fields are always on the cover page.
-        # Keeping to 1 page at 150 DPI keeps image size under Gemini limits and
-        # avoids OOM on Render's free tier (512 MB RAM).
-        image_parts = []
         page = doc[0]
-        pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), colorspace=fitz.csGRAY)  # 144 DPI greyscale
+        pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), colorspace=fitz.csGRAY)
         img_b64 = base64.b64encode(pix.tobytes("jpeg", jpg_quality=75)).decode()
-        image_parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
         doc.close()
-        logger.info(f"Vision: rendered page 1 for Gemini, b64 size={len(img_b64)}")
+        logger.info(f"Vision: rendered page 1, b64 size={len(img_b64)}")
     except Exception as e:
-        msg = f"PDF→image failed: {e}"
-        logger.warning(f"Vision scan: {msg}")
-        return {}, msg
+        return {}, f"PDF→image failed: {e}"
 
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{settings.GEMINI_MODEL}:generateContent?key={settings.GEMINI_API_KEY}"
-    )
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": _BPR_VISION_PROMPT}] + image_parts}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024},
-    }
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code != 200:
-                msg = f"Gemini HTTP {resp.status_code}: {resp.text[:200]}"
-                logger.warning(f"Vision scan: {msg}")
-                return {}, msg
-            raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            logger.info(f"Gemini raw response (first 300): {raw[:300]}")
-            # Parse KEY: VALUE lines — one per field, ASCII only, no JSON
-            _KEY_MAP = {
-                "LOT_NUMBER": "lot_number",
-                "PRODUCT_NAME": "product_name",
-                "PRODUCT_CODE": "product_code",
-                "DOSAGE_FORM": "dosage_form",
-                "BATCH_SIZE": "batch_size",
-                "MANUFACTURING_SITE": "manufacturing_site",
-                "MANUFACTURING_DATE": "manufacturing_date",
-                "TARGET_RELEASE_DATE": "target_release_date",
-            }
-            _SKIP_VALUES = {"<value>", "<yyyy-mm-dd>", "null", "n/a", "none", "unknown", ""}
-            result = {}
-            for line in raw.splitlines():
-                if ":" not in line:
-                    continue
-                key, _, val = line.partition(":")
-                key = key.strip().upper()
-                val = val.strip()
-                if key not in _KEY_MAP or val.lower() in _SKIP_VALUES:
-                    continue
-                # Reject lot numbers that are pure digits >10 chars — almost certainly a misread barcode
-                if key == "LOT_NUMBER" and re.fullmatch(r'\d{10,}', val):
-                    logger.info(f"Vision: rejected probable barcode as lot_number: {val[:20]}")
-                    continue
-                result[_KEY_MAP[key]] = val
-            logger.info(f"Gemini Vision extracted: {result}")
-            return result, None
+        import anthropic
+        client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64},
+                    },
+                    {"type": "text", "text": _BPR_VISION_PROMPT},
+                ],
+            }],
+        )
+        raw = msg.content[0].text
+        logger.info(f"Claude Vision raw (first 300): {raw[:300]}")
+
+        _KEY_MAP = {
+            "LOT_NUMBER": "lot_number", "PRODUCT_NAME": "product_name",
+            "PRODUCT_CODE": "product_code", "DOSAGE_FORM": "dosage_form",
+            "BATCH_SIZE": "batch_size", "MANUFACTURING_SITE": "manufacturing_site",
+            "MANUFACTURING_DATE": "manufacturing_date", "TARGET_RELEASE_DATE": "target_release_date",
+        }
+        _SKIP_VALUES = {"<value>", "<yyyy-mm-dd>", "null", "n/a", "none", "unknown", ""}
+        result = {}
+        for line in raw.splitlines():
+            if ":" not in line:
+                continue
+            key, _, val = line.partition(":")
+            key = key.strip().upper()
+            val = val.strip()
+            if key not in _KEY_MAP or val.lower() in _SKIP_VALUES:
+                continue
+            if key == "LOT_NUMBER" and re.fullmatch(r'\d{10,}', val):
+                logger.info(f"Vision: rejected probable barcode: {val[:20]}")
+                continue
+            result[_KEY_MAP[key]] = val
+        logger.info(f"Claude Vision extracted: {result}")
+        return result, None
     except Exception as e:
-        msg = f"Gemini call failed: {e}"
-        logger.warning(f"Vision scan: {msg}")
-        return {}, msg
+        return {}, f"Claude Vision failed: {e}"
 
 
 async def _llm_extract_bpr_fields(text: str) -> dict:
@@ -236,9 +227,9 @@ async def scan_document_for_fields(
     vision_error = None
     if not extracted_text.strip() and file_type == "pdf":
         from app.core.config import settings
-        if not settings.GEMINI_API_KEY:
-            vision_error = "GEMINI_API_KEY not set"
-            logger.warning("Vision scan skipped: GEMINI_API_KEY not set on this deployment")
+        if not settings.ANTHROPIC_API_KEY:
+            vision_error = "ANTHROPIC_API_KEY not set"
+            logger.warning("Vision scan skipped: ANTHROPIC_API_KEY not set on this deployment")
         else:
             vision_fields, vision_error = await _vision_scan_bpr_fields(content)
             if vision_fields:
