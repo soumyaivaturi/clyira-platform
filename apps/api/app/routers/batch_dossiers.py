@@ -76,14 +76,15 @@ _BPR_VISION_PROMPT = (
 
 
 async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
-    """Extract BPR fields from a scanned/screenshot PDF using Gemini Vision (free tier).
+    """Extract BPR fields from a scanned/screenshot PDF using Groq Vision (free tier).
+    Uses Llama 4 Scout which supports multimodal image input.
     Returns (fields_dict, error_string). error_string is None on success.
     """
     import base64, re
     from app.core.config import settings
 
-    if not settings.GEMINI_API_KEY:
-        return {}, "GEMINI_API_KEY not set"
+    if not settings.GROQ_API_KEY:
+        return {}, "GROQ_API_KEY not set"
 
     try:
         import fitz
@@ -100,19 +101,23 @@ async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
         import httpx
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
-                params={"key": settings.GEMINI_API_KEY},
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
                 json={
-                    "contents": [{"parts": [
-                        {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}},
-                        {"text": _BPR_VISION_PROMPT},
+                    "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+                    "max_tokens": 512,
+                    "temperature": 0.1,
+                    "messages": [{"role": "user", "content": [
+                        {"type": "image_url", "image_url": {
+                            "url": f"data:image/jpeg;base64,{img_b64}"
+                        }},
+                        {"type": "text", "text": _BPR_VISION_PROMPT},
                     ]}],
-                    "generationConfig": {"maxOutputTokens": 512, "temperature": 0.1},
                 },
             )
         resp.raise_for_status()
-        raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-        logger.info(f"Gemini Vision raw (first 300): {raw[:300]}")
+        raw = resp.json()["choices"][0]["message"]["content"]
+        logger.info(f"Groq Vision raw (first 300): {raw[:300]}")
 
         _KEY_MAP = {
             "LOT_NUMBER": "lot_number", "PRODUCT_NAME": "product_name",
@@ -134,10 +139,10 @@ async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
                 logger.info(f"Vision: rejected probable barcode: {val[:20]}")
                 continue
             result[_KEY_MAP[key]] = val
-        logger.info(f"Claude Vision extracted: {result}")
+        logger.info(f"Groq Vision extracted: {result}")
         return result, None
     except Exception as e:
-        return {}, f"Claude Vision failed: {e}"
+        return {}, f"Groq Vision failed: {e}"
 
 
 async def _llm_extract_bpr_fields(text: str) -> dict:
@@ -225,9 +230,9 @@ async def scan_document_for_fields(
     vision_error = None
     if not extracted_text.strip() and file_type == "pdf":
         from app.core.config import settings
-        if not settings.GEMINI_API_KEY:
-            vision_error = "GEMINI_API_KEY not set"
-            logger.warning("Vision scan skipped: GEMINI_API_KEY not set on this deployment")
+        if not settings.GROQ_API_KEY:
+            vision_error = "GROQ_API_KEY not set"
+            logger.warning("Vision scan skipped: GROQ_API_KEY not set on this deployment")
         else:
             vision_fields, vision_error = await _vision_scan_bpr_fields(content)
             if vision_fields:
