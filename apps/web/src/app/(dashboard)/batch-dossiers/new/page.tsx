@@ -134,6 +134,7 @@ export default function NewDossierPage() {
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [scannedFields, setScannedFields] = useState<Set<string>>(new Set());
   const [scanning, setScanning] = useState(false);
+  const [scanStatus, setScanStatus] = useState("");
   const [scanError, setScanError] = useState("");
   const [scanDone, setScanDone] = useState(false);
 
@@ -176,10 +177,18 @@ export default function NewDossierPage() {
     setScanning(true);
     setScanError("");
     setScanDone(false);
+    setScanStatus("Extracting fields…");
+
+    // Show "warming up" message after 5s — Render free tier sleeps and takes ~30s to wake
+    const warmupTimer = setTimeout(() => setScanStatus("API warming up — may take up to 30s…"), 5000);
+
     try {
       const res = await batchDossiersApi.scanDocument(file);
-      const { fields, confidence, text_length, extraction_method } = res.data as ScanResult & {
-        text_length: number; extraction_method: string;
+      clearTimeout(warmupTimer);
+      setScanStatus("");
+
+      const { fields, confidence, text_length, extraction_method, debug } = res.data as ScanResult & {
+        text_length: number; extraction_method: string; debug?: string;
       };
       const updates: Partial<typeof form> = {};
       const newScanned = new Set<string>();
@@ -203,12 +212,16 @@ export default function NewDossierPage() {
       setScanDone(true);
       if (newScanned.size === 0) {
         const hint = text_length === 0
-          ? "No text extracted — file may be a scanned image. Fill in manually."
-          : `No fields matched (${text_length} chars extracted via ${extraction_method}). Fill in manually.`;
+          ? `No text extracted (${extraction_method}${debug ? ` — ${debug}` : ""}). Fill in manually.`
+          : `No fields matched — ${text_length} chars via ${extraction_method}. Fill in manually.`;
         setScanError(hint);
       }
-    } catch {
-      setScanError("Scan failed. You can still fill in fields manually.");
+    } catch (err: unknown) {
+      clearTimeout(warmupTimer);
+      setScanStatus("");
+      const e = err as { response?: { data?: { detail?: string } }; message?: string };
+      const detail = e?.response?.data?.detail ?? e?.message ?? "Unknown error";
+      setScanError(`Scan failed: ${detail}. Fill in manually.`);
     } finally {
       setScanning(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -328,7 +341,7 @@ export default function NewDossierPage() {
                 className="flex items-center gap-2 px-3 py-2 border rounded-lg text-sm hover:bg-accent transition-colors disabled:opacity-60"
               >
                 {scanning ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /> Scanning…</>
+                  <><Loader2 className="w-4 h-4 animate-spin" /> {scanStatus || "Scanning…"}</>
                 ) : (
                   <><Upload className="w-4 h-4" /> Scan BPR document</>
                 )}

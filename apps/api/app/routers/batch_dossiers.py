@@ -85,15 +85,16 @@ async def _vision_scan_bpr_fields(pdf_bytes: bytes) -> tuple[dict, str | None]:
     try:
         import fitz
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        pages_to_scan = min(3, len(doc))
+        # Scan only page 1 — BPR header fields are always on the cover page.
+        # Keeping to 1 page at 150 DPI keeps image size under Gemini limits and
+        # avoids OOM on Render's free tier (512 MB RAM).
         image_parts = []
-        for i in range(pages_to_scan):
-            page = doc[i]
-            pix = page.get_pixmap(matrix=fitz.Matrix(3.0, 3.0))  # 216 DPI — better for screenshot PDFs
-            img_b64 = base64.b64encode(pix.tobytes("jpeg")).decode()
-            image_parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
+        page = doc[0]
+        pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), colorspace=fitz.csGRAY)  # 144 DPI greyscale
+        img_b64 = base64.b64encode(pix.tobytes("jpeg", jpg_quality=75)).decode()
+        image_parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
         doc.close()
-        logger.info(f"Vision: rendered {pages_to_scan} pages for Gemini")
+        logger.info(f"Vision: rendered page 1 for Gemini, b64 size={len(img_b64)}")
     except Exception as e:
         msg = f"PDF→image failed: {e}"
         logger.warning(f"Vision scan: {msg}")
