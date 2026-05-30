@@ -281,6 +281,171 @@ def _build_docx(
     return buf.read()
 
 
+def _build_redlined_docx(document_bytes: bytes, findings: list) -> bytes:
+    """Return original DOCX with every suggestion_draft inserted as a w:ins tracked change."""
+    import io
+    from docx import Document as DocxDoc
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from datetime import datetime, timezone
+
+    doc = DocxDoc(io.BytesIO(document_bytes))
+    body = doc.element.body
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Start IDs high to avoid collision with any existing revision IDs in the document
+    _id = [1000]
+
+    SEV_COLOR = {"critical": "DC2626", "high": "EA580C", "medium": "D97706", "low": "2563EB"}
+
+    def _next_id() -> str:
+        v = str(_id[0]); _id[0] += 1; return v
+
+    def _ins(parent) -> OxmlElement:
+        el = OxmlElement("w:ins")
+        el.set(qn("w:id"), _next_id())
+        el.set(qn("w:author"), "Clyira AI")
+        el.set(qn("w:date"), date_str)
+        parent.append(el)
+        return el
+
+    def _run_with_text(text: str, bold: bool, color: str) -> OxmlElement:
+        r = OxmlElement("w:r")
+        rPr = OxmlElement("w:rPr")
+        if bold:
+            rPr.append(OxmlElement("w:b"))
+        clr = OxmlElement("w:color"); clr.set(qn("w:val"), color); rPr.append(clr)
+        r.append(rPr)
+        t = OxmlElement("w:t")
+        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+        t.text = text
+        r.append(t)
+        return r
+
+    def _make_suggestion_paragraph(finding) -> OxmlElement:
+        color = SEV_COLOR.get(finding.severity, "374151")
+        p = OxmlElement("w:p")
+
+        # Mark paragraph mark itself as inserted (required for full OOXML compliance)
+        pPr = OxmlElement("w:pPr")
+        rPr_pPr = OxmlElement("w:rPr")
+        ins_pm = OxmlElement("w:ins")
+        ins_pm.set(qn("w:id"), _next_id()); ins_pm.set(qn("w:author"), "Clyira AI"); ins_pm.set(qn("w:date"), date_str)
+        rPr_pPr.append(ins_pm); pPr.append(rPr_pPr); p.append(pPr)
+
+        # Label run: "[Clyira SEVERITY — title]: "
+        ins_label = _ins(p)
+        ins_label.append(_run_with_text(f"[Clyira {finding.severity.upper()} — {finding.title}]: ", True, color))
+
+        # Suggestion text
+        ins_text = _ins(p)
+        ins_text.append(_run_with_text(finding.suggestion_draft or "", False, color))
+
+        return p
+
+    actionable = [
+        f for f in findings
+        if f.suggestion_draft and f.suggestion_draft.strip() and f.severity not in ("info",)
+    ]
+
+    all_paras = doc.paragraphs
+
+    for finding in actionable:
+        # Find the best matching paragraph via evidence or location text
+        target = None
+        needles = []
+        if finding.evidence:
+            needles.append(finding.evidence[:80].lower())
+        if finding.location:
+            needles.append(finding.location[:60].lower())
+
+        for para in all_paras:
+            pt = para.text.lower()
+            if pt and any(n[:30] in pt for n in needles if n):
+                target = para._element
+                break
+
+        suggestion = _make_suggestion_paragraph(finding)
+        if target is not None:
+            target.addnext(suggestion)
+        else:
+            body.append(suggestion)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.read()
+
+
+@router.get("/{assessment_id}/export/redlined")
+async def export_redlined_docx(
+    assessment_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download the original DOCX with all finding suggestions inserted as tracked changes."""
+    import os
+
+    result = await db.execute(
+        select(Assessment).where(
+            Assessment.id == assessment_id,
+            Assessment.company_id == current_user.company_id,
+        )
+    )
+    assessment = result.scalar_one_or_none()
+    if not assessment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")
+    if assessment.status != "completed":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Assessment not completed yet")
+
+    doc_result = await db.execute(select(Document).where(Document.id == assessment.document_id))
+    document = doc_result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    if (document.file_type or "").lower() not in ("docx", "doc"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Redlined export is only available for DOCX files")
+
+    # Fetch raw file bytes from whichever storage backend is active
+    try:
+        if settings.SUPABASE_URL and settings.SUPABASE_SERVICE_KEY and document.file_path:
+            from supabase import create_client
+            import asyncio
+            client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
+            file_bytes = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: client.storage.from_(settings.SUPABASE_STORAGE_BUCKET).download(document.file_path),
+            )
+        elif document.file_path and os.path.exists(document.file_path):
+            with open(document.file_path, "rb") as fh:
+                file_bytes = fh.read()
+        else:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Original file not found in storage")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Storage retrieval failed: {exc}")
+
+    findings_result = await db.execute(
+        select(Finding).where(Finding.assessment_id == assessment_id).order_by(Finding.severity)
+    )
+    findings = findings_result.scalars().all()
+
+    try:
+        redlined = _build_redlined_docx(file_bytes, findings)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Redlined generation failed: {exc}")
+
+    safe = "".join(c for c in document.title if c.isalnum() or c in " _-")[:50]
+    filename = f"Clyira_Redlined_{safe}_{assessment_id[:8]}.docx"
+
+    return StreamingResponse(
+        io.BytesIO(redlined),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/{assessment_id}/export/docx")
 async def export_assessment_docx(
     assessment_id: str,

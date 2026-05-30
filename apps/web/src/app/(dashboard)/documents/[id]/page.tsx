@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { documentsApi, assessmentsApi, assistantApi, documentHistoryApi, signaturesApi } from "@/lib/api";
 import { DocumentReviewPane } from "@/components/shared/document-review-pane";
+import { DocumentViewer } from "@/components/shared/document-viewer";
 import { SignatureModal } from "@/components/shared/signature-modal";
 import { ScoreRing } from "@/components/shared/score-display";
 import { SeverityBadge, LevelBadge, DocStatusBadge, FindingStatusBadge } from "@/components/shared/badges";
@@ -768,6 +769,7 @@ export default function DocumentDetailPage() {
   const [documentText, setDocumentText] = useState("");
   const [loadingText, setLoadingText] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const [showViewer, setShowViewer] = useState(false);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -836,6 +838,22 @@ export default function DocumentDetailPage() {
       a.click();
       URL.revokeObjectURL(url);
     } catch { setError("Export failed. Please try again."); }
+    finally { setExporting(false); }
+  };
+
+  const exportRedlined = async () => {
+    if (!assessment || !doc) return;
+    setExporting(true);
+    try {
+      const res = await assessmentsApi.exportRedlined(assessment.id);
+      const blob = new Blob([res.data], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Clyira_Redlined_${doc.title?.slice(0, 30) ?? "Document"}_${assessment.id.slice(0, 8)}.docx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { setError("Redlined export failed. Please try again."); }
     finally { setExporting(false); }
   };
 
@@ -970,6 +988,34 @@ export default function DocumentDetailPage() {
           onSigned={() => { setShowSignModal(false); loadSignatures(); }} />
       )}
 
+      {/* Document viewer modal */}
+      {showViewer && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          {/* Viewer header */}
+          <div className="h-14 border-b bg-card flex items-center justify-between px-5 shrink-0">
+            <div className="flex items-center gap-3">
+              <FileText className="w-4 h-4 text-muted-foreground" />
+              <span className="font-medium text-sm truncate max-w-lg">{doc.title}</span>
+              {doc.file_type && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted font-mono uppercase">{doc.file_type}</span>
+              )}
+            </div>
+            <button onClick={() => setShowViewer(false)}
+              className="p-2 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          {/* Viewer body */}
+          <div className="flex-1 overflow-y-auto bg-muted/30">
+            <DocumentViewer
+              documentId={id}
+              fileType={doc.file_type}
+              className="max-w-4xl mx-auto py-6"
+            />
+          </div>
+        </div>
+      )}
+
       {/* ── Document Header ─────────────────────────────────────────────────── */}
       <div className="bg-card border-b">
         <div className="px-6 pt-4 pb-3">
@@ -1022,7 +1068,7 @@ export default function DocumentDetailPage() {
 
             {/* Action buttons */}
             <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-              <button onClick={() => { setActiveTab("findings"); switchToReview(); }}
+                      <button onClick={() => setShowViewer(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-accent transition-colors">
                 <Eye className="w-3.5 h-3.5" /> Preview Document
               </button>
@@ -1572,9 +1618,17 @@ export default function DocumentDetailPage() {
                     )}
                     {assessment.status === "completed" && (
                       <div className="flex items-center gap-2">
+                        {doc.file_type === "docx" && (
+                          <button onClick={exportRedlined} disabled={exporting}
+                            title="Download original DOCX with all suggestions inserted as tracked changes"
+                            className="flex items-center gap-1.5 px-3 py-1.5 border border-clyira-200 bg-clyira-50 text-clyira-700 rounded-lg text-xs font-medium hover:bg-clyira-100 disabled:opacity-50 transition-colors">
+                            {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                            Redlined DOCX
+                          </button>
+                        )}
                         <button onClick={exportDocx} disabled={exporting}
                           className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-medium hover:bg-accent disabled:opacity-50">
-                          {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} DOCX
+                          {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Report
                         </button>
                         <button onClick={exportCsv} disabled={exporting}
                           className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-medium hover:bg-accent disabled:opacity-50">

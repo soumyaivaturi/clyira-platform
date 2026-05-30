@@ -77,6 +77,7 @@ export const documentsApi = {
       headers: { "Content-Type": "multipart/form-data" },
     }),
   getText: (id: string) => api.get(`/documents/${id}/text`),
+  getFileBlob: (id: string) => api.get(`/documents/${id}/download`, { responseType: "blob", timeout: 30000 }),
 };
 
 // ── Assessments ───────────────────────────────────────────────────────────────
@@ -115,6 +116,8 @@ export const assessmentsApi = {
     api.get(`/assessments/${id}/export/docx`, { responseType: "blob", timeout: 60000 }),
   exportCsv: (id: string) =>
     api.get(`/assessments/${id}/export/csv`, { responseType: "blob", timeout: 30000 }),
+  exportRedlined: (id: string) =>
+    api.get(`/assessments/${id}/export/redlined`, { responseType: "blob", timeout: 60000 }),
   historyByDocument: (documentId: string) =>
     api.get(`/assessments/by-document/${documentId}`),
 };
