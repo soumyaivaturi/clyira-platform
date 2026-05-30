@@ -8,7 +8,7 @@ SOP_DTAP = DTAPProfile(
     dtap_id="DTAP-001",
     document_category="SOP",
     display_name="Standard Operating Procedure",
-    version="1.0",
+    version="1.1",
 
     # Expected SOP sections
     required_sections=[
@@ -173,17 +173,19 @@ SOP_DTAP = DTAPProfile(
     },
 
     # Scoring weights per level
+    # v1.1: Added L11 (was missing — findings ran but scored 0%). Reduced L3/L8 by 0.02 each.
     score_weights={
         "L1": 0.08,
         "L2": 0.07,
-        "L3": 0.18,
+        "L3": 0.16,   # was 0.18 — reduced 0.02 to fund L11
         "L4": 0.12,
         "L5": 0.10,
         "L6": 0.12,
         "L7": 0.06,
-        "L8": 0.15,
+        "L8": 0.13,   # was 0.15 — reduced 0.02 to fund L11
         "L9": 0.08,
         "L10": 0.04,
+        "L11": 0.04,  # NEW — placeholder/draft/signature findings now impact score
     },
 
     passing_threshold=70.0,

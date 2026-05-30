@@ -576,12 +576,16 @@ function SectionRow({
           {section.title}
         </h3>
         <div className={cn(
-          "text-sm leading-7 whitespace-pre-wrap",
+          "text-sm leading-7",
           hasFindings ? "text-foreground" : "text-muted-foreground"
         )}>
-          {section.body.trim() || (
+          {section.body.trim() ? (
+            section.body.trim().split(/\n{2,}/).map((para, i) => (
+              <p key={i} className="mb-2 last:mb-0">{para.replace(/\n/g, " ")}</p>
+            ))
+          ) : (
             <span className={cn("text-xs italic px-1 rounded", cfg?.textHighlight ?? "")}>
-              ⚠ This section was not found in the document
+              This section was not found in the document
             </span>
           )}
         </div>

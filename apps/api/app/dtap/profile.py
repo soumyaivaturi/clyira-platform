@@ -32,6 +32,12 @@ class DTAPProfile:
     display_name: str
     version: str = "1.0"
 
+    # Document mode: "editable" or "locked"
+    # Editable: findings generate suggestion_draft (AI-authored corrective text).
+    # Locked: documents record what happened — no suggestion_draft, QA enters
+    #         next_step_text per finding for the Next Steps Action Plan export.
+    mode: str = "editable"  # "editable" | "locked"
+
     # Expected document structure
     required_sections: list[str] = field(default_factory=list)
     optional_sections: list[str] = field(default_factory=list)

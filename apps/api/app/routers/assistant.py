@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
+from app.dtap import DTAPRegistry
 from app.models.document import Document
 from app.models.assessment import Assessment, Finding
 from app.models.user import User
@@ -69,6 +70,19 @@ async def draft_fix(
     doc = doc_result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    # Enforce editable/locked mode — locked documents cannot receive suggestion_draft
+    if doc.document_category:
+        dtap_profile = DTAPRegistry.get_by_category(doc.document_category)
+        if dtap_profile and dtap_profile.mode == "locked":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"{dtap_profile.display_name} is a locked document type. "
+                    "Locked documents record what happened and cannot be edited retroactively. "
+                    "Use the Next Steps Action Plan workflow instead."
+                ),
+            )
 
     finding_result = await db.execute(
         select(Finding).where(Finding.id == data.finding_id)

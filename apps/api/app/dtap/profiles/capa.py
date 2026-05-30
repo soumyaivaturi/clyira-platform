@@ -1,6 +1,19 @@
 """
 DTAP-002: CAPA Assessment Profile
-Based on DTAP-002 v2.4 specification — CAPA as Decision Intelligence Engine.
+Based on DTAP-002 v2.5 specification — CAPA as Decision Intelligence Engine.
+
+Changelog v2.5 (2026-05-30):
+- Added human-reasoning checks per DTAP Design Guide v1 (four reasoning patterns)
+- NARRATIVE COHERENCE: rc_explains_problem, investigation_supports_conclusion,
+  pa_not_copy_of_ca, ec_measures_ca_outcome, containment_is_event_specific
+- PROPORTIONALITY: response_severity_proportionate, investigation_duration_credible,
+  premature_no_impact_conclusion, batch_released_before_investigation,
+  severity_downgrade_between_source_and_capa
+- CONSPICUOUS ABSENCE: similar_prior_events_not_referenced,
+  stability_impact_not_assessed_when_warranted, other_products_same_equipment,
+  no_monitoring_period_for_ec
+- INSPECTOR'S EYE: time_compression_detection, circular_reasoning_in_rca,
+  qa_independent_review_evidence, retrospective_justification_narrative
 
 Changelog v2.4 (2026-05-26):
 - Added L11 to score_weights (was missing — caused zero-impact for placeholder/signature findings)
@@ -16,7 +29,7 @@ CAPA_DTAP = DTAPProfile(
     dtap_id="DTAP-002",
     document_category="CAPA",
     display_name="Corrective and Preventive Action",
-    version="2.4",
+    version="2.5",
 
     required_sections=[
         "CAPA Identification",
@@ -104,6 +117,50 @@ CAPA_DTAP = DTAPProfile(
                 "preventive_action_system_level",      # NEW v2.4 — PA must be systemic, not local
                 "rca_method_actually_applied",         # NEW v2.4 — naming Fishbone ≠ doing it
                 "acceptance_criteria_quantitative",    # NEW v2.4 — no "satisfactory" or "acceptable"
+                # ── NARRATIVE COHERENCE (v2.5) ──────────────────────────────
+                # Does the story the document tells actually hang together?
+                "rc_explains_problem",                 # Root cause logically explains the specific
+                                                       # problem in the Problem Statement — not just
+                                                       # plausible in general, but for THIS event
+                "investigation_supports_conclusion",   # Investigation findings lead to the stated
+                                                       # conclusion — detect predetermined conclusions
+                                                       # where narrative is written backward
+                "pa_not_copy_of_ca",                   # Preventive action is substantively different
+                                                       # from corrective action — not restated/rephrased
+                "ec_measures_ca_outcome",              # Effectiveness criteria actually measure whether
+                                                       # the corrective action achieved its goal — not
+                                                       # generic "no recurrence" or "satisfactory"
+                "containment_is_event_specific",       # Containment action is tailored to this specific
+                                                       # event, not generic boilerplate that could apply
+                                                       # to any deviation
+                # ── PROPORTIONALITY & RED FLAGS (v2.5) ──────────────────────
+                # Is the response proportionate to the severity of the event?
+                "response_severity_proportionate",     # CA/PA proportionate to the classification:
+                                                       # a Critical deviation with only retraining or
+                                                       # documentation updates is disproportionate
+                "investigation_duration_credible",     # Investigation duration plausible given scope:
+                                                       # complex multi-batch event concluded in <48h
+                                                       # is a red flag for premature closure
+                "premature_no_impact_conclusion",      # "No impact" concluded too fast or without
+                                                       # supporting data — especially for released batches
+                "batch_released_before_investigation",  # Batch disposition (release) occurred before
+                                                       # investigation was complete
+                "severity_downgrade_source_vs_capa",   # Event classified as Critical/Major in the source
+                                                       # document but downgraded in the CAPA without
+                                                       # documented justification
+                # ── CONSPICUOUS ABSENCE (v2.5) ──────────────────────────────
+                # What should be here but isn't — given the context of this event?
+                "similar_prior_events_not_referenced",  # Company history shows similar deviations/CAPAs
+                                                        # but this CAPA doesn't reference or address them
+                "stability_impact_not_assessed",        # Deviation affects a stability-relevant parameter
+                                                        # (temperature, humidity, processing time) but no
+                                                        # stability impact assessment is present
+                "other_products_same_equipment",         # Root cause involves equipment or line but no
+                                                        # assessment of other products manufactured on
+                                                        # the same equipment/line
+                "no_monitoring_period_for_ec",           # Effectiveness check defined but no monitoring
+                                                        # period specified — when and how often will
+                                                        # effectiveness be verified?
             ],
             required_context=["document_text", "dtap_profile"],
         ),
@@ -178,6 +235,11 @@ CAPA_DTAP = DTAPProfile(
                 "distributed_batch_disposition",       # NEW v2.4 — if batch released, what's the decision?
                 "patient_safety_impact_explicit",      # NEW v2.4 — must explicitly state impact conclusion
                 "market_action_assessment",            # NEW v2.4 — withdrawal/recall decision documented
+                # ── CONSPICUOUS ABSENCE — REGULATORY (v2.5) ─────────────────
+                "supplier_assessment_when_material_rc", # Root cause points to incoming material but
+                                                        # no supplier CAPA or supplier notification
+                "regulatory_commitment_consistency",    # Commitments made in prior 483 responses or
+                                                        # regulatory submissions conflict with this CAPA
             ],
             required_context=["document_text", "regulatory_corpus", "company_agencies"],
         ),
@@ -205,6 +267,13 @@ CAPA_DTAP = DTAPProfile(
                 "effectiveness_history",
                 "capa_aging_analysis",
                 "department_trend",
+                # ── LONGITUDINAL REASONING (v2.5) ──────────────────────────
+                "same_rc_different_capa",              # Same root cause category appearing in multiple
+                                                       # CAPAs — systemic issue not being addressed
+                "training_only_capa_recurrence",       # Multiple CAPAs resolved with training-only —
+                                                       # pattern of proportionality failure
+                "boilerplate_across_capas",            # Similar/identical language across multiple CAPAs
+                                                       # suggesting templated rather than genuine work
             ],
             required_context=["historical_assessments"],
         ),
@@ -221,6 +290,17 @@ CAPA_DTAP = DTAPProfile(
                 "template_boilerplate_detection",      # NEW v2.4 — identical text across docs
                 "internal_consistency_check",          # NEW v2.4 — section contradictions
                 "date_logic_consistency",              # NEW v2.4 — initiation < target < closure
+                # ── INSPECTOR'S EYE (v2.5) ──────────────────────────────────
+                # Would this survive 10 minutes of adversarial FDA review?
+                "time_compression_detection",          # All phases (event→investigation→RC→CAPA→closure)
+                                                       # compressed into unrealistically short timeframe
+                "circular_reasoning_in_rca",           # Root cause restates the deviation in different
+                                                       # words rather than identifying an underlying cause
+                "qa_independent_review_evidence",      # QA approval shows no evidence of independent
+                                                       # challenge or review — rubber stamp pattern
+                "retrospective_justification_narrative", # Investigation narrative reads as if written
+                                                        # to support a predetermined conclusion rather
+                                                        # than following evidence to a conclusion
             ],
         ),
     },

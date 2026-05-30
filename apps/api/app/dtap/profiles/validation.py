@@ -96,6 +96,20 @@ VALIDATION_DTAP = DTAPProfile(
                 "critical_parameters_identified",
             ],
         ),
+        "L6": LevelConfig(
+            enabled=True,
+            engine="llm",
+            weight=1.2,
+            checks=[
+                "vmp_to_protocol_traceability",        # Protocol traces to VMP
+                "protocol_to_report_traceability",     # Report traces to its protocol
+                "iq_oq_pq_sequence_validated",         # Qualification sequence complete
+                "sop_cross_reference_consistency",      # Referenced SOPs exist and align
+                "change_control_cross_reference",       # Change control that triggered validation cited
+                "equipment_qualification_linkage",      # Equipment IQ/OQ current before PQ
+            ],
+            required_context=["document_text", "company_documents_metadata"],
+        ),
         "L7": LevelConfig(
             enabled=True,
             engine="rule",
@@ -129,6 +143,18 @@ VALIDATION_DTAP = DTAPProfile(
             ],
             required_context=["findings_so_far", "enforcement_records"],
         ),
+        "L10": LevelConfig(
+            enabled=True,
+            engine="llm",
+            weight=0.7,
+            checks=[
+                "revalidation_frequency_trend",        # Revalidation overdue patterns
+                "deviation_during_validation_trend",   # Deviations during validation runs
+                "protocol_amendment_frequency",         # Excessive protocol amendments
+                "qualification_lifecycle_health",       # Equipment qualification currency
+            ],
+            required_context=["historical_assessments"],
+        ),
         "L11": LevelConfig(
             enabled=True,
             engine="rule",
@@ -144,15 +170,17 @@ VALIDATION_DTAP = DTAPProfile(
     },
 
     score_weights={
-        "L1": 0.10,
-        "L2": 0.05,
-        "L3": 0.25,
-        "L4": 0.20,
-        "L5": 0.15,
-        "L7": 0.05,
+        "L1": 0.08,
+        "L2": 0.04,
+        "L3": 0.20,
+        "L4": 0.16,
+        "L5": 0.12,
+        "L6": 0.08,
+        "L7": 0.04,
         "L8": 0.12,
         "L9": 0.05,
-        "L11": 0.03,
+        "L10": 0.03,
+        "L11": 0.08,
     },
 
     passing_threshold=75.0,  # Higher bar for validation documents

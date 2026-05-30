@@ -96,6 +96,21 @@ _QC_EXTRA_LEVELS: dict[str, LevelConfig] = {
         required_context=["document_text", "dtap_profile"],
     ),
 
+    "L6": LevelConfig(
+        enabled=True,
+        engine="llm",
+        weight=1.2,
+        checks=[
+            "test_method_sop_cross_reference",      # Test method SOP cited and current
+            "specification_document_linkage",        # Spec doc version matches
+            "batch_record_cross_reference",          # Batch record for tested lot cited
+            "stability_protocol_linkage",            # Stability protocol if stability sample
+            "reference_standard_certificate_linkage",# RS CoA referenced
+            "instrument_qualification_reference",    # Instrument IQ/OQ/PQ current
+        ],
+        required_context=["document_text", "company_documents_metadata"],
+    ),
+
     "L8": LevelConfig(
         enabled=True,
         engine="llm",

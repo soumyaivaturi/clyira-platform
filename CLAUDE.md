@@ -153,3 +153,62 @@ The regulatory intelligence corpus lives at `~/Documents/Clyira - May 2026/Clyir
 5. **RAG indexes** — JSONL format, one object per line. Stored in `rag_index/`. Scripts to rebuild go in `scripts/`.
 6. **Evidence Fabric** — When building integration features, follow the 7-layer architecture above. Start with CSV/Excel intake, not enterprise connectors.
 7. **Don't duplicate the corpus** — The `rag_index/` folder contains copies of corpus indexes. The source of truth is always `Clyira-Corpus/`.
+
+## How to Handle My Instructions
+
+I (Soumya) often give short, vague instructions. DO NOT just start coding from a vague instruction. Follow this protocol every time:
+
+### Step 1: Clarify before acting
+
+When I give a vague instruction, ALWAYS ask me 2-3 short clarifying questions before writing any code. Examples:
+
+- "Fix the document page" → Ask: Which page? What's broken — layout, data, or functionality? What should it look like instead?
+- "Add a feature" → Ask: Which part of the app? What should it do? Who uses it?
+- "It's not working" → Ask: What did you expect to happen? What actually happened? Any error messages?
+- "Make it better" → Ask: Better how — faster, prettier, more accurate? Which specific part?
+- "Build this" (with screenshot) → Ask: Is this the exact design or a reference? What data powers it? Which existing components should I reuse?
+
+Exception: If the instruction is already specific enough (e.g., "add a loading spinner to the assessment button in documents/[id]/page.tsx"), skip clarification and just do it.
+
+### Step 2: Plan before coding
+
+After clarifying, ALWAYS write a short plan listing:
+1. Which files you'll read first
+2. Which files you'll change or create
+3. What the change does
+4. What could break
+
+Wait for my approval before coding, unless I say "just do it."
+
+### Step 3: Verify after coding
+
+After making changes, ALWAYS:
+1. Re-read the changed files to confirm the edits are correct
+2. Check for TypeScript errors if frontend: `npx tsc --noEmit`
+3. Check for Python syntax errors if backend: `python -c "import ast; ast.parse(open('file').read())"`
+4. Check that imports exist and are correct
+5. Tell me what to test manually and what to look for
+
+### Interpreting common short instructions
+
+| What I say | What I mean |
+|---|---|
+| "check for bugs" / "review code" | Systematically read every file in the relevant layer. Check backend for: missing error handling, unvalidated inputs, missing auth, unhandled exceptions, race conditions, null checks, async/await issues, N+1 queries, hardcoded secrets, injection risks. Check frontend for: missing loading/error states, broken API calls, missing key props, useEffect leaks, type errors, missing form validation. Report each bug with file, line, severity, and fix. |
+| "fix the UI" / "design looks wrong" | Check the component against the Design System section above. Look for wrong colors, wrong icons, layout overflow, missing responsive handling, missing states (loading/error/empty), broken Tailwind classes. |
+| "it's broken" / "not working" | Don't guess. Ask me what I see vs what I expected. Then trace the full chain: frontend component → API call → router → service → engine/DB. Check console errors, network responses, and logs. |
+| "deploy" / "push it" | Pre-deploy checklist: TypeScript errors, lint, missing env vars in render.yaml, uncommitted changes, TODO/FIXME in changed files. Then git add, commit with descriptive message, push. |
+| "clean up" / "refactor" | Remove console.log/print, commented-out code, unused imports. Fix naming inconsistencies. Extract duplicated logic. Do NOT change functionality. |
+| "make it production ready" | Run all of the above: bugs, tests, cleanup, deploy checks, in one pass. |
+| "test it" | Run existing tests. If none exist for changed code, write them. Test happy path + error cases + edge cases. |
+| "make it faster" / "optimize" | Profile first. Check for: unnecessary re-renders (React), N+1 queries, missing DB indexes, oversized API responses, missing caching, unoptimized images, bundle size. Report findings before changing anything. |
+| "add a page/feature like X" | Read existing similar pages/features first to match patterns, naming conventions, and component structure. Reuse existing components — never build from scratch what already exists. |
+| "the format is wrong" / "it changed the format" | This means the data transformation or rendering pipeline is altering the original content structure. Trace the data from source (upload/extraction) through storage to display (frontend rendering). Find where the structure changes and fix that specific point. Do NOT just change CSS — understand the root cause. |
+
+### General principles
+
+- **Read before writing** — always read a file before editing it
+- **Don't touch what you weren't asked to touch** — avoid drive-by refactors
+- **If changing the assessment engine** — verify the orchestrator still works end-to-end
+- **If changing data extraction** — remember that old data in the DB won't retroactively change
+- **If unsure** — ask, don't guess
+- **Show me the plan** — I'd rather approve a plan than undo bad code
