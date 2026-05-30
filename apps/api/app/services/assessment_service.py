@@ -17,6 +17,7 @@ from app.models.regulatory import EnforcementRecord
 from app.dtap import DTAPRegistry
 from app.engines.orchestrator import AssessmentOrchestrator
 from app.engines.types import AssessmentContext, FindingResult
+from app.engines import regulatory_corpus_engine
 
 logger = logging.getLogger(__name__)
 
@@ -366,6 +367,14 @@ class AssessmentService:
             for d in company_docs_result.scalars().all()
         ]
 
+        # Pre-populate regulatory context for L8 from the corpus (eCFR + ICH + EU GMP)
+        # Query uses the document category + first 500 chars of text so BM25 retrieves
+        # the CFR sections most relevant to this specific document.
+        doc_category = document.document_category or ""
+        doc_text_excerpt = (document.extracted_text or "")[:500]
+        reg_query = f"{doc_category} {doc_text_excerpt}".strip()
+        regulatory_context = regulatory_corpus_engine.search(reg_query, n_results=15) if reg_query else []
+
         return AssessmentContext(
             document_id=document.id,
             company_id=company.id,
@@ -378,6 +387,7 @@ class AssessmentService:
             company_sub_sectors=company.sub_sectors or [],
             regulatory_frameworks=regulatory_frameworks if regulatory_frameworks is not None else (document.regulatory_frameworks or []),
             user_references=user_references,
+            regulatory_context=regulatory_context,
             enforcement_records=enforcement_records,
             historical_assessments=historical_assessments,
             company_documents_metadata=company_documents_metadata,

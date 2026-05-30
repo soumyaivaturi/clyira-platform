@@ -208,7 +208,7 @@ Return ONLY a JSON array of findings with no preamble.
         if "L8" in levels and context.regulatory_context:
             prompt_parts.append("\n### Regulatory Requirements (for L8):")
             for reg in context.regulatory_context[:10]:
-                prompt_parts.append(f"- [{reg.get('citation_reference', '')}] {reg.get('content', '')[:200]}")
+                prompt_parts.append(f"- [{reg.get('citation_reference', '')}] {reg.get('text', reg.get('content', ''))[:200]}")
 
         if context.user_references:
             prompt_parts.append("\n### Organization References:")
@@ -402,7 +402,7 @@ DIMENSION CHECKS YOU MUST PERFORM:
         if context.regulatory_context and level == "L8":
             prompt_parts.append("\n### Relevant Regulatory Requirements:")
             for reg in context.regulatory_context[:10]:
-                prompt_parts.append(f"- [{reg.get('citation_reference', '')}] {reg.get('content', '')[:200]}")
+                prompt_parts.append(f"- [{reg.get('citation_reference', '')}] {reg.get('text', reg.get('content', ''))[:200]}")
 
         if context.user_references:
             prompt_parts.append("\n### Organization-Specific References:")
