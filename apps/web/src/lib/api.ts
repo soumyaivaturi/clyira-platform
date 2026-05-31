@@ -128,6 +128,8 @@ export const assistantApi = {
     api.post("/assistant/author", { document_id, finding_id, context_hint: context_hint || "" }),
   ask: (document_id: string, question: string, assessment_id?: string) =>
     api.post("/assistant/qa", { document_id, question, assessment_id }),
+  chatWithFinding: (document_id: string, finding_id: string, message: string, history: Array<{role: string; content: string}> = []) =>
+    api.post("/assistant/finding-chat", { document_id, finding_id, message, history }),
 };
 
 // ── Audit Trail ───────────────────────────────────────────────────────────────

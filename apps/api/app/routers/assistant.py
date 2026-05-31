@@ -45,6 +45,17 @@ class QAResponse(BaseModel):
     citations: list[str] = []
 
 
+class FindingChatRequest(BaseModel):
+    document_id: str
+    finding_id: str
+    message: str
+    history: list[dict] = []  # [{role: "user"|"assistant", content: str}]
+
+
+class FindingChatResponse(BaseModel):
+    reply: str
+
+
 async def _call_llm_simple(system: str, user: str) -> str:
     """Route to available LLM for assistant calls."""
     from app.engines.llm_engine import _call_llm
@@ -212,6 +223,81 @@ Provide a direct, expert answer with regulatory citations where applicable. If c
             answer=answer.strip(),
             citations=citations[:10],
         )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"LLM unavailable: {e}",
+        )
+
+
+@router.post("/finding-chat", response_model=FindingChatResponse)
+async def finding_chat(
+    data: FindingChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Finding Chat — Conversational AI scoped to a single finding.
+    Lets users challenge a finding, ask for alternative fixes, understand
+    the regulatory basis, or request alternative phrasings.
+    """
+    doc_result = await db.execute(
+        select(Document).where(
+            Document.id == data.document_id,
+            Document.company_id == current_user.company_id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    finding_result = await db.execute(
+        select(Finding).where(Finding.id == data.finding_id)
+    )
+    finding = finding_result.scalar_one_or_none()
+    if not finding:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
+
+    history_str = ""
+    for turn in data.history[-6:]:
+        role = "User" if turn.get("role") == "user" else "Assistant"
+        history_str += f"\n{role}: {turn.get('content', '')}"
+
+    system_prompt = """You are Clyira's Finding AI — a senior GMP compliance expert and regulatory affairs specialist.
+
+You are in a focused conversation about a single assessment finding in a pharmaceutical quality document.
+Your role:
+- Answer questions about why the finding was raised
+- Explain the specific regulatory requirement that was violated
+- Offer alternative fix phrasings if asked
+- Challenge your own finding honestly if the user presents valid context (e.g., criteria exist in another document)
+- Suggest when a finding should be disputed vs. acknowledged vs. resolved
+- Reference specific Warning Letter patterns or 483 observations when relevant
+- Be concise and direct — this is a working conversation, not a report
+
+If the user provides context that changes the assessment (e.g., "the criteria are in a separate spec doc"), acknowledge this and suggest the appropriate action (dispute, cross-reference, etc.)."""
+
+    user_prompt = f"""Document: {doc.title} ({doc.document_category or "unknown"})
+
+Finding context:
+  Severity: {finding.severity.upper()}
+  Level: {finding.level} — {finding.level_name or ""}
+  Title: {finding.title}
+  Description: {finding.description}
+  Evidence: {finding.evidence or "N/A"}
+  Location: {finding.location or "N/A"}
+  Regulatory citation: {finding.regulatory_citation or "N/A"}
+{f"  Suggested fix: {finding.suggestion_draft}" if finding.suggestion_draft else ""}
+
+Conversation so far:{history_str if history_str else " (new conversation)"}
+
+User: {data.message}
+
+Provide a direct, expert response. If suggesting alternative text, format it clearly. Keep response under 200 words."""
+
+    try:
+        reply = await _call_llm_simple(system_prompt, user_prompt)
+        return FindingChatResponse(reply=reply.strip())
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

@@ -267,6 +267,73 @@ function FrameworkSelectorPanel({
 
 // ── Finding Card ───────────────────────────────────────────────────────────────
 
+// ── FindingActionButtons — shared footer for the right panel ─────────────────
+function FindingActionButtons({
+  finding, documentId, assessmentId, onStatusChange,
+}: {
+  finding: Finding; documentId: string; assessmentId: string;
+  onStatusChange?: (findingId: string, newStatus: string, adjustedScore?: number) => void;
+}) {
+  const [localStatus, setLocalStatus] = useState(finding.status);
+  const [actioning, setActioning] = useState(false);
+  const [showDisputeModal, setShowDisputeModal] = useState(false);
+  const [disputeReason, setDisputeReason] = useState("");
+
+  const doAction = async (newStatus: string, reason?: string) => {
+    setActioning(true);
+    try {
+      const res = await assessmentsApi.actionFinding(assessmentId, finding.id, newStatus, "", reason);
+      setLocalStatus(newStatus);
+      onStatusChange?.(finding.id, newStatus, res.data?.adjusted_score);
+    } catch { }
+    finally { setActioning(false); }
+  };
+
+  if (localStatus === "resolved") {
+    return <p className="flex items-center gap-1.5 text-xs text-green-700 w-full"><CheckCheck className="w-3.5 h-3.5" /> Resolved</p>;
+  }
+
+  return (
+    <>
+      {showDisputeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-card border rounded-xl shadow-xl w-full max-w-sm p-5 space-y-3">
+            <h3 className="font-semibold text-sm">Dispute Finding</h3>
+            <p className="text-xs text-muted-foreground">{finding.title}</p>
+            <textarea value={disputeReason} onChange={e => setDisputeReason(e.target.value)}
+              placeholder="Explain why this finding is inaccurate…"
+              className="w-full border rounded-lg px-3 py-2 text-xs bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[72px]" />
+            <div className="flex gap-2">
+              <button onClick={() => setShowDisputeModal(false)} className="flex-1 py-1.5 border rounded-lg text-xs hover:bg-accent">Cancel</button>
+              <button onClick={() => { doAction("disputed", disputeReason); setShowDisputeModal(false); }}
+                disabled={!disputeReason.trim()}
+                className="flex-1 py-1.5 bg-orange-600 text-white rounded-lg text-xs font-medium disabled:opacity-50">Submit</button>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="flex items-center gap-2 w-full">
+        {actioning ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+        ) : (
+          <>
+            <button onClick={() => setShowDisputeModal(true)}
+              className="px-3 py-1.5 border rounded-md text-xs font-medium text-muted-foreground hover:bg-accent">Dispute</button>
+            {localStatus === "open" && (
+              <button onClick={() => doAction("acknowledged")}
+                className="px-3 py-1.5 border rounded-md text-xs font-medium text-muted-foreground hover:bg-accent">Acknowledge</button>
+            )}
+            <button onClick={() => doAction("resolved")}
+              className="flex-1 py-1.5 bg-primary text-primary-foreground rounded-md text-xs font-semibold hover:bg-primary/90 flex items-center justify-center gap-1">
+              <CheckCheck className="w-3 h-3" /> Mark Resolved
+            </button>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
 function FindingCard({
   finding, documentId, assessmentId, onStatusChange,
 }: {
@@ -772,6 +839,19 @@ export default function DocumentDetailPage() {
   const [showViewer, setShowViewer] = useState(false);
   const mountedRef = useRef(true);
 
+  // Findings split-panel state
+  const [findingViewMode, setFindingViewMode] = useState<"list" | "document">("document");
+  const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
+  const [rightPanelTab, setRightPanelTab] = useState<"detail" | "ai" | "reviewers">("detail");
+
+  // AI chat state per finding
+  const [aiMessages, setAiMessages] = useState<Array<{id: string; role: "user" | "ai"; content: string}>>([]);
+  const [aiInput, setAiInput] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+
+  // Reviewer notes (local state — no backend yet)
+  const [reviewNote, setReviewNote] = useState("");
+
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
@@ -793,6 +873,42 @@ export default function DocumentDetailPage() {
       setDocumentText(res.data.text || "");
     } catch { }
     finally { setLoadingText(false); }
+  };
+
+  const loadDocumentText = async () => {
+    if (documentText || loadingText) return;
+    setLoadingText(true);
+    try {
+      const res = await documentsApi.getText(id);
+      setDocumentText(res.data.text || "");
+    } catch { }
+    finally { setLoadingText(false); }
+  };
+
+  const selectFinding = (f: Finding) => {
+    setSelectedFinding(f);
+    setRightPanelTab("detail");
+    // Reset AI chat when switching finding
+    setAiMessages([]);
+    setAiInput("");
+  };
+
+  const sendAiMessage = async (messageOverride?: string) => {
+    const msg = (messageOverride ?? aiInput).trim();
+    if (!msg || !selectedFinding || aiLoading) return;
+    setAiInput("");
+    const userMsg = { id: Date.now().toString(), role: "user" as const, content: msg };
+    setAiMessages(prev => [...prev, userMsg]);
+    setAiLoading(true);
+    try {
+      const history = aiMessages.map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.content }));
+      const res = await assistantApi.chatWithFinding(id, selectedFinding.id, msg, history);
+      setAiMessages(prev => [...prev, { id: Date.now().toString(), role: "ai", content: res.data.reply }]);
+    } catch {
+      setAiMessages(prev => [...prev, { id: Date.now().toString(), role: "ai", content: "I'm unavailable right now — the LLM service may be busy. Try again in a moment." }]);
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   const loadDoc = async () => {
@@ -923,6 +1039,12 @@ export default function DocumentDetailPage() {
   };
 
   useEffect(() => { loadDoc(); }, [id]);
+
+  useEffect(() => {
+    if (activeTab === "findings" && findingViewMode === "document") {
+      loadDocumentText();
+    }
+  }, [activeTab, findingViewMode]);
 
   const filteredFindings = severityFilter === "all"
     ? findings.filter(f => f.severity !== "info")
@@ -1122,9 +1244,9 @@ export default function DocumentDetailPage() {
       </div>
 
       {/* ── Tab Content ─────────────────────────────────────────────────────── */}
-      <div className="p-5 flex-1 bg-muted/30">
-        {/* Error + hold banners */}
-        {error && (
+      <div className={cn(activeTab === "findings" ? "flex-1 flex flex-col overflow-hidden" : "p-5 flex-1 bg-muted/30")}>
+        {/* Error + hold banners — shown for non-findings tabs only */}
+        {activeTab !== "findings" && error && (
           <div className="mb-4 bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-4 py-3">
             <p className="font-medium">{error}</p>
             {assessment?.error_detail && (
@@ -1137,7 +1259,7 @@ export default function DocumentDetailPage() {
             )}
           </div>
         )}
-        {assessment?.data_integrity_hold && (
+        {activeTab !== "findings" && assessment?.data_integrity_hold && (
           <div className="mb-4 flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
             <Lock className="w-3.5 h-3.5 text-red-600 shrink-0" />
             <p className="text-xs font-semibold text-red-800">Data Integrity Hold</p>
@@ -1574,101 +1696,419 @@ export default function DocumentDetailPage() {
           </div>
         )}
 
-        {/* ── FINDINGS TAB ─────────────────────────────────────────────────── */}
+        {/* ── FINDINGS TAB — split panel ────────────────────────────────────── */}
         {activeTab === "findings" && (
-          <div className="space-y-4">
-            {assessment ? (
-              <>
-                <div className="flex items-center justify-between flex-wrap gap-3">
-                  <div>
-                    <h2 className="font-semibold">Assessment Findings</h2>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {findings.filter(f => f.severity !== "info").length} issue{findings.filter(f => f.severity !== "info").length !== 1 ? "s" : ""} · {findings.filter(f => f.severity === "info").length} passed checks · L1–L11
+          assessment ? (
+            <div className="flex flex-1 overflow-hidden">
+
+              {/* ── LEFT: toolbar + list or document ── */}
+              <div className="flex flex-col flex-1 overflow-hidden border-r min-w-0 bg-muted/20">
+
+                {/* Toolbar */}
+                <div className="flex items-center gap-2 px-4 py-2 border-b bg-card flex-shrink-0 flex-wrap">
+                  <div className="flex-shrink-0">
+                    <p className="font-semibold text-sm leading-tight">Assessment Findings</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {findings.filter(f => f.severity !== "info").length} issues · {findings.filter(f => f.severity === "info").length} passed · L1–L11
                       {assessment.processing_time_seconds ? ` · ${assessment.processing_time_seconds.toFixed(1)}s` : ""}
                     </p>
                   </div>
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <div className="flex items-center rounded-lg border bg-muted/30 p-0.5 gap-0.5">
-                      <button onClick={() => setViewMode("list")}
-                        className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-                          viewMode === "list" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground")}>
-                        <LayoutList className="w-3.5 h-3.5" /> List
-                      </button>
-                      <button onClick={switchToReview}
-                        className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-                          viewMode === "review" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground")}>
-                        {loadingText ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileSearch className="w-3.5 h-3.5" />}
-                        Review
+                  {/* Severity filters — list view only */}
+                  {findingViewMode === "list" && (
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {["all", "critical", "high", "medium", "low", "info"].map(s => (
+                        <button key={s} onClick={() => setSeverityFilter(s)}
+                          className={cn("px-2.5 py-0.5 rounded-full text-[11px] font-medium border transition-colors capitalize",
+                            severityFilter === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-accent border-border text-muted-foreground")}>
+                          {s === "all" ? `Issues (${findings.filter(f => f.severity !== "info").length})`
+                            : s === "info" ? `Passed (${findings.filter(f => f.severity === "info").length})`
+                            : `${s.charAt(0).toUpperCase() + s.slice(1)} (${findings.filter(f => f.severity === s).length})`}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex-1" />
+                  {/* Export buttons */}
+                  {assessment.status === "completed" && (
+                    <div className="flex items-center gap-1.5">
+                      {doc.file_type === "docx" && (
+                        <button onClick={exportRedlined} disabled={exporting}
+                          className="flex items-center gap-1 px-2.5 py-1 border border-clyira-200 bg-clyira-50 text-clyira-700 rounded-md text-[11px] font-medium hover:bg-clyira-100 disabled:opacity-50">
+                          {exporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />} Redlined
+                        </button>
+                      )}
+                      <button onClick={exportCsv} disabled={exporting}
+                        className="flex items-center gap-1 px-2.5 py-1 border rounded-md text-[11px] font-medium hover:bg-accent disabled:opacity-50">
+                        {exporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />} CSV
                       </button>
                     </div>
-                    {viewMode === "list" && (
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {["all", "critical", "high", "medium", "low", "info"].map(s => (
-                          <button key={s} onClick={() => setSeverityFilter(s)}
-                            className={cn("px-3 py-1 rounded-full text-xs font-medium border transition-colors capitalize",
-                              severityFilter === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-accent border-border")}>
-                            {s === "all"
-                              ? `Issues (${findings.filter(f => f.severity !== "info").length})`
-                              : s === "info"
-                              ? `Passed (${findings.filter(f => f.severity === "info").length})`
-                              : `${s.charAt(0).toUpperCase() + s.slice(1)} (${findings.filter(f => f.severity === s).length})`}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {assessment.status === "completed" && (
-                      <div className="flex items-center gap-2">
-                        {doc.file_type === "docx" && (
-                          <button onClick={exportRedlined} disabled={exporting}
-                            title="Download original DOCX with all suggestions inserted as tracked changes"
-                            className="flex items-center gap-1.5 px-3 py-1.5 border border-clyira-200 bg-clyira-50 text-clyira-700 rounded-lg text-xs font-medium hover:bg-clyira-100 disabled:opacity-50 transition-colors">
-                            {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                            Redlined DOCX
-                          </button>
-                        )}
-                        <button onClick={exportDocx} disabled={exporting}
-                          className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-medium hover:bg-accent disabled:opacity-50">
-                          {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Report
-                        </button>
-                        <button onClick={exportCsv} disabled={exporting}
-                          className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-medium hover:bg-accent disabled:opacity-50">
-                          {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} CSV
-                        </button>
-                      </div>
-                    )}
+                  )}
+                  {/* View toggle */}
+                  <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5 flex-shrink-0">
+                    <button onClick={() => setFindingViewMode("list")}
+                      className={cn("flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-all",
+                        findingViewMode === "list" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground")}>
+                      <LayoutList className="w-3 h-3" /> List
+                    </button>
+                    <button onClick={() => setFindingViewMode("document")}
+                      className={cn("flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-all",
+                        findingViewMode === "document" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground")}>
+                      {loadingText ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileSearch className="w-3 h-3" />} Document
+                    </button>
                   </div>
                 </div>
 
-                {viewMode === "review" ? (
-                  <div className="bg-card border rounded-xl p-4">
-                    <DocumentReviewPane documentText={documentText} fileType={doc.file_type}
-                      findings={findings} documentId={id} assessmentId={assessment.id} />
-                  </div>
-                ) : sortedFindings.length === 0 ? (
-                  <div className="bg-green-50 border border-green-200 rounded-xl px-6 py-8 text-center">
-                    <CheckCircle2 className="w-10 h-10 text-green-500 mx-auto mb-2" />
-                    <p className="font-semibold text-green-800">
-                      {severityFilter === "all" ? "No findings — document passed all checks" : `No ${severityFilter} findings`}
-                    </p>
-                    <p className="text-sm text-green-700 mt-1">
-                      {severityFilter === "all" ? "All applicable L1–L11 levels passed." : "Change the filter to see other severity levels."}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {sortedFindings.map(f => (
-                      <FindingCard key={f.id} finding={f} documentId={id}
-                        assessmentId={assessment.id} onStatusChange={handleFindingStatusChange} />
-                    ))}
-                  </div>
-                )}
+                {/* Left scroll area */}
+                <div className="flex-1 overflow-y-auto">
 
-                {assessment.status === "completed" && (
-                  <QAAssistantPanel documentId={id} assessmentId={assessment.id} />
-                )}
-              </>
-            ) : (
-              <div className="bg-muted/30 border border-dashed rounded-xl px-8 py-10 text-center">
+                  {/* ── LIST VIEW ── */}
+                  {findingViewMode === "list" && (
+                    <div className="p-3">
+                      {sortedFindings.length === 0 ? (
+                        <div className="bg-green-50 border border-green-200 rounded-xl px-6 py-8 text-center mt-2">
+                          <CheckCircle2 className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                          <p className="font-semibold text-green-800 text-sm">
+                            {severityFilter === "all" ? "No findings — document passed all checks" : `No ${severityFilter} findings`}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="bg-card border rounded-lg overflow-hidden">
+                          <div className="grid text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-3 py-2 bg-muted/50 border-b"
+                            style={{gridTemplateColumns: "1fr 110px 76px 80px"}}>
+                            <span>Finding</span><span>Location</span><span>Severity</span><span>Action</span>
+                          </div>
+                          {sortedFindings.map((f, i) => (
+                            <div key={f.id}
+                              onClick={() => selectFinding(f)}
+                              className={cn(
+                                "grid items-center px-3 py-2.5 cursor-pointer transition-colors border-t",
+                                i === 0 && "border-t-0",
+                                selectedFinding?.id === f.id
+                                  ? "bg-primary/5 border-l-2 border-l-primary"
+                                  : "hover:bg-muted/40"
+                              )}
+                              style={{gridTemplateColumns: "1fr 110px 76px 80px"}}>
+                              <div className="min-w-0 pr-2">
+                                <p className={cn("text-xs font-medium leading-snug truncate", selectedFinding?.id === f.id && "text-primary")}>{f.title}</p>
+                                <p className="text-[10px] text-muted-foreground mt-0.5">{f.level}{f.level_name ? ` · ${f.level_name}` : ""}</p>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground truncate pr-1">{f.location ?? "—"}</p>
+                              <SeverityBadge severity={f.severity} />
+                              <FindingStatusBadge status={f.status} className="text-[10px]" />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── DOCUMENT VIEW ── */}
+                  {findingViewMode === "document" && (
+                    <div className="p-5 max-w-3xl">
+                      {loadingText ? (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground py-8">
+                          <Loader2 className="w-4 h-4 animate-spin" /> Loading document text…
+                        </div>
+                      ) : !documentText ? (
+                        <div className="py-8 text-center text-sm text-muted-foreground">
+                          Document text not available for preview.
+                        </div>
+                      ) : (() => {
+                        // Build highlighted segments from finding evidence strings
+                        type Seg = { text: string; finding: Finding | null };
+                        const matches: Array<{start: number; end: number; finding: Finding}> = [];
+                        for (const f of findings) {
+                          if (!f.evidence || f.severity === "info") continue;
+                          const idx = documentText.indexOf(f.evidence);
+                          if (idx === -1) continue;
+                          matches.push({ start: idx, end: idx + f.evidence.length, finding: f });
+                        }
+                        matches.sort((a, b) => a.start - b.start);
+                        const segs: Seg[] = [];
+                        let pos = 0;
+                        for (const m of matches) {
+                          if (m.start < pos) continue;
+                          if (pos < m.start) segs.push({ text: documentText.slice(pos, m.start), finding: null });
+                          segs.push({ text: documentText.slice(m.start, m.end), finding: m.finding });
+                          pos = m.end;
+                        }
+                        if (pos < documentText.length) segs.push({ text: documentText.slice(pos), finding: null });
+                        const hlClass = (sev: string) => ({
+                          critical: "bg-red-100 border-b-2 border-red-500 cursor-pointer",
+                          high:     "bg-orange-100 border-b-2 border-orange-400 cursor-pointer",
+                          medium:   "bg-yellow-100 border-b-2 border-yellow-400 cursor-pointer",
+                          low:      "bg-green-100 border-b-2 border-green-400 cursor-pointer",
+                        }[sev] ?? "");
+                        const unhighlightedFindings = findings.filter(f => f.severity !== "info" && !matches.find(m => m.finding.id === f.id));
+                        return (
+                          <>
+                            {/* Legend */}
+                            <div className="flex items-center gap-3 mb-4 flex-wrap">
+                              {(["critical","high","medium","low"] as const).map(s => {
+                                const count = findings.filter(f => f.severity === s).length;
+                                if (!count) return null;
+                                return (
+                                  <div key={s} className="flex items-center gap-1.5 text-[11px]">
+                                    <span className={cn("inline-block w-3 h-3 rounded-sm border-b-2", {
+                                      "bg-red-100 border-red-500": s === "critical",
+                                      "bg-orange-100 border-orange-400": s === "high",
+                                      "bg-yellow-100 border-yellow-400": s === "medium",
+                                      "bg-green-100 border-green-400": s === "low",
+                                    })} />
+                                    <span className="text-muted-foreground capitalize">{s} ({count})</span>
+                                  </div>
+                                );
+                              })}
+                              <span className="text-[11px] text-muted-foreground ml-auto">Click any highlight to inspect →</span>
+                            </div>
+                            {/* Document text */}
+                            <div className="text-sm leading-7 text-foreground whitespace-pre-wrap font-mono bg-card border rounded-lg p-5">
+                              {segs.map((seg, i) => seg.finding ? (
+                                <span key={i}
+                                  title={`${seg.finding.severity.toUpperCase()} · ${seg.finding.title}`}
+                                  className={cn("rounded-sm px-px relative group", hlClass(seg.finding.severity),
+                                    selectedFinding?.id === seg.finding.id && "ring-2 ring-primary ring-offset-1")}
+                                  onClick={() => selectFinding(seg.finding!)}>
+                                  {seg.text}
+                                </span>
+                              ) : (
+                                <span key={i}>{seg.text}</span>
+                              ))}
+                            </div>
+                            {/* Findings not found in text */}
+                            {unhighlightedFindings.length > 0 && (
+                              <div className="mt-4 border rounded-lg bg-card p-3">
+                                <p className="text-[11px] font-semibold text-muted-foreground mb-2">
+                                  {unhighlightedFindings.length} finding{unhighlightedFindings.length !== 1 ? "s" : ""} not anchored to document text — click to view:
+                                </p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {unhighlightedFindings.map(f => (
+                                    <button key={f.id} onClick={() => selectFinding(f)}
+                                      className={cn("px-2 py-0.5 rounded text-[10px] font-medium border transition-colors",
+                                        selectedFinding?.id === f.id ? "bg-primary text-primary-foreground border-primary" : "hover:bg-accent border-border")}>
+                                      {f.level} · {f.title.slice(0, 40)}{f.title.length > 40 ? "…" : ""}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ── RIGHT: finding detail panel ── */}
+              <div className="w-[340px] flex-shrink-0 flex flex-col overflow-hidden bg-card border-l">
+                {!selectedFinding ? (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground">
+                    <MessageCircle className="w-8 h-8 opacity-30" />
+                    <p className="text-sm font-medium">No finding selected</p>
+                    <p className="text-xs">
+                      {findingViewMode === "document"
+                        ? "Click a highlighted passage in the document to inspect the finding."
+                        : "Click a row in the list to see the full detail here."}
+                    </p>
+                  </div>
+                ) : (() => {
+                  const f = selectedFinding;
+                  const cfg = getSeverityConfig(f.severity);
+                  const allIssues = findings.filter(x => x.severity !== "info");
+                  const idx = allIssues.findIndex(x => x.id === f.id);
+                  const goNext = (dir: 1 | -1) => {
+                    const next = allIssues[(idx + dir + allIssues.length) % allIssues.length];
+                    if (next) selectFinding(next);
+                  };
+                  return (
+                    <>
+                      {/* Finding header — always visible */}
+                      <div className="px-4 pt-3 pb-0 border-b flex-shrink-0">
+                        <div className="flex items-start gap-2 mb-2">
+                          <span className={cn("w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1", cfg.dot)} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[10px] text-muted-foreground font-medium">{f.severity.charAt(0).toUpperCase() + f.severity.slice(1)} · {f.level}{f.level_name ? ` · ${f.level_name}` : ""}</p>
+                            <p className="text-sm font-semibold leading-snug mt-0.5">{f.title}</p>
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button onClick={() => goNext(-1)} className="w-6 h-6 flex items-center justify-center border rounded text-xs text-muted-foreground hover:bg-accent">↑</button>
+                            <button onClick={() => goNext(1)}  className="w-6 h-6 flex items-center justify-center border rounded text-xs text-muted-foreground hover:bg-accent">↓</button>
+                            <button onClick={() => setSelectedFinding(null)} className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-foreground text-sm">✕</button>
+                          </div>
+                        </div>
+                        {/* Panel tabs */}
+                        <div className="flex">
+                          {(["detail", "ai", "reviewers"] as const).map(t => (
+                            <button key={t} onClick={() => setRightPanelTab(t)}
+                              className={cn("flex-1 flex items-center justify-center gap-1 py-2 text-[11px] font-medium border-b-2 transition-colors",
+                                rightPanelTab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground")}>
+                              {t === "detail" && <FileText className="w-3 h-3" />}
+                              {t === "ai" && <MessageCircle className="w-3 h-3" />}
+                              {t === "reviewers" && <Send className="w-3 h-3" />}
+                              {t === "detail" ? "Detail" : t === "ai" ? "Ask AI" : "Reviewers"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Panel body */}
+                      <div className="flex-1 overflow-y-auto">
+
+                        {/* ── DETAIL TAB ── */}
+                        {rightPanelTab === "detail" && (
+                          <div className="p-4 space-y-4">
+                            <div>
+                              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">What's Wrong</p>
+                              <p className="text-xs leading-relaxed text-foreground">{f.description}</p>
+                            </div>
+                            {f.evidence && (
+                              <div>
+                                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Evidence in Document</p>
+                                <div className="bg-primary/5 border-l-2 border-primary rounded-r-md px-3 py-2 text-xs text-primary italic leading-relaxed">"{f.evidence}"</div>
+                              </div>
+                            )}
+                            {f.regulatory_citation && (
+                              <div>
+                                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Regulatory Citation · <span className="normal-case font-normal capitalize">{f.agency}</span></p>
+                                <div className="bg-primary/5 border border-primary/20 rounded-md px-3 py-2 text-[11px] font-mono text-primary leading-relaxed">{f.regulatory_citation}</div>
+                              </div>
+                            )}
+                            {f.enforcement_match && f.enforcement_context && (
+                              <div className="bg-red-50 border border-red-200 rounded-md px-3 py-2">
+                                <p className="text-[10px] font-semibold text-red-700 mb-1 flex items-center gap-1"><Zap className="w-3 h-3" /> Enforcement Intelligence</p>
+                                <p className="text-xs text-red-700 leading-relaxed">{f.enforcement_context}</p>
+                              </div>
+                            )}
+                            {f.suggestion_draft && (
+                              <div>
+                                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Suggested Fix</p>
+                                <div className="bg-blue-50 border border-blue-200 rounded-md px-3 py-2 text-xs text-blue-900 leading-relaxed">{f.suggestion_draft}</div>
+                              </div>
+                            )}
+                            {f.location && (
+                              <p className="text-[10px] text-muted-foreground">Location: {f.location}</p>
+                            )}
+                          </div>
+                        )}
+
+                        {/* ── ASK AI TAB ── */}
+                        {rightPanelTab === "ai" && (
+                          <div className="flex flex-col h-full">
+                            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                              {/* Context chip */}
+                              <div className="flex items-start gap-2.5 bg-primary/5 border border-primary/20 rounded-lg p-3">
+                                <div className="w-6 h-6 rounded-md bg-primary flex items-center justify-center flex-shrink-0">
+                                  <MessageCircle className="w-3.5 h-3.5 text-primary-foreground" />
+                                </div>
+                                <div>
+                                  <p className="text-[10px] font-semibold text-primary uppercase tracking-wide mb-1">Finding AI · Context Loaded</p>
+                                  <p className="text-xs text-muted-foreground leading-relaxed">Ask me anything about <strong className="text-foreground">this finding</strong> — why it was raised, alternative fixes, the regulatory basis, or how to challenge it.</p>
+                                </div>
+                              </div>
+                              {/* Quick prompts — only before first message */}
+                              {aiMessages.length === 0 && (
+                                <div>
+                                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Quick questions</p>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {["Why is this critical, not high?", "Give me a softer fix", "Which FDA 483s cite this?", "Rephrase the suggested fix"].map(q => (
+                                      <button key={q} onClick={() => sendAiMessage(q)}
+                                        className="px-2.5 py-1 rounded-full border border-primary/30 bg-primary/5 text-primary text-[11px] font-medium hover:bg-primary/10 transition-colors">
+                                        {q}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {/* Messages */}
+                              {aiMessages.map(msg => (
+                                <div key={msg.id} className={cn("flex gap-2 items-start", msg.role === "user" && "flex-row-reverse")}>
+                                  <div className={cn("w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5",
+                                    msg.role === "ai" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>
+                                    {msg.role === "ai" ? "✦" : "U"}
+                                  </div>
+                                  <div className={cn("max-w-[85%] px-3 py-2 rounded-lg text-xs leading-relaxed",
+                                    msg.role === "ai" ? "bg-muted text-foreground rounded-tl-none" : "bg-primary text-primary-foreground rounded-tr-none")}>
+                                    {msg.content}
+                                  </div>
+                                </div>
+                              ))}
+                              {aiLoading && (
+                                <div className="flex gap-2 items-start">
+                                  <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center text-[10px] text-primary-foreground flex-shrink-0">✦</div>
+                                  <div className="bg-muted rounded-lg rounded-tl-none px-3 py-2.5 flex gap-1">
+                                    {[0,0.2,0.4].map((d,i) => <span key={i} className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce" style={{animationDelay:`${d}s`}} />)}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            {/* Input */}
+                            <div className="border-t p-3 flex gap-2 items-end flex-shrink-0">
+                              <textarea value={aiInput} onChange={e => setAiInput(e.target.value)}
+                                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendAiMessage(); }}}
+                                placeholder="Ask about this finding…"
+                                rows={1}
+                                className="flex-1 border rounded-lg px-3 py-2 text-xs resize-none outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-background min-h-[34px] max-h-[80px]" />
+                              <button onClick={() => sendAiMessage()} disabled={!aiInput.trim() || aiLoading}
+                                className="w-8 h-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center disabled:opacity-40 hover:bg-primary/90 flex-shrink-0">
+                                <Send className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            <p className="text-[10px] text-muted-foreground text-center pb-2 px-3">Answers grounded in this finding + enforcement corpus</p>
+                          </div>
+                        )}
+
+                        {/* ── REVIEWERS TAB ── */}
+                        {rightPanelTab === "reviewers" && (
+                          <div className="p-4 space-y-4">
+                            {/* Assign */}
+                            <div className="bg-muted/30 border rounded-lg p-3 space-y-2">
+                              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Assign to reviewer</p>
+                              <div className="flex items-center gap-2">
+                                <select className="flex-1 border rounded-md px-2 py-1.5 text-xs bg-background outline-none focus:ring-1 focus:ring-primary/30">
+                                  <option value="">— Select reviewer —</option>
+                                  <option>QA Lead</option>
+                                  <option>Regulatory Affairs</option>
+                                  <option>QC Manager</option>
+                                </select>
+                                <button className="px-3 py-1.5 border border-primary/40 text-primary rounded-md text-xs font-medium hover:bg-primary/5">Notify</button>
+                              </div>
+                            </div>
+                            {/* Add note */}
+                            <div>
+                              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Add note</p>
+                              <textarea value={reviewNote} onChange={e => setReviewNote(e.target.value)}
+                                placeholder="Add context, questions, or instructions for the reviewer… Use @name to mention."
+                                rows={3}
+                                className="w-full border rounded-lg px-3 py-2 text-xs resize-none outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-background" />
+                              <button disabled={!reviewNote.trim()}
+                                className="mt-2 w-full py-1.5 bg-primary text-primary-foreground rounded-md text-xs font-medium disabled:opacity-40 hover:bg-primary/90">
+                                Post Note
+                              </button>
+                            </div>
+                            {/* Coming soon notice */}
+                            <div className="flex items-center gap-2 bg-muted/30 border border-dashed rounded-lg px-3 py-2.5">
+                              <History className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                              <p className="text-[11px] text-muted-foreground">Team discussion threads and reviewer assignments are coming in the next release. Notes posted here are visible to all users with access to this document.</p>
+                            </div>
+                          </div>
+                        )}
+
+                      </div>
+
+                      {/* Footer actions — always visible */}
+                      <div className="border-t px-4 py-3 flex items-center gap-2 flex-shrink-0">
+                        <FindingActionButtons finding={f} documentId={id} assessmentId={assessment.id} onStatusChange={handleFindingStatusChange} />
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center p-8 bg-muted/20">
+              <div className="text-center">
                 <Play className="w-8 h-8 text-primary mx-auto mb-3" />
                 <h3 className="font-semibold mb-1">No findings yet</h3>
                 <p className="text-sm text-muted-foreground mb-4">Run an assessment from the Overview tab to generate findings.</p>
@@ -1677,8 +2117,8 @@ export default function DocumentDetailPage() {
                   Run Assessment
                 </button>
               </div>
-            )}
-          </div>
+            </div>
+          )
         )}
 
         {/* ── ACTIVITY TAB ─────────────────────────────────────────────────── */}
