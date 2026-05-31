@@ -378,7 +378,7 @@ async def download_document(
         client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
         data = client.storage.from_(settings.SUPABASE_STORAGE_BUCKET).download(document.file_path)
         return Response(content=data, media_type=content_type,
-                        headers={"Content-Disposition": f'inline; filename="{document.title}"'})
+                        headers={"Content-Disposition": f'inline; filename="{document.title.replace(chr(34), "").replace(chr(10), "").replace(chr(13), "")}"'})
 
     # Local dev — file_path is an absolute path on disk
     if not os.path.exists(document.file_path):
@@ -393,7 +393,7 @@ async def download_document(
 
     return StreamingResponse(
         _stream(), media_type=content_type,
-        headers={"Content-Disposition": f'inline; filename="{document.title}"'},
+        headers={"Content-Disposition": f'inline; filename="{document.title.replace(chr(34), "").replace(chr(10), "").replace(chr(13), "")}"'},
     )
 
 

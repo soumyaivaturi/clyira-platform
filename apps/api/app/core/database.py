@@ -10,9 +10,10 @@ from app.core.config import settings
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
-    pool_size=5,
-    max_overflow=5,
+    pool_size=10,
+    max_overflow=20,
     pool_pre_ping=True,
+    pool_recycle=300,  # recycle connections every 5 min to avoid stale connections
     # Required for Supabase PgBouncer transaction-mode pooler
     connect_args={"statement_cache_size": 0},
 )

@@ -235,8 +235,11 @@ async def bulk_run_assessments(
                 None,
             )
             queued.append({"assessment_id": assessment.id, "document_id": doc.id, "document_title": doc.title})
-        except Exception:
-            pass
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error(
+                "bulk-run: failed to queue assessment for document %s: %s", doc.id, exc
+            )
 
     return {"queued": len(queued), "assessments": queued, "message": f"Queued {len(queued)} assessment(s)."}
 
@@ -355,6 +358,16 @@ async def action_finding(
     db: AsyncSession = Depends(get_db),
 ):
     """Update finding status (acknowledge / in_progress / resolve / dispute) and recompute adjusted score."""
+    # Verify assessment belongs to this user's company before touching any finding
+    assessment_check = await db.execute(
+        select(Assessment).where(
+            Assessment.id == assessment_id,
+            Assessment.company_id == current_user.company_id,
+        )
+    )
+    if not assessment_check.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")
+
     result = await db.execute(
         select(Finding).where(
             Finding.id == finding_id,
@@ -428,6 +441,16 @@ async def add_finding_comment(
     db: AsyncSession = Depends(get_db),
 ):
     from app.models.assessment import Finding, FindingComment
+    # Verify assessment belongs to this user's company
+    assessment_check = await db.execute(
+        select(Assessment).where(
+            Assessment.id == assessment_id,
+            Assessment.company_id == current_user.company_id,
+        )
+    )
+    if not assessment_check.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
     finding = await db.get(Finding, finding_id)
     if not finding or finding.assessment_id != assessment_id:
         raise HTTPException(status_code=404, detail="Finding not found")
@@ -466,6 +489,16 @@ async def get_finding_comments(
 ):
     from app.models.assessment import Finding, FindingComment
     from sqlalchemy import select, asc
+    # Verify assessment belongs to this user's company
+    assessment_check = await db.execute(
+        select(Assessment).where(
+            Assessment.id == assessment_id,
+            Assessment.company_id == current_user.company_id,
+        )
+    )
+    if not assessment_check.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
     finding = await db.get(Finding, finding_id)
     if not finding or finding.assessment_id != assessment_id:
         raise HTTPException(status_code=404, detail="Finding not found")

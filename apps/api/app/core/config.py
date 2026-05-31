@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     ENVIRONMENT: str = "development"
     DEBUG: bool = False
-    SECRET_KEY: str = "clyira-dev-secret-key-change-in-production"
+    SECRET_KEY: str = ""
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://clyira_admin:clyira_dev_2026@localhost:5432/clyira"
@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     # Embedding
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     EMBEDDING_DIMENSION: int = 384  # Updated if using different model
+
+    def validate_production_secrets(self) -> None:
+        """Raise at startup if critical secrets are missing in production."""
+        if self.ENVIRONMENT == "production":
+            if not self.SECRET_KEY:
+                raise ValueError("SECRET_KEY must be set in production")
+            if self.SECRET_KEY == "clyira-dev-secret-key-change-in-production":
+                raise ValueError("SECRET_KEY must not use the default development value in production")
 
     @property
     def cors_origins_list(self) -> list[str]:

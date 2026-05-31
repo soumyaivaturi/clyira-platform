@@ -19,9 +19,10 @@ api.interceptors.response.use(
   (error) => {
     const status = error.response?.status;
     const url = error.config?.url ?? "";
-    // Don't redirect on 401 from the login endpoint itself — let the form's catch handle it
+    // Only redirect to login on 401 (expired/invalid token).
+    // 403 means the token is valid but the user lacks permission — log out would be wrong.
     const isAuthAttempt = url.includes("/auth/login") || url.includes("/auth/register");
-    if ((status === 401 || status === 403) && typeof window !== "undefined" && !isAuthAttempt) {
+    if (status === 401 && typeof window !== "undefined" && !isAuthAttempt) {
       localStorage.removeItem("clyira_token");
       document.cookie = "clyira_token=; path=/; max-age=0";
       window.location.href = "/auth/login";
@@ -88,9 +89,9 @@ export const assessmentsApi = {
       include_references: includeReferences,
       ...(regulatoryFrameworks ? { regulatory_frameworks: regulatoryFrameworks } : {}),
     }, { timeout: 600000 }),
-  get: (id: string) => api.get(`/assessments/${id}`),
+  get: (id: string) => api.get(`/assessments/${id}`, { timeout: 30000 }),
   getFindings: (id: string, params?: { severity?: string; level?: string }) =>
-    api.get(`/assessments/${id}/findings`, { params }),
+    api.get(`/assessments/${id}/findings`, { params, timeout: 30000 }),
   actionFinding: (
     assessmentId: string,
     findingId: string,

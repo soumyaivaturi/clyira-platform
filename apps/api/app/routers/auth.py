@@ -7,6 +7,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
@@ -16,6 +18,7 @@ from app.models.user import User
 from app.services import auth_service
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 LOCKOUT_ATTEMPTS = 5       # failed attempts before lockout
 LOCKOUT_MINUTES = 30       # lockout duration
@@ -115,7 +118,8 @@ def _user_out(user: User, onboarding_complete: bool = False) -> UserOut:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/hour")
+async def register(request: Request, data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     existing = await auth_service.get_user_by_email(db, data.email)
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
@@ -133,10 +137,11 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
             company_name=data.company_name,
         )
     except Exception as exc:
-        import traceback
+        import logging
+        logging.getLogger(__name__).error("Registration failed for %s: %s", data.email, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Registration failed: {type(exc).__name__}: {exc}",
+            detail="Registration failed. Please try again or contact support.",
         ) from exc
 
     token = auth_service.create_access_token(user)
@@ -144,7 +149,8 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(data: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+@limiter.limit("20/minute;100/hour")
+async def login(request: Request, data: LoginRequest, db: AsyncSession = Depends(get_db)):
     ip = request.client.host if request.client else None
 
     user = await auth_service.get_user_by_email(db, data.email)

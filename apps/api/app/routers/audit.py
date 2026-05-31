@@ -46,6 +46,8 @@ async def get_audit_log(
         total_q = total_q.where(AuditLog.event_type == event_type)
     if resource_type:
         total_q = total_q.where(AuditLog.resource_type == resource_type)
+    if resource_id:
+        total_q = total_q.where(AuditLog.resource_id == resource_id)
 
     query = query.offset(offset).limit(limit)
     result = await db.execute(query)

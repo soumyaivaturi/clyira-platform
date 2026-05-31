@@ -20,10 +20,6 @@ function LoginForm() {
 
   const idleTimeout = searchParams.get("reason") === "idle";
 
-  useEffect(() => {
-    fetch("/api/v1/auth/me").catch(() => {});
-  }, []);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");

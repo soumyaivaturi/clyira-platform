@@ -4,12 +4,19 @@ Quality Intelligence Platform for Life Sciences
 """
 from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.core.config import settings
 from app.routers import auth, documents, assessments, companies, readiness, inspections
 from app.routers import assistant, export, audit, notifications, api_keys, signatures, evidence
 from app.routers import batch_dossiers, sponsor_programs, product_profiles
+
+# Global rate limiter — keyed by client IP
+limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -58,6 +65,9 @@ async def lifespan(app: FastAPI):
             else:
                 await asyncio.sleep(3)
 
+    # Validate production secrets early so a misconfigured deploy fails fast
+    settings.validate_production_secrets()
+
     from app.dtap import DTAPRegistry
     DTAPRegistry.initialize()
 
@@ -79,20 +89,32 @@ app = FastAPI(
     lifespan=lifespan,
     redirect_slashes=False,  # prevents 307 redirects that strip Auth headers through Vercel proxy
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS middleware
+# CORS middleware — explicit methods/headers; never allow wildcard origins in production
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Admin-Secret"],
 )
 
 
-# Config diagnostics — shows which keys are present (never reveals values)
+def _require_admin(request: Request) -> None:
+    import os
+    from fastapi import HTTPException
+    secret = request.headers.get("X-Admin-Secret", "")
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret or secret != admin_secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+# Config diagnostics — admin-only, shows which keys are present (never reveals values)
 @app.get("/debug/config")
-async def debug_config():
+async def debug_config(request: Request):
+    _require_admin(request)
     from app.engines.llm_engine import _active_model, _llm_available
     return {
         "LLM_PROVIDER": "groq" if settings.GROQ_API_KEY else ("gemini" if settings.GEMINI_API_KEY else "NONE"),
@@ -105,8 +127,9 @@ async def debug_config():
 
 
 @app.get("/debug/llm")
-async def debug_llm():
+async def debug_llm(request: Request):
     """List available Gemini models for this API key, then test the first usable one"""
+    _require_admin(request)
     if not settings.GEMINI_API_KEY:
         return {"status": "error", "detail": "GEMINI_API_KEY not set"}
     try:
@@ -195,11 +218,7 @@ async def debug_tables():
 @app.get("/debug/doc-text/{document_id}")
 async def debug_doc_text(document_id: str, request: Request):
     """Show extracted_text length and preview for a document (admin only)"""
-    import os
-    secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Forbidden")
+    _require_admin(request)
     from sqlalchemy import text
     from app.core.database import engine
     async with engine.connect() as conn:
@@ -291,7 +310,7 @@ async def _run_enforcement_seed(source: str, years: int) -> None:
 async def debug_recent_assessments(request: Request, n: int = 10):
     import os
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+    if not os.environ.get("ADMIN_SECRET") or secret != os.environ.get("ADMIN_SECRET"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Forbidden")
     from sqlalchemy import text
@@ -321,7 +340,7 @@ async def debug_recent_assessments(request: Request, n: int = 10):
 async def debug_test_groq(request: Request):
     import os, time
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+    if not os.environ.get("ADMIN_SECRET") or secret != os.environ.get("ADMIN_SECRET"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Forbidden")
     if not settings.GROQ_API_KEY:
@@ -356,7 +375,7 @@ async def debug_test_groq(request: Request):
 async def debug_assessment_errors(request: Request, n: int = 5):
     import os
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+    if not os.environ.get("ADMIN_SECRET") or secret != os.environ.get("ADMIN_SECRET"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Forbidden")
     from sqlalchemy import text
@@ -379,7 +398,7 @@ async def debug_assessment_errors(request: Request, n: int = 5):
 async def reset_stuck_assessments(request: Request):
     import os
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+    if not os.environ.get("ADMIN_SECRET") or secret != os.environ.get("ADMIN_SECRET"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Forbidden")
     from sqlalchemy import text
@@ -404,7 +423,7 @@ async def seed_enforcement_corpus(
 ):
     import os
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+    if not os.environ.get("ADMIN_SECRET") or secret != os.environ.get("ADMIN_SECRET"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Forbidden")
     background_tasks.add_task(_run_enforcement_seed, source, years)
@@ -421,7 +440,7 @@ async def seed_from_corpus(request: Request, background_tasks: BackgroundTasks):
     """
     import os
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+    if not os.environ.get("ADMIN_SECRET") or secret != os.environ.get("ADMIN_SECRET"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Forbidden")
 
@@ -536,7 +555,7 @@ async def seed_from_corpus(request: Request, background_tasks: BackgroundTasks):
 async def debug_seed_test(request: Request):
     import os, sys, traceback
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+    if not os.environ.get("ADMIN_SECRET") or secret != os.environ.get("ADMIN_SECRET"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
@@ -569,7 +588,7 @@ async def reextract_documents(request: Request):
     """Re-extract text for all documents with empty extracted_text (e.g. DOCX table content bug)."""
     import os
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+    if not os.environ.get("ADMIN_SECRET") or secret != os.environ.get("ADMIN_SECRET"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Forbidden")
 
@@ -645,7 +664,7 @@ async def seed_regulatory_corpus(request: Request, background_tasks: BackgroundT
     """
     import os
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+    if not os.environ.get("ADMIN_SECRET") or secret != os.environ.get("ADMIN_SECRET"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Forbidden")
 
@@ -737,7 +756,7 @@ async def seed_failure_modes(request: Request, background_tasks: BackgroundTasks
     """
     import os
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", "clyira-admin-secret"):
+    if not os.environ.get("ADMIN_SECRET") or secret != os.environ.get("ADMIN_SECRET"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Forbidden")
 

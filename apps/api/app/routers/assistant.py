@@ -5,10 +5,12 @@ QA:     Answer questions about a document in the context of GMP/regulatory compl
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
@@ -18,6 +20,7 @@ from app.models.assessment import Assessment, Finding
 from app.models.user import User
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 
 class AuthorRequest(BaseModel):
@@ -63,7 +66,9 @@ async def _call_llm_simple(system: str, user: str) -> str:
 
 
 @router.post("/author", response_model=AuthorResponse)
+@limiter.limit("30/minute")
 async def draft_fix(
+    request: Request,
     data: AuthorRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -95,8 +100,14 @@ async def draft_fix(
                 ),
             )
 
+    # Scope finding to company via its parent assessment
     finding_result = await db.execute(
-        select(Finding).where(Finding.id == data.finding_id)
+        select(Finding)
+        .join(Assessment, Assessment.id == Finding.assessment_id)
+        .where(
+            Finding.id == data.finding_id,
+            Assessment.company_id == current_user.company_id,
+        )
     )
     finding = finding_result.scalar_one_or_none()
     if not finding:
@@ -231,7 +242,9 @@ Provide a direct, expert answer with regulatory citations where applicable. If c
 
 
 @router.post("/finding-chat", response_model=FindingChatResponse)
+@limiter.limit("30/minute")
 async def finding_chat(
+    request: Request,
     data: FindingChatRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -251,8 +264,14 @@ async def finding_chat(
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
+    # Scope finding to company via its parent assessment
     finding_result = await db.execute(
-        select(Finding).where(Finding.id == data.finding_id)
+        select(Finding)
+        .join(Assessment, Assessment.id == Finding.assessment_id)
+        .where(
+            Finding.id == data.finding_id,
+            Assessment.company_id == current_user.company_id,
+        )
     )
     finding = finding_result.scalar_one_or_none()
     if not finding:

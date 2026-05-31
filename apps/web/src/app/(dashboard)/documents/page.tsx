@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   FileText, Upload, Plus, Search, X, Loader2,
@@ -440,10 +440,8 @@ interface SearchResult {
 
 export default function DocumentsPage() {
   const router = useRouter();
-  // Read URL params for pre-filtering (e.g. from readiness department drill-down)
-  const searchParams = typeof window !== "undefined"
-    ? new URLSearchParams(window.location.search)
-    : null;
+  // Read URL params for pre-filtering — useSearchParams is SSR-safe
+  const searchParams = useSearchParams();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -457,6 +455,9 @@ export default function DocumentsPage() {
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkMsg, setBulkMsg] = useState("");
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clean up any pending debounce timer on unmount to prevent state updates on unmounted component
+  useEffect(() => () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); }, []);
 
   const load = useCallback(async () => {
     setLoading(true);

@@ -60,7 +60,7 @@ class DocumentReference(Base, TimestampMixin):
     __tablename__ = "document_references"
 
     id = Column(String, primary_key=True, default=generate_uuid)
-    document_id = Column(String, ForeignKey("documents.id"), nullable=False)
+    document_id = Column(String, ForeignKey("documents.id"), nullable=False, index=True)
     uploaded_by = Column(String, ForeignKey("users.id"))
 
     # Reference info

@@ -381,6 +381,7 @@ async def list_requests(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
     query = select(InspectionRequest).where(InspectionRequest.inspection_id == inspection_id)
     if req_status:
         query = query.where(InspectionRequest.status == req_status)
@@ -1308,7 +1309,6 @@ async def generate_cover_letter(
 
     prompt = f"""Draft a formal FDA 483 Response Letter for the following inspection.
 
-Company: {inspection.company_id}
 Inspection Title: {inspection.title}
 Agency: {inspection.agency or 'FDA'}
 Inspection Type: {inspection.inspection_type or 'Routine GMP'}
@@ -1405,6 +1405,7 @@ async def get_log(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await _verify_inspection(db, inspection_id, current_user.company_id)
     result = await db.execute(
         select(InspectionLog).where(InspectionLog.inspection_id == inspection_id)
         .order_by(InspectionLog.created_at.asc())
@@ -1783,7 +1784,8 @@ Only return the JSON array. If no patterns suggest a 483, return [].
     if not _llm_available():
         return {"findings": [], "message": "LLM not available. Configure GROQ_API_KEY or GEMINI_API_KEY."}
 
-    raw = await _call_llm(prompt, max_tokens=2000)
+    system_prompt = "You are an experienced FDA inspection host with 20 years of regulatory experience. Return only valid JSON as instructed."
+    raw = await _call_llm(system_prompt, prompt)
 
     # Parse JSON from response
     try:
@@ -2399,7 +2401,8 @@ Return valid JSON with exactly these keys:
 Keep talking points concise and factual. Do-not-volunteer should be areas that could open new inspection scope.
 """
 
-    raw = await _call_llm(prompt, max_tokens=2000)
+    system_prompt = "You are a regulatory preparation coach with 20 years of FDA inspection experience. Return only valid JSON as instructed."
+    raw = await _call_llm(system_prompt, prompt)
     try:
         match = re.search(r'\{.*\}', raw, re.DOTALL)
         coaching = json.loads(match.group()) if match else {}
@@ -3556,7 +3559,42 @@ async def ws_broadcast(inspection_id: str, message: dict):
 
 
 @router.websocket("/{inspection_id}/ws")
-async def inspection_websocket(websocket: WebSocket, inspection_id: str):
+async def inspection_websocket(websocket: WebSocket, inspection_id: str, token: str = ""):
+    """
+    WebSocket endpoint for real-time inspection war room.
+    Requires a valid JWT passed as ?token=<access_token> query parameter
+    (WebSocket clients cannot send Authorization headers).
+    """
+    import logging
+    _ws_log = logging.getLogger(__name__)
+
+    # Authenticate before accepting the connection
+    from app.services import auth_service
+    from app.core.database import AsyncSessionLocal
+    if not token:
+        await websocket.close(code=4001, reason="Authentication required")
+        return
+    payload = auth_service.decode_access_token(token)
+    if not payload:
+        await websocket.close(code=4001, reason="Invalid or expired token")
+        return
+    async with AsyncSessionLocal() as auth_db:
+        user = await auth_service.get_user_by_id(auth_db, payload["sub"])
+    if not user or not user.is_active:
+        await websocket.close(code=4001, reason="User not found or inactive")
+        return
+    # Verify user belongs to the company that owns this inspection
+    async with AsyncSessionLocal() as scope_db:
+        insp_check = await scope_db.execute(
+            select(Inspection).where(
+                Inspection.id == inspection_id,
+                Inspection.company_id == user.company_id,
+            )
+        )
+        if not insp_check.scalar_one_or_none():
+            await websocket.close(code=4003, reason="Forbidden")
+            return
+
     room = _rooms[inspection_id]
     await room.connect(websocket)
     try:
@@ -3606,8 +3644,8 @@ async def inspection_websocket(websocket: WebSocket, inspection_id: str):
                         "request_text": msg.get("request_text", ""),
                         "criticality": msg.get("criticality", "medium"),
                     })
-            except Exception:
-                pass
+            except Exception as exc:
+                _ws_log.debug("WebSocket message error for inspection %s: %s", inspection_id, exc)
     except WebSocketDisconnect:
         room.disconnect(websocket)
         await room.broadcast({
@@ -3783,7 +3821,7 @@ async def notify_team(
     current_user=Depends(get_current_user),
 ):
     """Send email notifications to all team members with email addresses."""
-    inspection = await db.get(Inspection, inspection_id)
+    inspection = await _verify_inspection(db, inspection_id, current_user.company_id)
     if not inspection:
         raise HTTPException(status_code=404, detail="Inspection not found")
 
@@ -3965,8 +4003,16 @@ async def test_notification(
     return {"sent": sent, "to": test_email}
 
 
-async def _fire_notification(db: AsyncSession, inspection_id: str, event_key: str, inspector_name: str | None = None):
-    """Fire configured email notifications for an event. Silently no-ops on any error."""
+async def _fire_notification(_unused_db: AsyncSession, inspection_id: str, event_key: str, inspector_name: str | None = None):
+    """Fire configured email notifications for an event. Silently no-ops on any error.
+    Always opens its own DB session so it is safe to call from asyncio.create_task
+    after the request-scoped session has been committed and closed."""
+    from app.core.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        await _fire_notification_with_db(db, inspection_id, event_key, inspector_name)
+
+
+async def _fire_notification_with_db(db: AsyncSession, inspection_id: str, event_key: str, inspector_name: str | None = None):
     try:
         from app.services.email_service import _send, _base_email, _email_available
         if not _email_available():

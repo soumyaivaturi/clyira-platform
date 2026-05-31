@@ -106,7 +106,17 @@ async def _call_gemini(system_prompt: str, user_prompt: str) -> str:
 
 
 async def _call_llm(system_prompt: str, user_prompt: str) -> str:
-    """Route to Groq (primary) or Gemini (fallback). Falls back to Gemini if Groq is overloaded."""
+    """Route to Groq (primary) or Gemini (fallback). Falls back to Gemini if Groq is overloaded.
+    Hard cap: raises TimeoutError if no response within ASSESSMENT_TIMEOUT_SECONDS."""
+    import asyncio
+    timeout = getattr(settings, "ASSESSMENT_TIMEOUT_SECONDS", 300)
+    try:
+        return await asyncio.wait_for(_call_llm_inner(system_prompt, user_prompt), timeout=timeout)
+    except asyncio.TimeoutError:
+        raise TimeoutError(f"LLM call exceeded {timeout}s hard limit — check provider status")
+
+
+async def _call_llm_inner(system_prompt: str, user_prompt: str) -> str:
     if settings.GROQ_API_KEY:
         try:
             return await _call_groq(system_prompt, user_prompt)
@@ -114,7 +124,7 @@ async def _call_llm(system_prompt: str, user_prompt: str) -> str:
             err = str(e).lower()
             # If Groq is overloaded or exhausted, try Gemini before giving up
             if settings.GEMINI_API_KEY and ("unavailable" in err or "529" in err or "overload" in err):
-                print(f"  Groq failed ({e}), falling back to Gemini...")
+                logger.warning("Groq failed (%s), falling back to Gemini", e)
                 return await _call_gemini(system_prompt, user_prompt)
             raise
     if settings.GEMINI_API_KEY:
@@ -478,6 +488,7 @@ Return ONLY the JSON array with no preamble or explanation.
             if not isinstance(data, list):
                 data = [data]
         except json.JSONDecodeError:
+            logger.warning("LLM JSON parse failed for level %s — attempting manual extraction. Raw (first 500): %s", level, json_text[:500])
             data = []
             depth, start = 0, None
             for i, ch in enumerate(json_text):

@@ -11,8 +11,8 @@ class Assessment(Base, TimestampMixin):
     __tablename__ = "assessments"
 
     id = Column(String, primary_key=True, default=generate_uuid)
-    document_id = Column(String, ForeignKey("documents.id"), nullable=False)
-    company_id = Column(String, ForeignKey("companies.id"), nullable=False)
+    document_id = Column(String, ForeignKey("documents.id"), nullable=False, index=True)
+    company_id = Column(String, ForeignKey("companies.id"), nullable=False, index=True)
     triggered_by = Column(String, ForeignKey("users.id"))
 
     # Status
@@ -72,7 +72,7 @@ class Finding(Base, TimestampMixin):
     __tablename__ = "findings"
 
     id = Column(String, primary_key=True, default=generate_uuid)
-    assessment_id = Column(String, ForeignKey("assessments.id"), nullable=False)
+    assessment_id = Column(String, ForeignKey("assessments.id"), nullable=False, index=True)
 
     # Classification
     level = Column(String(10), nullable=False)  # L1, L2, ..., L11
